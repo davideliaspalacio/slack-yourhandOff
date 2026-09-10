@@ -21,21 +21,21 @@ mcp = MCPServer("handoff-tools")
 
 
 @mcp.tool()
-def buscar_web(query: str, limit: int = 8) -> list[dict]:
+def buscar_web(query: str, limit: int = 8, prospect_id: str | None = None) -> list[dict]:
     """Busca en la web pública vía SearXNG. Devuelve título, url y extracto."""
-    return [asdict(r) for r in search.buscar_web(query, limit=limit)]
+    return [asdict(r) for r in search.buscar_web(query, limit=limit, prospect_id=prospect_id)]
 
 
 @mcp.tool()
-def leer_sitio(url: str, max_chars: int = 20_000) -> dict:
+def leer_sitio(url: str, max_chars: int = 20_000, prospect_id: str | None = None) -> dict:
     """Descarga una página y devuelve su texto legible, sin navegación ni banners."""
-    return asdict(web.leer_sitio(url, max_chars=max_chars))
+    return asdict(web.leer_sitio(url, max_chars=max_chars, prospect_id=prospect_id))
 
 
 @mcp.tool()
-def buscar_ofertas(company: str, limit: int = 20) -> list[dict]:
+def buscar_ofertas(company: str, limit: int = 20, prospect_id: str | None = None) -> list[dict]:
     """Ofertas de trabajo abiertas de una empresa. Lista vacía si los boards bloquean."""
-    return [asdict(p) for p in jobs.buscar_ofertas(company, limit=limit)]
+    return [asdict(p) for p in jobs.buscar_ofertas(company, limit=limit, prospect_id=prospect_id)]
 
 
 @mcp.tool()

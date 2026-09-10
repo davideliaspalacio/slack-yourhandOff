@@ -27,9 +27,17 @@ class LLMResponse:
     latency_ms: int
 
 
+class OpenAINotConfigured(RuntimeError):
+    """OPENAI_API_KEY is missing. Only reaches callers that actually need an LLM."""
+
+
 @lru_cache(maxsize=1)
 def _client() -> OpenAI:
     settings = load_settings()
+    if not settings.openai_api_key:
+        raise OpenAINotConfigured(
+            "OPENAI_API_KEY is not set; add it to .env before using LLM-backed tools"
+        )
     return OpenAI(api_key=settings.openai_api_key, timeout=settings.http_timeout_seconds)
 
 

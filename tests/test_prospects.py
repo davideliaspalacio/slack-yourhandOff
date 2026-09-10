@@ -44,3 +44,22 @@ def test_historial_includes_recent_actions(conn):
     ledger.record_action("buscar_web", {"query": "acme"}, prospect_id=person["id"])
     history = prospects.historial_prospecto("U1")
     assert history["actions"][0]["action"] == "buscar_web"
+
+
+def test_tool_actions_reach_the_person_history(conn, monkeypatch):
+    """Sin atribución, historial_prospecto devolvería siempre acciones vacías y
+    el agente no tendría contexto de lo que ya se hizo con esta persona."""
+    import httpx
+    import respx
+
+    from handoff_agent.tools import search
+
+    person = prospects.upsert_prospect("U_HIST")
+    with respx.mock:
+        respx.get("http://127.0.0.1:8080/search").mock(
+            return_value=httpx.Response(200, json={"results": []})
+        )
+        search.buscar_web("acme", prospect_id=person["id"])
+
+    history = prospects.historial_prospecto("U_HIST")
+    assert [a["action"] for a in history["actions"]] == ["buscar_web"]

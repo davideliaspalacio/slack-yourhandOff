@@ -46,3 +46,16 @@ def test_buscar_web_raises_a_clear_error_when_searxng_is_down(conn):
     respx.get(f"{SEARXNG}/search").mock(return_value=httpx.Response(502))
     with pytest.raises(search.SearchUnavailable, match="SearXNG"):
         search.buscar_web("acme")
+
+
+@respx.mock
+def test_buscar_web_works_without_an_openai_key(conn, monkeypatch):
+    """buscar_web no toca ningún LLM; exigir OPENAI_API_KEY aquí acoplaría
+    integraciones que no tienen nada que ver."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    respx.get(f"{SEARXNG}/search").mock(
+        return_value=httpx.Response(200, json={"results": [
+            {"title": "Acme", "url": "https://acme.com", "content": ""},
+        ]})
+    )
+    assert len(search.buscar_web("acme")) == 1

@@ -26,7 +26,9 @@ class PageContent:
     text: str
 
 
-def leer_sitio(url: str, max_chars: int = 20_000) -> PageContent:
+def leer_sitio(
+    url: str, max_chars: int = 20_000, prospect_id: str | None = None
+) -> PageContent:
     """Fetch `url` and return its readable text, truncated to `max_chars`."""
     settings = load_settings()
     try:
@@ -50,6 +52,6 @@ def leer_sitio(url: str, max_chars: int = 20_000) -> PageContent:
     text = extracted[:max_chars]
     ledger.record_action(
         action="leer_sitio", payload={"url": url},
-        result={"chars": len(text), "title": title},
+        result={"chars": len(text), "title": title}, prospect_id=prospect_id,
     )
     return PageContent(url=url, title=title, text=text)

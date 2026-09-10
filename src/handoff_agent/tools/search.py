@@ -24,8 +24,14 @@ class SearchResult:
     snippet: str
 
 
-def buscar_web(query: str, limit: int = 8) -> list[SearchResult]:
-    """Search the public web. Returns at most `limit` results, best first."""
+def buscar_web(
+    query: str, limit: int = 8, prospect_id: str | None = None
+) -> list[SearchResult]:
+    """Search the public web. Returns at most `limit` results, best first.
+
+    `prospect_id` attributes the action to a person so it shows up in that
+    person's history; without it the action is logged but unattributed.
+    """
     settings = load_settings()
     try:
         response = httpx.get(
@@ -48,6 +54,6 @@ def buscar_web(query: str, limit: int = 8) -> list[SearchResult]:
     ]
     ledger.record_action(
         action="buscar_web", payload={"query": query, "limit": limit},
-        result={"count": len(results)},
+        result={"count": len(results)}, prospect_id=prospect_id,
     )
     return results

@@ -72,3 +72,13 @@ def test_json_mode_asks_openai_for_a_json_object(conn, monkeypatch):
     monkeypatch.setattr(llm, "_client", lambda: fake)
     llm.complete("dame json", stage="triage", json_mode=True)
     assert fake.calls[0]["response_format"] == {"type": "json_object"}
+
+
+def test_llm_raises_a_clear_error_when_the_openai_key_is_missing(conn, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    llm._client.cache_clear()
+    try:
+        with pytest.raises(llm.OpenAINotConfigured, match="OPENAI_API_KEY"):
+            llm.complete("hola", stage="triage")
+    finally:
+        llm._client.cache_clear()

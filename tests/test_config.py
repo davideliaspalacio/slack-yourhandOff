@@ -12,8 +12,16 @@ def test_load_settings_reads_environment(monkeypatch):
     assert settings.http_timeout_seconds > 0
 
 
-def test_load_settings_fails_loudly_when_required_var_missing(monkeypatch):
+def test_load_settings_fails_loudly_when_database_url_missing(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
         load_settings()
+
+
+def test_settings_load_without_an_openai_key(monkeypatch):
+    """Las herramientas que no usan LLM tienen que funcionar mientras el resto
+    de integraciones se conectan. Solo DATABASE_URL bloquea el arranque."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert load_settings().openai_api_key is None

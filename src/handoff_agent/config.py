@@ -1,4 +1,10 @@
-"""Environment-backed settings. Fail loudly at startup, never mid-pipeline."""
+"""Environment-backed settings.
+
+Only DATABASE_URL is required to load: without it nothing in this codebase can
+run. Third-party credentials are validated at the point of use instead, so that
+a tool which needs no LLM — buscar_web, leer_sitio, buscar_ofertas — keeps
+working while the other integrations are still being wired up.
+"""
 from __future__ import annotations
 
 import os
@@ -14,7 +20,7 @@ load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     database_url: str
-    openai_api_key: str
+    openai_api_key: str | None
     openai_model: str
     searxng_url: str
     langfuse_public_key: str | None
@@ -38,7 +44,7 @@ def _required(name: str) -> str:
 def load_settings() -> Settings:
     return Settings(
         database_url=_required("DATABASE_URL"),
-        openai_api_key=_required("OPENAI_API_KEY"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY") or None,
         openai_model=os.environ.get("OPENAI_MODEL", "gpt-4.1"),
         searxng_url=os.environ.get("SEARXNG_URL", "http://127.0.0.1:8080"),
         langfuse_public_key=os.environ.get("LANGFUSE_PUBLIC_KEY") or None,
