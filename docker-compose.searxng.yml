@@ -2,9 +2,12 @@ services:
   searxng:
     image: searxng/searxng:latest
     ports:
-      - "8080:8080"
+      # Solo loopback: con 0.0.0.0 cualquiera en la red usa nuestra instancia
+      # como proxy de búsqueda gratis y nos gana bans de los motores upstream.
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./searxng:/etc/searxng:rw
     environment:
       - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?define SEARXNG_SECRET en .env}
     restart: unless-stopped

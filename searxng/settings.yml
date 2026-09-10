@@ -1,6 +1,8 @@
 use_default_settings: true
 server:
-  secret_key: "cambiar-en-produccion"
+  # secret_key NO va aquí: este archivo está en el repo y una clave commiteada
+  # la comparten todos los despliegues hechos desde él. SearXNG la toma de la
+  # variable de entorno SEARXNG_SECRET, definida en .env.
   limiter: false
 search:
   formats:

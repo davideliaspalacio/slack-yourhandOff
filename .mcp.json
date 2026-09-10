@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "handoff-tools": {
+      "command": "uv",
+      "args": ["run", "--directory", "/Users/1234/yourhandoff", "handoff-tools"]
+    }
+  }
+}

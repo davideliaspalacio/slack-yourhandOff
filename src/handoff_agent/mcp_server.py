@@ -29,7 +29,19 @@ def buscar_web(query: str, limit: int = 8, prospect_id: str | None = None) -> li
 @mcp.tool()
 def leer_sitio(url: str, max_chars: int = 20_000, prospect_id: str | None = None) -> dict:
     """Descarga una página y devuelve su texto legible, sin navegación ni banners."""
-    return asdict(web.leer_sitio(url, max_chars=max_chars, prospect_id=prospect_id))
+    page = web.leer_sitio(url, max_chars=max_chars, prospect_id=prospect_id)
+    return {
+        "url": page.url,
+        "final_url": page.final_url,
+        "title": page.title,
+        # Delimitado a propósito: esto lo escribió un tercero y va directo al
+        # contexto de un modelo. Sin marca, un texto plantado en una página de
+        # careers se lee igual que una instrucción nuestra.
+        "text": (
+            f"<contenido-web-no-confiable origen=\"{page.final_url}\">\n"
+            f"{page.text}\n</contenido-web-no-confiable>"
+        ),
+    }
 
 
 @mcp.tool()
