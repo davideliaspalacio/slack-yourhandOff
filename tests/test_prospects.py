@@ -63,3 +63,21 @@ def test_tool_actions_reach_the_person_history(conn, monkeypatch):
 
     history = prospects.historial_prospecto("U_HIST")
     assert [a["action"] for a in history["actions"]] == ["buscar_web"]
+
+
+def test_save_dossier_survives_concurrent_writers(conn):
+    """Dos disparadores pueden caer sobre la misma persona a la vez (escribió y
+    además entró como miembro nuevo), más el botón de re-investigar. Sin el
+    lock, el segundo moría por unique violation y se tiraba un dossier que
+    costó dinero de verdad."""
+    import concurrent.futures
+
+    person = prospects.upsert_prospect("U_RACE")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [
+            pool.submit(prospects.save_dossier, person["id"], {"n": i}, [])
+            for i in range(8)
+        ]
+        versions = sorted(f.result() for f in futures)
+
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Self
 
 from . import db, ledger
 
@@ -44,15 +45,16 @@ def monthly_spend() -> Decimal:
 def check_monthly_budget() -> None:
     limit = Decimal(str(_config_value("monthly_budget_usd", 150)))
     spent = monthly_spend()
-    if spent > limit:
+    if spent >= limit:
         raise MonthlyBudgetExceeded(f"spent ${spent} of ${limit} this month")
 
 
 class RunBudget:
     """Caps a single research run. Use as a context manager around the loop."""
 
-    def __init__(self, limit_usd: Decimal) -> None:
+    def __init__(self, limit_usd: Decimal, prospect_id: str | None = None) -> None:
         self.limit_usd = limit_usd
+        self.prospect_id = prospect_id
         self.spent = Decimal(0)
 
     def add(self, cost: Decimal) -> None:
@@ -60,10 +62,20 @@ class RunBudget:
         if self.spent > self.limit_usd:
             raise RunBudgetExceeded(f"run spent ${self.spent}, cap is ${self.limit_usd}")
 
-    def __enter__(self) -> RunBudget:
+    def __enter__(self) -> Self:
         check_kill_switch()
         check_monthly_budget()
         return self
 
-    def __exit__(self, *exc_info) -> None:
-        return None
+    def __exit__(self, exc_type, exc, tb) -> None:
+        # Sin esto el gasto por ejecución no queda en ninguna parte y no se
+        # puede responder "¿cuánto costó investigar a esta persona?".
+        ledger.record_action(
+            action="run_budget",
+            payload={"limit_usd": str(self.limit_usd)},
+            result={
+                "spent_usd": str(self.spent),
+                "exceeded": exc_type is RunBudgetExceeded,
+            },
+            prospect_id=self.prospect_id,
+        )

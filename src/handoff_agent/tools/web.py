@@ -27,6 +27,7 @@ from ..config import load_settings
 ALLOWED_SCHEMES = frozenset({"http", "https"})
 MAX_RESPONSE_BYTES = 5_000_000
 MAX_REDIRECTS = 5
+DNS_TIMEOUT_SECONDS = 5.0
 
 
 class PageUnavailable(RuntimeError):
@@ -42,7 +43,13 @@ class PageContent:
 
 
 def _resolve(host: str) -> list[str]:
-    """Split out so tests can substitute it and stay off the network."""
+    """Split out so tests can substitute it and stay off the network.
+
+    getaddrinfo ignores every timeout Python offers and blocks for the OS
+    resolver's own limit. A global default keeps a hanging resolver from
+    holding a worker for that limit on each of up to six hops.
+    """
+    socket.setdefaulttimeout(DNS_TIMEOUT_SECONDS)
     return [info[4][0] for info in socket.getaddrinfo(host, None)]
 
 
@@ -72,14 +79,11 @@ def _assert_publicly_routable(url: str) -> None:
 
     for address in addresses:
         ip = ipaddress.ip_address(address)
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
+        # `not is_global` en vez de una lista de is_private/is_loopback/etc.:
+        # esa lista deja pasar CGNAT 100.64.0.0/10 —que es exactamente lo que
+        # usan Fly.io, muchos clústeres de k8s y Tailscale— y también 240/4 y
+        # los rangos de documentación. is_global los cubre todos de una vez.
+        if not ip.is_global:
             raise PageUnavailable(
                 f"refusing to fetch {url}: {host} resolves to non-public address {ip}"
             )
@@ -89,6 +93,8 @@ def _fetch(url: str, deadline: float) -> tuple[str, str]:
     """Follow redirects by hand, vetting every hop. Returns (final_url, body)."""
     current = url
     for _ in range(MAX_REDIRECTS + 1):
+        if time.monotonic() >= deadline:
+            raise PageUnavailable(f"deadline exceeded fetching {url}")
         _assert_publicly_routable(current)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -120,7 +126,13 @@ def _fetch(url: str, deadline: float) -> tuple[str, str]:
                 if time.monotonic() > deadline:
                     raise PageUnavailable(f"deadline exceeded reading {current}")
 
-            return current, body.decode(response.encoding or "utf-8", errors="replace")
+            try:
+                return current, body.decode(response.encoding or "utf-8", errors="replace")
+            except LookupError:
+                # Un charset= inventado en la cabecera no es un httpx.HTTPError,
+                # así que sin esto sale como LookupError crudo y tumba al
+                # llamante en vez de degradar.
+                return current, body.decode("utf-8", errors="replace")
 
     raise PageUnavailable(f"too many redirects starting at {url}")
 

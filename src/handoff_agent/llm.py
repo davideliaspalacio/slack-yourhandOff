@@ -7,6 +7,7 @@ Langfuse. Calling the OpenAI SDK directly anywhere else is a bug.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -16,6 +17,8 @@ from openai import OpenAI
 
 from . import guards, ledger, tracing
 from .config import load_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,9 @@ def complete(
     json_mode: bool = False,
 ) -> LLMResponse:
     guards.check_kill_switch()
+    # El tope mensual solo existe si alguien lo comprueba, y esta es la única
+    # puerta por la que se gasta dinero en LLM.
+    guards.check_monthly_budget()
     settings = load_settings()
 
     messages = []
@@ -83,16 +89,30 @@ def complete(
         prospect_id=prospect_id,
     )
 
-    cost = ledger.record_llm_call(
-        stage=stage,
-        model=settings.openai_model,
-        input_tokens=fresh_input,
-        cached_tokens=cached,
-        output_tokens=usage.completion_tokens,
-        latency_ms=latency_ms,
-        prospect_id=prospect_id,
-        trace_id=trace_id,
-    )
+    try:
+        cost = ledger.record_llm_call(
+            stage=stage,
+            model=settings.openai_model,
+            input_tokens=fresh_input,
+            cached_tokens=cached,
+            output_tokens=usage.completion_tokens,
+            latency_ms=latency_ms,
+            prospect_id=prospect_id,
+            trace_id=trace_id,
+        )
+    except Exception:
+        # La llamada ya está pagada. Reventar aquí perdería el dinero y además
+        # la respuesta, así que se registra en el log con todo lo necesario
+        # para reconstruir la fila a mano y se sigue. Es un agujero contable
+        # visible, no uno silencioso.
+        cost = ledger.compute_llm_cost(fresh_input, cached, usage.completion_tokens)
+        logger.critical(
+            "LEDGER GAP: llamada a %s cobrada pero no registrada — "
+            "stage=%s input=%d cached=%d output=%d cost_usd=%s prospect_id=%s trace_id=%s",
+            settings.openai_model, stage, fresh_input, cached,
+            usage.completion_tokens, cost, prospect_id, trace_id,
+            exc_info=True,
+        )
 
     return LLMResponse(
         text=text,

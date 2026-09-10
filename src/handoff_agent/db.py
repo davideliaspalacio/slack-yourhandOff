@@ -8,6 +8,8 @@ expose. This connection carries service_role and therefore bypasses RLS.
 from __future__ import annotations
 
 import atexit
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
 
@@ -37,6 +39,18 @@ def fetch_all(sql: str, params: tuple[Any, ...] = ()) -> list[dict]:
     with get_pool().connection() as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(sql, params)
         return cur.fetchall()
+
+
+@contextmanager
+def transaction() -> Iterator[Any]:
+    """Several statements under one transaction, on one connection.
+
+    Needed wherever a lock has to outlive the statement that takes it:
+    pg_advisory_xact_lock is scoped to the transaction, and the helpers above
+    open and commit one transaction per call.
+    """
+    with get_pool().connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        yield cur
 
 
 def execute(sql: str, params: tuple[Any, ...] = ()) -> int:

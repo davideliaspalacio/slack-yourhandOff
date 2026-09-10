@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from jobspy import scrape_jobs
+
 from .. import ledger
 
 
@@ -26,19 +28,38 @@ class JobPosting:
 
 def _scrape(**kwargs):
     """Indirection so tests can substitute the scraper without network access."""
-    from jobspy import scrape_jobs
-
     return scrape_jobs(**kwargs)
+
+
+LEGAL_SUFFIXES = (
+    "inc", "inc.", "llc", "l.l.c.", "ltd", "ltd.", "limited", "corp", "corp.",
+    "corporation", "co", "co.", "company", "gmbh", "sa", "s.a.", "sas", "bv",
+    "plc", "ag", "oy", "ab", "pte", "pty",
+)
+
+
+def _normalise_company(name: str) -> str:
+    """Lowercase, strip punctuation noise and drop a trailing legal suffix, so
+    that "Acme, Inc." and "Acme" are the same employer."""
+    cleaned = name.strip().casefold().replace(",", " ").replace("&", " and ")
+    words = cleaned.split()
+    while words and words[-1] in LEGAL_SUFFIXES:
+        words.pop()
+    return " ".join(words)
 
 
 def _matches_company(row_company: str, wanted: str) -> bool:
     """JobSpy searches by keyword, not by employer, so a search for "Acme"
     happily returns jobs at other companies whose text mentions Acme. Without
-    this filter the dossier fills with other employers' vacancies and the
-    corroboration signal in the score becomes noise."""
-    a = row_company.strip().casefold()
-    b = wanted.strip().casefold()
-    return bool(a) and (a == b or a.startswith(b) or b.startswith(a))
+    this filter the dossier fills with other employers' vacancies and each one
+    adds a spurious +2 of corroboration to the score.
+
+    Matching is exact after normalising: prefix matching let "Metabase" pass
+    for "Meta" and "Handoff Logistics" for "Handoff", which is the same bug
+    wearing a different hat.
+    """
+    a = _normalise_company(row_company)
+    return bool(a) and a == _normalise_company(wanted)
 
 
 def buscar_ofertas(

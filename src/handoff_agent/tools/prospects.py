@@ -33,20 +33,31 @@ def upsert_prospect(slack_user_id: str, full_name: str | None = None) -> dict:
 
 
 def save_dossier(prospect_id: str, content: dict, sources: list) -> int:
-    """Store a new dossier version for the person. Returns the version number."""
-    row = db.fetch_one(
-        """
-        insert into dossiers (prospect_id, version, content, sources)
-        values (
-            %s,
-            (select coalesce(max(version), 0) + 1 from dossiers where prospect_id = %s),
-            %s, %s
+    """Store a new dossier version for the person. Returns the version number.
+
+    The advisory lock is not optional. Under READ COMMITTED, two concurrent
+    saves both read the same max(version) and the second one dies on the unique
+    constraint — throwing away a dossier that cost real money to research. Both
+    spec triggers can land on the same person at once (they wrote a message and
+    joined as a new member), and so can the panel's re-investigar button.
+
+    The lock is taken in its own statement rather than in a CTE: PostgreSQL does
+    not guarantee when a CTE is evaluated, so folding it into the insert leaves
+    the race exactly as it was.
+    """
+    with db.transaction() as cur:
+        cur.execute("select pg_advisory_xact_lock(hashtext(%s))", (str(prospect_id),))
+        cur.execute(
+            """
+            insert into dossiers (prospect_id, version, content, sources)
+            select %s, coalesce(max(version), 0) + 1, %s, %s
+            from dossiers
+            where prospect_id = %s
+            returning version
+            """,
+            (prospect_id, json.dumps(content), json.dumps(sources), prospect_id),
         )
-        returning version
-        """,
-        (prospect_id, prospect_id, json.dumps(content), json.dumps(sources)),
-    )
-    return row["version"]
+        return cur.fetchone()["version"]
 
 
 def historial_prospecto(slack_user_id: str) -> dict:

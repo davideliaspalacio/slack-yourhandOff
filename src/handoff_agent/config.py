@@ -31,8 +31,6 @@ class Settings:
     price_cached_input_per_m: float
     price_output_per_m: float
     http_timeout_seconds: float
-    monthly_budget_usd: float
-    run_budget_usd: float
 
 
 def _required(name: str) -> str:
@@ -55,6 +53,4 @@ def load_settings() -> Settings:
         price_cached_input_per_m=float(os.environ.get("PRICE_CACHED_INPUT_PER_M", "0.50")),
         price_output_per_m=float(os.environ.get("PRICE_OUTPUT_PER_M", "8.00")),
         http_timeout_seconds=float(os.environ.get("HTTP_TIMEOUT_SECONDS", "30")),
-        monthly_budget_usd=float(os.environ.get("MONTHLY_BUDGET_USD", "150")),
-        run_budget_usd=float(os.environ.get("RUN_BUDGET_USD", "1.00")),
     )

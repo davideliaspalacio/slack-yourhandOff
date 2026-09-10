@@ -37,6 +37,12 @@ def conn(database_url):
     así, cuando un test falla, sus filas siguen ahí para inspeccionarlas."""
     with psycopg.connect(database_url, autocommit=True) as connection:
         with connection.cursor() as cur:
-            for table in _existing(cur, TABLES_TO_CLEAN):
-                cur.execute(f"truncate table {table} cascade")
+            present = _existing(cur, TABLES_TO_CLEAN)
+            if present:
+                # Un solo TRUNCATE con todas las tablas, no cinco seguidos: en
+                # sentencias separadas esta conexión toma los ACCESS EXCLUSIVE
+                # de una en una mientras el pool del código sostiene locks en
+                # otro orden, y la suite entera se cae por deadlock cada pocas
+                # corridas. Una sentencia los adquiere de golpe.
+                cur.execute(f"truncate table {', '.join(present)} restart identity cascade")
         yield connection

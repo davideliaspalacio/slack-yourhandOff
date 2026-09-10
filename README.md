@@ -82,7 +82,7 @@ Romper cualquiera de estas es un bug, no una preferencia:
 ## Comandos
 
 ```bash
-uv run pytest                                   # 79 tests
+uv run pytest                                   # 91 tests
 supabase db reset                               # rehace el esquema desde cero
 docker compose -f docker-compose.searxng.yml logs -f
 ```

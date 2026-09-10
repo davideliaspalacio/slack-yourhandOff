@@ -27,12 +27,15 @@ def test_record_llm_call_persists_a_row_and_returns_cost(conn):
 
 
 def test_record_cost_event_persists_non_llm_spend(conn):
-    ledger.record_cost_event(source="twilio", cost_usd=0.0079, description="SMS a Anthony")
+    """0.1 + 0.2 no es representable en binario: con float() el valor guardado
+    saldría 0.300000000000000044..., así que este caso sí prueba que la
+    conversión a Decimal ocurre. Con 0.0079 el test pasaba igual sin ella."""
+    ledger.record_cost_event(source="twilio", cost_usd=0.1 + 0.2, description="SMS a Anthony")
     with conn.cursor() as cur:
         cur.execute("select source, cost_usd from cost_events")
         row = cur.fetchone()
     assert row[0] == "twilio"
-    assert Decimal(row[1]) == Decimal("0.007900")
+    assert Decimal(row[1]) == Decimal("0.300000")
 
 
 def test_record_action_appends_to_the_log(conn):

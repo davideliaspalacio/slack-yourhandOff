@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from handoff_agent.tools import jobs
 
@@ -123,3 +124,38 @@ def test_buscar_ofertas_attributes_the_action_to_a_person(conn, monkeypatch):
     with conn.cursor() as cur:
         cur.execute("select prospect_id from agent_actions where action = 'buscar_ofertas'")
         assert str(cur.fetchone()[0]) == str(person["id"])
+
+
+def test_buscar_ofertas_asks_the_boards_for_the_right_thing(conn, monkeypatch):
+    """Los dobles descartaban **kwargs, así que search_term o results_wanted
+    se podían romper sin que ningún test se enterase."""
+    captured = {}
+
+    def capture(**kwargs):
+        captured.update(kwargs)
+        return _frame([])
+
+    monkeypatch.setattr(jobs, "_scrape", capture)
+    jobs.buscar_ofertas("Acme Corp", limit=10)
+    assert captured["search_term"] == "Acme Corp"
+    assert "linkedin" in captured["site_name"]
+    # Se piden de más porque el filtro por empleador descarta la mayoría.
+    assert captured["results_wanted"] > 10
+
+
+@pytest.mark.parametrize(
+    ("row_company", "wanted", "should_match"),
+    [
+        ("Anthropic", "Anthropic", True),
+        ("Acme, Inc.", "Acme", True),
+        ("ACME CORP", "Acme Corp", True),
+        ("Metabase", "Meta", False),
+        ("Handoff Logistics", "Handoff", False),
+        ("Meta", "Metabase", False),
+        ("", "Acme", False),
+    ],
+)
+def test_employer_matching_rejects_lookalikes(row_company, wanted, should_match):
+    """El prefijo dejaba pasar Metabase para Meta, y cada oferta ajena suma un
+    +2 de corroboración falso al score."""
+    assert jobs._matches_company(row_company, wanted) is should_match
