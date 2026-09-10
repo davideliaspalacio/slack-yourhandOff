@@ -10,7 +10,7 @@ def test_compute_llm_cost_charges_cached_tokens_at_the_lower_rate():
 
 
 def test_compute_llm_cost_is_zero_for_no_tokens():
-    assert ledger.compute_llm_cost(0, 0, 0) == Decimal("0")
+    assert ledger.compute_llm_cost(0, 0, 0) == Decimal(0)
 
 
 def test_record_llm_call_persists_a_row_and_returns_cost(conn):
@@ -47,8 +47,11 @@ def test_record_action_appends_to_the_log(conn):
 
 def test_spend_since_sums_both_ledgers(conn):
     ledger.record_llm_call(
-        stage="research", model="gpt-4.1",
-        input_tokens=1_000_000, cached_tokens=0, output_tokens=0,
+        stage="research",
+        model="gpt-4.1",
+        input_tokens=1_000_000,
+        cached_tokens=0,
+        output_tokens=0,
     )
     ledger.record_cost_event(source="twilio", cost_usd=1.00)
     total = ledger.spend_since(datetime.now(UTC) - timedelta(hours=1))

@@ -4,6 +4,7 @@ Supabase is the source of truth for spend because the metric that matters —
 cost per closed deal — is a JOIN against prospects, feedback and deliveries.
 Langfuse holds the execution trees; it cannot answer that question.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,8 +44,17 @@ def record_llm_call(
              output_tokens, cost_usd, latency_ms, trace_id)
         values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (prospect_id, stage, model, input_tokens, cached_tokens,
-         output_tokens, cost, latency_ms, trace_id),
+        (
+            prospect_id,
+            stage,
+            model,
+            input_tokens,
+            cached_tokens,
+            output_tokens,
+            cost,
+            latency_ms,
+            trace_id,
+        ),
     )
     return cost
 
@@ -69,10 +79,13 @@ def record_action(
     prospect_id: str | None = None,
 ) -> None:
     db.execute(
-        "insert into agent_actions (prospect_id, action, payload, result) "
-        "values (%s, %s, %s, %s)",
-        (prospect_id, action, json.dumps(payload),
-         json.dumps(result) if result is not None else None),
+        "insert into agent_actions (prospect_id, action, payload, result) values (%s, %s, %s, %s)",
+        (
+            prospect_id,
+            action,
+            json.dumps(payload),
+            json.dumps(result) if result is not None else None,
+        ),
     )
 
 

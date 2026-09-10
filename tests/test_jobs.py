@@ -8,12 +8,28 @@ def _frame(rows):
 
 
 def test_buscar_ofertas_maps_the_dataframe(conn, monkeypatch):
-    monkeypatch.setattr(jobs, "_scrape", lambda **kw: _frame([
-        {"title": "Support Lead", "company": "Acme", "location": "Remote",
-         "job_url": "https://x/1", "site": "linkedin"},
-        {"title": "Ops Associate", "company": "Acme", "location": "NYC",
-         "job_url": "https://x/2", "site": "indeed"},
-    ]))
+    monkeypatch.setattr(
+        jobs,
+        "_scrape",
+        lambda **kw: _frame(
+            [
+                {
+                    "title": "Support Lead",
+                    "company": "Acme",
+                    "location": "Remote",
+                    "job_url": "https://x/1",
+                    "site": "linkedin",
+                },
+                {
+                    "title": "Ops Associate",
+                    "company": "Acme",
+                    "location": "NYC",
+                    "job_url": "https://x/2",
+                    "site": "indeed",
+                },
+            ]
+        ),
+    )
     postings = jobs.buscar_ofertas("Acme")
     assert [p.title for p in postings] == ["Support Lead", "Ops Associate"]
     assert postings[0].site == "linkedin"
@@ -46,23 +62,55 @@ def test_buscar_ofertas_discards_other_employers(conn, monkeypatch):
     """JobSpy busca por palabra clave: una búsqueda de "Anthropic" devuelve
     ofertas de TRM Labs o ADT cuyo texto menciona la palabra. Solo el empleador
     pedido puede llegar al dossier."""
-    monkeypatch.setattr(jobs, "_scrape", lambda **kw: _frame([
-        {"title": "Research Engineer", "company": "Anthropic", "location": "SF",
-         "job_url": "https://x/1", "site": "linkedin"},
-        {"title": "AI Architect", "company": "ADT", "location": "FL",
-         "job_url": "https://x/2", "site": "indeed"},
-        {"title": "Consulting AI Director", "company": "Baker Tilly Canada",
-         "location": "Toronto", "job_url": "https://x/3", "site": "indeed"},
-    ]))
+    monkeypatch.setattr(
+        jobs,
+        "_scrape",
+        lambda **kw: _frame(
+            [
+                {
+                    "title": "Research Engineer",
+                    "company": "Anthropic",
+                    "location": "SF",
+                    "job_url": "https://x/1",
+                    "site": "linkedin",
+                },
+                {
+                    "title": "AI Architect",
+                    "company": "ADT",
+                    "location": "FL",
+                    "job_url": "https://x/2",
+                    "site": "indeed",
+                },
+                {
+                    "title": "Consulting AI Director",
+                    "company": "Baker Tilly Canada",
+                    "location": "Toronto",
+                    "job_url": "https://x/3",
+                    "site": "indeed",
+                },
+            ]
+        ),
+    )
     postings = jobs.buscar_ofertas("Anthropic")
     assert [p.company for p in postings] == ["Anthropic"]
 
 
 def test_buscar_ofertas_matches_employer_case_insensitively(conn, monkeypatch):
-    monkeypatch.setattr(jobs, "_scrape", lambda **kw: _frame([
-        {"title": "Support Lead", "company": "ACME CORP", "location": "Remote",
-         "job_url": "https://x/1", "site": "indeed"},
-    ]))
+    monkeypatch.setattr(
+        jobs,
+        "_scrape",
+        lambda **kw: _frame(
+            [
+                {
+                    "title": "Support Lead",
+                    "company": "ACME CORP",
+                    "location": "Remote",
+                    "job_url": "https://x/1",
+                    "site": "indeed",
+                },
+            ]
+        ),
+    )
     assert len(jobs.buscar_ofertas("Acme Corp")) == 1
 
 

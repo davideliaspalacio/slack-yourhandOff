@@ -3,6 +3,7 @@
 Self-hosted rather than Tavily/Serper/Exa: no API key, no per-query billing,
 and the queries never leave our infrastructure.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,9 +25,7 @@ class SearchResult:
     snippet: str
 
 
-def buscar_web(
-    query: str, limit: int = 8, prospect_id: str | None = None
-) -> list[SearchResult]:
+def buscar_web(query: str, limit: int = 8, prospect_id: str | None = None) -> list[SearchResult]:
     """Search the public web. Returns at most `limit` results, best first.
 
     `prospect_id` attributes the action to a person so it shows up in that
@@ -53,7 +52,9 @@ def buscar_web(
         for item in payload.get("results", [])[:limit]
     ]
     ledger.record_action(
-        action="buscar_web", payload={"query": query, "limit": limit},
-        result={"count": len(results)}, prospect_id=prospect_id,
+        action="buscar_web",
+        payload={"query": query, "limit": limit},
+        result={"count": len(results)},
+        prospect_id=prospect_id,
     )
     return results

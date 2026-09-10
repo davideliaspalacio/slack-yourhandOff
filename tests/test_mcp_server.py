@@ -7,8 +7,13 @@ from handoff_agent import ledger, mcp_server
 async def test_server_exposes_the_expected_tools():
     tools = await mcp_server.mcp.list_tools()
     names = {tool.name for tool in tools}
-    assert {"buscar_web", "leer_sitio", "buscar_ofertas",
-            "historial_prospecto", "resumen_costes"} <= names
+    assert {
+        "buscar_web",
+        "leer_sitio",
+        "buscar_ofertas",
+        "historial_prospecto",
+        "resumen_costes",
+    } <= names
 
 
 @pytest.mark.asyncio
@@ -26,8 +31,11 @@ def test_resumen_costes_reports_zero_on_an_empty_ledger(conn):
 
 def test_resumen_costes_adds_up_both_ledgers(conn):
     ledger.record_llm_call(
-        stage="research", model="gpt-4.1",
-        input_tokens=1_000_000, cached_tokens=0, output_tokens=0,
+        stage="research",
+        model="gpt-4.1",
+        input_tokens=1_000_000,
+        cached_tokens=0,
+        output_tokens=0,
     )
     ledger.record_cost_event(source="twilio", cost_usd=0.50)
     summary = mcp_server.resumen_costes(days=30)

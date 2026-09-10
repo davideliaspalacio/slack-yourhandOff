@@ -9,6 +9,7 @@ search results and from links other people paste into a third-party Slack. So
 the fetch is deliberately hostile-input-shaped — scheme allowlist, per-hop
 address checks, a byte ceiling and a total deadline — rather than a plain GET.
 """
+
 from __future__ import annotations
 
 import ipaddress
@@ -124,9 +125,7 @@ def _fetch(url: str, deadline: float) -> tuple[str, str]:
     raise PageUnavailable(f"too many redirects starting at {url}")
 
 
-def leer_sitio(
-    url: str, max_chars: int = 20_000, prospect_id: str | None = None
-) -> PageContent:
+def leer_sitio(url: str, max_chars: int = 20_000, prospect_id: str | None = None) -> PageContent:
     """Fetch `url` and return its readable text, truncated to `max_chars`."""
     settings = load_settings()
     deadline = time.monotonic() + settings.http_timeout_seconds

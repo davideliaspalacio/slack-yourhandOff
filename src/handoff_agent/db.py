@@ -4,6 +4,7 @@ Workers connect straight to Postgres rather than through PostgREST because the
 job queue relies on SELECT ... FOR UPDATE SKIP LOCKED, which PostgREST does not
 expose. This connection carries service_role and therefore bypasses RLS.
 """
+
 from __future__ import annotations
 
 import atexit

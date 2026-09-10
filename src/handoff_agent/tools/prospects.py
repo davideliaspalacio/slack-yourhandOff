@@ -3,6 +3,7 @@
 The person, not the message, is the unit of work: research is paid for once and
 every later message is scored against the dossier this returns.
 """
+
 from __future__ import annotations
 
 import json
@@ -50,9 +51,7 @@ def save_dossier(prospect_id: str, content: dict, sources: list) -> int:
 
 def historial_prospecto(slack_user_id: str) -> dict:
     """What we already know: the person, their latest dossier, recent actions."""
-    prospect = db.fetch_one(
-        "select * from prospects where slack_user_id = %s", (slack_user_id,)
-    )
+    prospect = db.fetch_one("select * from prospects where slack_user_id = %s", (slack_user_id,))
     if prospect is None:
         return {"prospect": None, "dossier": None, "actions": []}
 

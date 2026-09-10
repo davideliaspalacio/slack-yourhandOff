@@ -7,6 +7,7 @@ account is involved and nothing here risks an account ban.
 Job boards block scrapers routinely. A failure here degrades the dossier; it
 must never take down a research run.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -57,8 +58,10 @@ def buscar_ofertas(
         )
     except Exception as exc:  # noqa: BLE001 - degrading is the policy here
         ledger.record_action(
-            action="buscar_ofertas", payload={"company": company},
-            result={"error": str(exc), "count": 0}, prospect_id=prospect_id,
+            action="buscar_ofertas",
+            payload={"company": company},
+            result={"error": str(exc), "count": 0},
+            prospect_id=prospect_id,
         )
         return []
 
@@ -75,7 +78,9 @@ def buscar_ofertas(
     ][:limit]
 
     ledger.record_action(
-        action="buscar_ofertas", payload={"company": company, "limit": limit},
-        result={"count": len(postings), "scanned": len(frame)}, prospect_id=prospect_id,
+        action="buscar_ofertas",
+        payload={"company": company, "limit": limit},
+        result={"count": len(postings), "scanned": len(frame)},
+        prospect_id=prospect_id,
     )
     return postings

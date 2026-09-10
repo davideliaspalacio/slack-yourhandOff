@@ -4,6 +4,7 @@ Supabase holds the numbers; Langfuse holds the execution tree that explains
 them. Tracing is best-effort by design: if Langfuse is unreachable or
 unconfigured, the pipeline carries on and the ledger is still complete.
 """
+
 from __future__ import annotations
 
 import logging
@@ -43,7 +44,10 @@ def trace_llm_call(
         )
         trace = client.trace(name=stage, metadata={"prospect_id": prospect_id})
         trace.generation(
-            name=stage, model=model, input=prompt, output=completion,
+            name=stage,
+            model=model,
+            input=prompt,
+            output=completion,
             usage_details={
                 "input": usage.get("input", 0),
                 "cache_read_input_tokens": usage.get("cached", 0),

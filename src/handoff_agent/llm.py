@@ -4,6 +4,7 @@ Every call goes through here so that three things always happen: the kill
 switch is honoured, the cost lands in the ledger, and the call shows up in
 Langfuse. Calling the OpenAI SDK directly anywhere else is a bug.
 """
+
 from __future__ import annotations
 
 import time

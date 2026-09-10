@@ -22,9 +22,8 @@ def test_prospect_state_defaults_to_nuevo(conn):
 def test_slack_user_id_is_unique(conn):
     with conn.cursor() as cur:
         cur.execute("insert into prospects (slack_user_id) values ('U999')")
-    with pytest.raises(psycopg.errors.UniqueViolation):
-        with conn.cursor() as cur:
-            cur.execute("insert into prospects (slack_user_id) values ('U999')")
+    with pytest.raises(psycopg.errors.UniqueViolation), conn.cursor() as cur:
+        cur.execute("insert into prospects (slack_user_id) values ('U999')")
 
 
 def test_rls_is_enabled_on_prospects(conn):
@@ -56,9 +55,8 @@ def test_dossier_versions_are_unique_per_prospect(conn):
             "insert into dossiers (prospect_id, version, content) values (%s, 1, '{}')",
             (prospect_id,),
         )
-    with pytest.raises(psycopg.errors.UniqueViolation):
-        with conn.cursor() as cur:
-            cur.execute(
-                "insert into dossiers (prospect_id, version, content) values (%s, 1, '{}')",
-                (prospect_id,),
-            )
+    with pytest.raises(psycopg.errors.UniqueViolation), conn.cursor() as cur:
+        cur.execute(
+            "insert into dossiers (prospect_id, version, content) values (%s, 1, '{}')",
+            (prospect_id,),
+        )

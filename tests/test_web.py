@@ -58,24 +58,31 @@ def test_leer_sitio_logs_the_action(conn):
 
 # --- SSRF y límites de recurso ---
 
-@pytest.mark.parametrize("address", [
-    "127.0.0.1",        # loopback: Supabase, Studio y SearXNG viven aquí
-    "169.254.169.254",  # metadatos de instancia en Railway y demás nubes
-    "10.0.0.5",         # red privada
-    "192.168.1.10",     # red privada
-    "::1",              # loopback IPv6
-])
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",  # loopback: Supabase, Studio y SearXNG viven aquí
+        "169.254.169.254",  # metadatos de instancia en Railway y demás nubes
+        "10.0.0.5",  # red privada
+        "192.168.1.10",  # red privada
+        "::1",  # loopback IPv6
+    ],
+)
 def test_leer_sitio_refuses_non_public_addresses(conn, monkeypatch, address):
     monkeypatch.setattr(web, "_resolve", lambda host: [address])
     with pytest.raises(web.PageUnavailable, match="non-public"):
         web.leer_sitio("https://interno.ejemplo/")
 
 
-@pytest.mark.parametrize("url", [
-    "file:///etc/passwd",
-    "gopher://acme.com/",
-    "ftp://acme.com/x",
-])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "gopher://acme.com/",
+        "ftp://acme.com/x",
+    ],
+)
 def test_leer_sitio_refuses_non_http_schemes(conn, url):
     with pytest.raises(web.PageUnavailable, match="refusing scheme"):
         web.leer_sitio(url)
@@ -85,6 +92,7 @@ def test_leer_sitio_refuses_non_http_schemes(conn, url):
 def test_leer_sitio_checks_every_redirect_hop(conn, monkeypatch):
     """Vetar solo la URL pedida deja el destino de la redirección sin comprobar,
     que es justo por donde se llega a los metadatos de la instancia."""
+
     def resolve(host):
         return ["169.254.169.254"] if host == "metadata.interno" else ["93.184.216.34"]
 

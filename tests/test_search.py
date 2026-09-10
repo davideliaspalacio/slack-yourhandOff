@@ -10,10 +10,19 @@ SEARXNG = "http://127.0.0.1:8080"
 @respx.mock
 def test_buscar_web_maps_searxng_results(conn):
     respx.get(f"{SEARXNG}/search").mock(
-        return_value=httpx.Response(200, json={"results": [
-            {"title": "Acme Corp", "url": "https://acme.com", "content": "We build things"},
-            {"title": "Acme on LinkedIn", "url": "https://linkedin.com/company/acme", "content": ""},
-        ]})
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": "Acme Corp", "url": "https://acme.com", "content": "We build things"},
+                    {
+                        "title": "Acme on LinkedIn",
+                        "url": "https://linkedin.com/company/acme",
+                        "content": "",
+                    },
+                ]
+            },
+        )
     )
     results = search.buscar_web("acme corp")
     assert [r.url for r in results] == ["https://acme.com", "https://linkedin.com/company/acme"]
@@ -23,9 +32,14 @@ def test_buscar_web_maps_searxng_results(conn):
 @respx.mock
 def test_buscar_web_respects_the_limit(conn):
     respx.get(f"{SEARXNG}/search").mock(
-        return_value=httpx.Response(200, json={"results": [
-            {"title": f"r{i}", "url": f"https://e{i}.com", "content": ""} for i in range(20)
-        ]})
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": f"r{i}", "url": f"https://e{i}.com", "content": ""} for i in range(20)
+                ]
+            },
+        )
     )
     assert len(search.buscar_web("algo", limit=3)) == 3
 
@@ -54,8 +68,13 @@ def test_buscar_web_works_without_an_openai_key(conn, monkeypatch):
     integraciones que no tienen nada que ver."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     respx.get(f"{SEARXNG}/search").mock(
-        return_value=httpx.Response(200, json={"results": [
-            {"title": "Acme", "url": "https://acme.com", "content": ""},
-        ]})
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": "Acme", "url": "https://acme.com", "content": ""},
+                ]
+            },
+        )
     )
     assert len(search.buscar_web("acme")) == 1

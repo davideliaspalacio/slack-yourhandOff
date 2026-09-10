@@ -30,8 +30,9 @@ class FakeOpenAI:
 def test_complete_returns_text_and_cost(conn, monkeypatch):
     monkeypatch.setattr(llm, "_client", lambda: FakeOpenAI(text="respuesta"))
     result = llm.complete("¿quién es Ada Lovelace?", stage="research")
-    expected = Decimal("1000") / Decimal("1000000") * Decimal("2.00") + \
-        Decimal("500") / Decimal("1000000") * Decimal("8.00")
+    expected = Decimal(1000) / Decimal(1000000) * Decimal("2.00") + Decimal(500) / Decimal(
+        1000000
+    ) * Decimal("8.00")
     assert result.text == "respuesta"
     assert result.cost_usd == expected
     assert result.latency_ms >= 0

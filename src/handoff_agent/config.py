@@ -5,6 +5,7 @@ run. Third-party credentials are validated at the point of use instead, so that
 a tool which needs no LLM — buscar_web, leer_sitio, buscar_ofertas — keeps
 working while the other integrations are still being wired up.
 """
+
 from __future__ import annotations
 
 import os

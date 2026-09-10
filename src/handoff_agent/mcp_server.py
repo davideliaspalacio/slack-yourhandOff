@@ -7,6 +7,7 @@ Tool names are Spanish because they are the team's interface.
 Built on the MCP Python SDK 2.x API (MCPServer); in 1.x this class was named
 FastMCP.
 """
+
 from __future__ import annotations
 
 from dataclasses import asdict
@@ -38,7 +39,7 @@ def leer_sitio(url: str, max_chars: int = 20_000, prospect_id: str | None = None
         # contexto de un modelo. Sin marca, un texto plantado en una página de
         # careers se lee igual que una instrucción nuestra.
         "text": (
-            f"<contenido-web-no-confiable origen=\"{page.final_url}\">\n"
+            f'<contenido-web-no-confiable origen="{page.final_url}">\n'
             f"{page.text}\n</contenido-web-no-confiable>"
         ),
     }
