@@ -47,9 +47,10 @@ que las herramientas que no tocan un LLM funcionan mientras se conecta lo demás
 Sin claves de Langfuse el trazado es un no-op silencioso: el ledger de costes
 vive en Supabase y no depende de ningún tercero.
 
-**Antes de producción:** contrastar `PRICE_INPUT_PER_M`, `PRICE_CACHED_INPUT_PER_M`
-y `PRICE_OUTPUT_PER_M` con la página de precios de OpenAI. Los valores por
-defecto son una estimación y de ellos sale toda la contabilidad.
+Los precios de `PRICE_INPUT_PER_M`, `PRICE_CACHED_INPUT_PER_M` y
+`PRICE_OUTPUT_PER_M` se verificaron contra la página de OpenAI el 2026-09-10
+($2,00 / $0,50 / $8,00 por millón en gpt-4.1). Toda la contabilidad sale de ellos:
+si OpenAI los cambia o se cambia de modelo, hay que actualizarlos aquí.
 
 ## Usar el toolbox desde Claude Code
 
