@@ -109,8 +109,14 @@ def complete(
         logger.critical(
             "LEDGER GAP: llamada a %s cobrada pero no registrada — "
             "stage=%s input=%d cached=%d output=%d cost_usd=%s prospect_id=%s trace_id=%s",
-            settings.openai_model, stage, fresh_input, cached,
-            usage.completion_tokens, cost, prospect_id, trace_id,
+            settings.openai_model,
+            stage,
+            fresh_input,
+            cached,
+            usage.completion_tokens,
+            cost,
+            prospect_id,
+            trace_id,
             exc_info=True,
         )
 

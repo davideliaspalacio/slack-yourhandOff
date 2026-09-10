@@ -32,9 +32,30 @@ def _scrape(**kwargs):
 
 
 LEGAL_SUFFIXES = (
-    "inc", "inc.", "llc", "l.l.c.", "ltd", "ltd.", "limited", "corp", "corp.",
-    "corporation", "co", "co.", "company", "gmbh", "sa", "s.a.", "sas", "bv",
-    "plc", "ag", "oy", "ab", "pte", "pty",
+    "inc",
+    "inc.",
+    "llc",
+    "l.l.c.",
+    "ltd",
+    "ltd.",
+    "limited",
+    "corp",
+    "corp.",
+    "corporation",
+    "co",
+    "co.",
+    "company",
+    "gmbh",
+    "sa",
+    "s.a.",
+    "sas",
+    "bv",
+    "plc",
+    "ag",
+    "oy",
+    "ab",
+    "pte",
+    "pty",
 )
 
 

@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from mcp.server.mcpserver import MCPServer
 
-from . import db, ledger
+from . import db, ledger, untrusted
 from .tools import jobs, prospects, search, web
 
 mcp = MCPServer("handoff-tools")
@@ -34,14 +34,11 @@ def leer_sitio(url: str, max_chars: int = 20_000, prospect_id: str | None = None
     return {
         "url": page.url,
         "final_url": page.final_url,
-        "title": page.title,
+        "title": untrusted.neutralise(page.title),
         # Delimitado a propósito: esto lo escribió un tercero y va directo al
         # contexto de un modelo. Sin marca, un texto plantado en una página de
         # careers se lee igual que una instrucción nuestra.
-        "text": (
-            f'<contenido-web-no-confiable origen="{page.final_url}">\n'
-            f"{page.text}\n</contenido-web-no-confiable>"
-        ),
+        "text": untrusted.fence(page.text, page.final_url),
     }
 
 

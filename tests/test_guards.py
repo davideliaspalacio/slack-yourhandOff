@@ -84,9 +84,10 @@ def test_run_budget_records_what_the_run_spent(conn):
 
 
 def test_run_budget_records_that_the_cap_was_blown(conn):
-    with pytest.raises(guards.RunBudgetExceeded), guards.RunBudget(
-        limit_usd=Decimal("0.10")
-    ) as budget:
+    with (
+        pytest.raises(guards.RunBudgetExceeded),
+        guards.RunBudget(limit_usd=Decimal("0.10")) as budget,
+    ):
         budget.add(Decimal("0.50"))
     with conn.cursor() as cur:
         cur.execute("select result from agent_actions where action = 'run_budget'")
