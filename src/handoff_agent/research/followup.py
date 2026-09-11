@@ -15,8 +15,13 @@ MAX_QUERY_CHARS = 200
 
 
 def suggested_queries(dossier: dict) -> list[str]:
+    raw_queries = dossier.get("busquedas_sugeridas")
+    # El validador no mira esta clave: un número rompería el bucle y una cadena
+    # se iteraría letra por letra.
+    if not isinstance(raw_queries, list):
+        return []
     queries = []
-    for raw in dossier.get("busquedas_sugeridas") or []:
+    for raw in raw_queries:
         if isinstance(raw, str) and raw.strip():
             queries.append(raw.strip()[:MAX_QUERY_CHARS])
         if len(queries) == MAX_QUERIES:

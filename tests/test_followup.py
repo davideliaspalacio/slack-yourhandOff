@@ -67,3 +67,10 @@ def test_a_followup_that_also_fails_stays_degraded(monkeypatch):
     monkeypatch.setattr(f.search, "buscar_web", down)
     start = Gathered("acme.com", [], [], [], searches_attempted=3, searches_answered=0)
     assert f.run_followup("pid", start, ["uno"]).search_degraded
+
+
+def test_suggestions_that_are_not_a_list_mean_no_followup():
+    """El modelo puede devolver un número, un booleano o una cadena: iterarla
+    letra por letra lanzaría búsquedas absurdas."""
+    for raw in (3, True, "abc", {"q": "x"}):
+        assert f.suggested_queries({"busquedas_sugeridas": raw}) == []

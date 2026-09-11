@@ -71,6 +71,13 @@ def _set_state(
     )
 
 
+def _company_name(dossier: dict, company: str | None) -> str | None:
+    """El nombre que da el modelo solo si es texto; si no, el de la entrada.
+    Un número rompería el UPDATE con el dossier ya guardado."""
+    name = (dossier.get("empresa") or {}).get("nombre")
+    return name.strip() if isinstance(name, str) and name.strip() else company
+
+
 def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | None]:
     """Guarda el dossier y deja el estado. Devuelve la versión y, si la
     búsqueda salió degradada, el motivo (la persona queda en incompleto)."""
@@ -83,11 +90,10 @@ def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | 
             f"{DEGRADED_REASON}: ninguna de las {gathered.searches_attempted} "
             "búsquedas devolvió resultados"
         )
-    empresa = result.dossier.get("empresa") or {}
     _set_state(
         pid,
         "incompleto" if degraded else "investigado",
-        company=empresa.get("nombre") or company,
+        company=_company_name(result.dossier, company),
         domain=gathered.domain,
     )
     return version, degraded
@@ -131,26 +137,26 @@ def research_person(
             # Desde aquí hay un dossier válido y pagado: todo camino lo guarda.
             first_result, first_gathered = result, gathered
 
-            queries = suggested_queries(result.dossier)
-            if queries:
-                try:
+            try:
+                # Leer lo que propone el modelo ya es segunda pasada: si falla,
+                # vale el primer dossier.
+                queries = suggested_queries(result.dossier)
+                if queries:
                     enriched = run_followup(pid, gathered, queries)
                     result = synthesize(pid, full_name, company, enriched, budget=budget)
                     gathered = enriched
-                except SYSTEM_STOPS as exc:
-                    # La parada del sistema se propaga, pero lo pagado se conserva.
-                    _store(pid, first_result, first_gathered, company)
-                    ledger.record_action(
-                        "seguimiento_cortado", {"motivo": str(exc)}, prospect_id=pid
-                    )
-                    raise
-                except Exception as exc:  # noqa: BLE001 - la primera pasada ya vale
-                    result, gathered = first_result, first_gathered
-                    ledger.record_action(
-                        "seguimiento_descartado",
-                        {"motivo": f"{type(exc).__name__}: {exc}"},
-                        prospect_id=pid,
-                    )
+            except SYSTEM_STOPS as exc:
+                # La parada del sistema se propaga, pero lo pagado se conserva.
+                _store(pid, first_result, first_gathered, company)
+                ledger.record_action("seguimiento_cortado", {"motivo": str(exc)}, prospect_id=pid)
+                raise
+            except Exception as exc:  # noqa: BLE001 - la primera pasada ya vale
+                result, gathered = first_result, first_gathered
+                ledger.record_action(
+                    "seguimiento_descartado",
+                    {"motivo": f"{type(exc).__name__}: {exc}"},
+                    prospect_id=pid,
+                )
 
             version, degraded = _store(pid, result, gathered, company)
     except (DossierInvalid, guards.RunBudgetExceeded) as exc:

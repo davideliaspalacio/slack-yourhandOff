@@ -401,3 +401,58 @@ def test_a_name_with_no_ascii_letters_still_gets_a_stable_id():
     expected = "manual:" + hashlib.sha1("李雷".encode()).hexdigest()[:12]
     assert w.manual_user_id("李雷", None) == expected
     assert w.manual_user_id("王芳", None) != expected
+
+
+# --- Lo que devuelve el modelo no es de fiar en tipo ---------------------------
+
+
+def test_a_non_list_suggestion_field_keeps_the_first_dossier(conn, pipeline):
+    first = make_dossier(busquedas_sugeridas=3, resumen="Primera pasada.")
+    pipeline.setattr(w, "synthesize", synth_returning(first))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "investigado"
+    assert outcome.version == 1
+    assert stored_resumen(outcome.prospect_id) == "Primera pasada."
+    assert state_of(outcome.prospect_id) == "investigado"
+
+
+def test_a_string_suggestion_field_runs_no_searches(conn, pipeline):
+    followups = []
+    pipeline.setattr(
+        w, "run_followup", lambda pid, gathered, queries: followups.append(queries) or gathered
+    )
+    synth = synth_returning(make_dossier(busquedas_sugeridas="abc"))
+    pipeline.setattr(w, "synthesize", synth)
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "investigado"
+    assert followups == []
+    assert len(synth.calls) == 1
+
+
+def test_a_crash_reading_the_suggestions_keeps_the_first_dossier(conn, pipeline):
+    """Leer las búsquedas sugeridas ya es segunda pasada: si falla, vale el primero."""
+
+    def broken(dossier):
+        raise TypeError("busquedas_sugeridas ilegible")
+
+    pipeline.setattr(w, "suggested_queries", broken)
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier(resumen="Primera pasada.")))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "investigado"
+    assert stored_resumen(outcome.prospect_id) == "Primera pasada."
+    action = db.fetch_one(
+        "select payload from agent_actions where action = 'seguimiento_descartado'"
+    )
+    assert action["payload"]["motivo"].startswith("TypeError")
+
+
+@pytest.mark.parametrize("nombre", [123, ["Acme Corp"], "   ", None])
+def test_a_company_name_that_is_not_a_string_falls_back_to_the_input(conn, pipeline, nombre):
+    dossier = make_dossier(empresa={**make_dossier()["empresa"], "nombre": nombre})
+    pipeline.setattr(w, "synthesize", synth_returning(dossier))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "investigado"
+    person = db.fetch_one(
+        "select state, company_name from prospects where id = %s", (outcome.prospect_id,)
+    )
+    assert person == {"state": "investigado", "company_name": "Acme"}
