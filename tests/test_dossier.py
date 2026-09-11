@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import pytest
+
 from handoff_agent.dossier import DossierInvalid, cited_sources, validate_dossier
 
 SOURCES = {"https://acme.com/", "https://acme.com/careers", "https://jobs.example/1"}
@@ -77,3 +79,84 @@ def test_dossier_invalid_carries_its_problems_and_cost():
     assert exc.problems == ["falta resumen"]
     assert exc.cost_usd == Decimal("0.02")
     assert "falta resumen" in str(exc)
+
+
+def test_a_url_cited_in_its_html_escaped_form_is_accepted():
+    """fence() escapa el origen: el modelo ve y copia `&amp;`, no `&`."""
+    sources = SOURCES | {"https://acme.com/search?q=1&page=2"}
+    data = make_dossier(
+        senales_contexto=[
+            {"hecho": "Contrata soporte", "fuente": "https://acme.com/search?q=1&amp;page=2"}
+        ]
+    )
+    assert validate_dossier(data, sources) == []
+
+
+@pytest.mark.parametrize(
+    ("section", "bad"),
+    [
+        ("persona", "Ada Ruiz, CEO"),
+        ("empresa", ["Acme"]),
+        ("contratacion", None),
+        ("encaje_handoff", 2),
+        ("senales_contexto", {"hecho": "x"}),
+        ("huecos", "ninguno"),
+    ],
+)
+def test_sections_must_have_the_right_type(section, bad):
+    problems = validate_dossier(make_dossier(**{section: bad}), SOURCES)
+    assert any(section in p for p in problems), problems
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"hecho": "", "fuente": "https://acme.com/"},
+        {"fuente": "https://acme.com/"},
+        {"hecho": "Contrata soporte", "fuente": ""},
+        {"hecho": "Contrata soporte", "fuente": None},
+        {"hecho": "Contrata soporte"},
+        "Contrata soporte",
+    ],
+)
+def test_every_context_signal_needs_a_fact_and_a_source(item):
+    problems = validate_dossier(make_dossier(senales_contexto=[item]), SOURCES)
+    assert any("senales_contexto[0]" in p for p in problems), problems
+
+
+def test_a_job_title_needs_a_source():
+    data = make_dossier(persona={"nombre": "Ada Ruiz", "cargo": "CEO", "fuente": None})
+    assert any("persona" in p for p in validate_dossier(data, SOURCES))
+
+
+@pytest.mark.parametrize("field", ["sector", "empleados_aprox", "ubicacion", "descripcion"])
+def test_company_facts_need_sources(field):
+    empresa = {
+        "nombre": "Acme",
+        "dominio": "acme.com",
+        "sector": None,
+        "empleados_aprox": None,
+        "ubicacion": None,
+        "descripcion": None,
+        "fuentes": [],
+    }
+    assert validate_dossier(make_dossier(empresa=empresa), SOURCES) == []
+    empresa[field] = 60 if field == "empleados_aprox" else "algo"
+    problems = validate_dossier(make_dossier(empresa=empresa), SOURCES)
+    assert any("empresa" in p for p in problems), problems
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [{"vacantes_abiertas": 0}, {"roles": ["Support Lead"]}, {"roles_deslocalizables": ["Ops"]}],
+)
+def test_hiring_facts_need_sources(facts):
+    contratacion = {
+        "vacantes_abiertas": None,
+        "roles": [],
+        "roles_deslocalizables": [],
+        "fuentes": [],
+    }
+    assert validate_dossier(make_dossier(contratacion=contratacion), SOURCES) == []
+    problems = validate_dossier(make_dossier(contratacion={**contratacion, **facts}), SOURCES)
+    assert any("contratacion" in p for p in problems), problems

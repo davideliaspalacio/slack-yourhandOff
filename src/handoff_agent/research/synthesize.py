@@ -44,6 +44,8 @@ Reglas, sin excepción:
 6. "busquedas_sugeridas": como mucho 3 búsquedas web que cerrarían los huecos
    más importantes. Lista vacía si no hacen falta.
 7. Escribe en español. Sé concreto: cifras, roles y fechas antes que adjetivos.
+8. "resumen" y "razon" solo repiten datos que ya tienen fuente en el dossier;
+   lo no confirmado va a "huecos", nunca al resumen.
 
 Formato exacto de salida:
 

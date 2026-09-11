@@ -126,3 +126,8 @@ def test_the_run_budget_stops_further_attempts(conn, monkeypatch):
     budget = guards.RunBudget(limit_usd=Decimal("0.001"))
     with pytest.raises(guards.RunBudgetExceeded):
         s.synthesize(real_pid(), "Ada Ruiz", "Acme", gathered(), budget=budget)
+
+
+def test_the_prompt_keeps_unsourced_claims_out_of_the_summary():
+    assert '"resumen" y "razon" solo repiten datos que ya tienen fuente' in s.SYSTEM_PROMPT
+    assert 'lo no confirmado va a "huecos", nunca al resumen' in s.SYSTEM_PROMPT
