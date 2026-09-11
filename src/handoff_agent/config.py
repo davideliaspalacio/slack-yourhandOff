@@ -33,6 +33,11 @@ class Settings:
     http_timeout_seconds: float
     brave_search_api_key: str | None
     price_brave_per_query: float
+    slack_user_token: str | None
+    slack_channel_ids: tuple[str, ...]
+    slack_lookback_hours: float
+    slack_poll_seconds: int
+    alert_webhook_url: str | None
 
 
 def _required(name: str) -> str:
@@ -57,4 +62,11 @@ def load_settings() -> Settings:
         http_timeout_seconds=float(os.environ.get("HTTP_TIMEOUT_SECONDS", "30")),
         brave_search_api_key=os.environ.get("BRAVE_SEARCH_API_KEY") or None,
         price_brave_per_query=float(os.environ.get("PRICE_BRAVE_PER_QUERY", "0.005")),
+        slack_user_token=os.environ.get("SLACK_USER_TOKEN") or None,
+        slack_channel_ids=tuple(
+            c.strip() for c in os.environ.get("SLACK_CHANNEL_IDS", "").split(",") if c.strip()
+        ),
+        slack_lookback_hours=float(os.environ.get("SLACK_LOOKBACK_HOURS", "1")),
+        slack_poll_seconds=int(os.environ.get("SLACK_POLL_SECONDS", "3600")),
+        alert_webhook_url=os.environ.get("HANDOFF_ALERT_WEBHOOK_URL") or None,
     )
