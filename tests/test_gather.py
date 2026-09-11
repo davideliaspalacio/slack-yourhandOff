@@ -281,3 +281,115 @@ def test_source_records_carry_kind_and_title_once_per_url():
         {"url": "https://jobs.example/1", "kind": "vacante", "title": "Support Lead"},
     ]
     assert {r["url"] for r in gathered.source_records()} == gathered.sources
+
+
+def test_short_name_rejects_false_positive_in_other_domains(monkeypatch):
+    """Short names like 'On' must not match as substring in unrelated hosts."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Amazon services", "https://www.amazon.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("On", "pid") is None
+
+
+def test_short_name_accepts_exact_domain_label(monkeypatch):
+    """Short name 'On' matches its own domain on.com as an exact label."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("On - Home", "https://on.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("On", "pid") == "on.com"
+
+
+def test_short_name_ally_rejects_really_domain(monkeypatch):
+    """'Ally' must not match as substring in 'really.com'."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Really company", "https://really.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Ally", "pid") is None
+
+
+def test_short_name_ally_accepts_its_own_domain(monkeypatch):
+    """'Ally' matches www.ally.com as an exact label."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Ally - Financial", "https://www.ally.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Ally", "pid") == "ally.com"
+
+
+def test_four_letter_name_rejects_getacme_domain(monkeypatch):
+    """'Acme' (4 letters) must not match getacme.com even as a prefix."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Some service", "https://getacme.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Acme", "pid") is None
+
+
+def test_five_letter_name_accepts_getacme_domain(monkeypatch):
+    """'Toggl' (5 letters) matches gettoggl.com as a suffix."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Time tracking", "https://gettoggl.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Toggl", "pid") == "gettoggl.com"
+
+
+def test_five_letter_name_accepts_prefix_domain(monkeypatch):
+    """'Northwind' (9 letters) matches northwindhq.com as a prefix."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Enterprise software", "https://northwindhq.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Northwind", "pid") == "northwindhq.com"
+
+
+def test_tld_name_does_not_match_through_tld_label(monkeypatch):
+    """A name equal to a TLD must not match through the TLD: 'IO' vs example.io."""
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Some company", "https://example.io/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("IO", "pid") is None

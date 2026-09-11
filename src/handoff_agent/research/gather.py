@@ -17,6 +17,7 @@ from ..tools import jobs, search, web
 
 PAGE_CHARS = 6_000
 CANDIDATE_PATHS = {"home": "/", "about": "/about", "careers": "/careers"}
+MIN_AFFIX_CHARS = 5  # Shorter names glued to another word match unrelated domains
 
 # Results that are about the company but are not the company's own site.
 NOT_A_COMPANY_SITE = (
@@ -160,9 +161,21 @@ def _looks_like_company_site(host: str, title: str, company: str) -> bool:
     tokens = company_tokens(company)
     if not tokens:
         return False
-    compact_host = re.sub(r"[^a-z0-9]", "", host.casefold())
-    if "".join(tokens) in compact_host:
-        return True
+
+    # Check host: split into DNS labels, compact each, drop TLD, check for match
+    joined = "".join(tokens)
+    labels = host.casefold().split(".")
+    compact_labels = [re.sub(r"[^a-z0-9]", "", label) for label in labels]
+    compact_labels = [label for label in compact_labels if label]  # drop empty
+    if len(compact_labels) > 1:
+        compact_labels = compact_labels[:-1]  # drop TLD
+
+    for label in compact_labels:
+        if label == joined:
+            return True
+        if len(joined) >= MIN_AFFIX_CHARS and (label.startswith(joined) or label.endswith(joined)):
+            return True
+
     title_words = _ascii_words(title)
     n = len(tokens)
     return any(title_words[i : i + n] == tokens for i in range(len(title_words) - n + 1))
