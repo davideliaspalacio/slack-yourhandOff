@@ -14,7 +14,7 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 |---|---|---|
 | 1. Fundación | Supabase, ledger de costes, guardarraíles, toolbox MCP | **Hecho** |
 | 2a. Research worker | recolección, síntesis GPT-4.1, seguimiento, CLI `handoff`, `investigar_persona` | **Hecho** |
-| 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Brave Search como respaldo de SearXNG | **Hecho** |
+| 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Brave Search por delante de SearXNG | **Hecho** |
 | 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | Pendiente |
 | 4. Panel web | Auth, listado, dossier, descarte, costes | Pendiente |
 
