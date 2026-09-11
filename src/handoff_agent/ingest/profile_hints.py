@@ -69,6 +69,28 @@ ROLE_WORDS = frozenset(
 _SEPARATORS = re.compile(r"\s*[|,·•;]\s*|\s+[-–—]\s+", re.IGNORECASE)
 MAX_COMPANY_CHARS = 60
 
+# Pattern for checking if a word (exactly) is a previous-employer marker
+_WORD_IS_PREV_EMPLOYER = re.compile(
+    r"^(?:"
+    r"ex-?|"  # "ex-" or "ex"
+    r"former|formally|formerly|"  # "former", "formally", or "formerly"
+    r"prev(?:\.|iously)?|"  # "prev", "prev.", "previously"
+    r"antes|anteriormente"  # Spanish markers
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _has_prev_employer_marker_before_position(text: str) -> bool:
+    """Check if the last word of text is a previous-employer marker."""
+    if not text:
+        return False
+    words = text.split()
+    if not words:
+        return False
+    last_word = words[-1].rstrip(".,;:-")
+    return bool(_WORD_IS_PREV_EMPLOYER.match(last_word.casefold()))
+
 
 def company_from_title(title: str) -> str | None:
     if not title:
@@ -90,6 +112,10 @@ def company_from_title(title: str) -> str | None:
     if "@" in cleaned_title:
         # Take text after the FIRST @
         at_index = cleaned_title.index("@")
+        # Check if the word before @ is a previous-employer marker
+        text_before = cleaned_title[:at_index].rstrip()
+        if _has_prev_employer_marker_before_position(text_before):
+            return None
         text_after = cleaned_title[at_index + 1 :].lstrip()
         # Cut at the next separator (|, comma, ·, •, ;, or dash surrounded by spaces)
         sep_match = re.search(r"\s*[|,·•;]\s*|\s+[-–—]\s+", text_after)
@@ -109,6 +135,10 @@ def company_from_title(title: str) -> str | None:
         # Check if segment contains the whole word "at" or "en"
         at_match = re.search(r"\bat\b|\ben\b", segment, re.IGNORECASE)
         if at_match:
+            # Check if the word before the marker is a previous-employer marker
+            text_before = segment[: at_match.start()].rstrip()
+            if _has_prev_employer_marker_before_position(text_before):
+                return None
             # Take text after the first whole-word "at" or "en" in the segment
             text_after = segment[at_match.end() :].lstrip()
             candidate = text_after

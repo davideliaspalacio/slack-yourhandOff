@@ -64,6 +64,20 @@ def test_compound_roles_give_none(title):
 
 
 @pytest.mark.parametrize(
+    "title",
+    [
+        "CEO, previously at Google",
+        "Founder, formerly at Stripe",
+        "CEO, antes en Acme",
+        "CEO, previously @ Google",
+        "Founder, ex at Stripe",
+    ],
+)
+def test_previous_employer_marker_before_position_marker_rejected(title):
+    assert ph.company_from_title(title) is None
+
+
+@pytest.mark.parametrize(
     ("title", "company"),
     [
         ("Fundadora en Café Olé", "Café Olé"),
