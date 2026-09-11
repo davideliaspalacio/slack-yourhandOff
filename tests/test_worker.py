@@ -532,3 +532,21 @@ def test_a_degraded_re_research_keeps_the_state_but_never_freezes(conn, pipeline
     assert healthy.version == 3
     assert "degradado" not in dossier_content(pid, 3)
     assert state_of(pid) == state
+
+
+# --- F: la parada en la segunda pasada dice qué versión se guardó -------------
+
+
+def test_a_second_pass_stop_carries_the_saved_version(conn, pipeline):
+    first = make_dossier(busquedas_sugeridas=["acme funding"], resumen="Primera pasada.")
+    pipeline.setattr(w, "synthesize", synth_returning(first, guards.KillSwitchActive("apagado")))
+    with pytest.raises(guards.KillSwitchActive) as info:
+        w.research_person("Ada Ruiz", "Acme")
+    assert info.value.saved_version == 1
+
+
+def test_a_first_pass_stop_saves_nothing_and_says_so(conn, pipeline):
+    pipeline.setattr(w, "synthesize", synth_returning(guards.MonthlyBudgetExceeded("tope")))
+    with pytest.raises(guards.MonthlyBudgetExceeded) as info:
+        w.research_person("Ada Ruiz", "Acme")
+    assert getattr(info.value, "saved_version", None) is None

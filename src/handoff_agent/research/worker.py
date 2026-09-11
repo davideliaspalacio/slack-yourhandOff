@@ -162,9 +162,11 @@ def research_person(
                     result = synthesize(pid, full_name, company, enriched, budget=budget)
                     gathered = enriched
             except SYSTEM_STOPS as exc:
-                # La parada del sistema se propaga, pero lo pagado se conserva.
-                _store(pid, first_result, first_gathered, company)
+                # La parada del sistema se propaga, pero lo pagado se conserva, y
+                # la excepción lleva la versión para que el lote pueda contarlo.
+                saved_version, _, _ = _store(pid, first_result, first_gathered, company)
                 ledger.record_action("seguimiento_cortado", {"motivo": str(exc)}, prospect_id=pid)
+                exc.saved_version = saved_version
                 raise
             except Exception as exc:  # noqa: BLE001 - la primera pasada ya vale
                 result, gathered = first_result, first_gathered

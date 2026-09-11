@@ -92,3 +92,19 @@ def test_run_budget_records_that_the_cap_was_blown(conn):
     with conn.cursor() as cur:
         cur.execute("select result from agent_actions where action = 'run_budget'")
         assert cur.fetchone()[0]["exceeded"] is True
+
+
+def test_run_budget_records_a_cap_blown_even_if_caught_inside(conn):
+    """La segunda pasada captura RunBudgetExceeded dentro del with: sin
+    recordarlo, la fila diría exceeded: false con el tope reventado."""
+    # pytest.raises va dentro: la excepción no llega a __exit__ del presupuesto.
+    with (
+        guards.RunBudget(limit_usd=Decimal("0.10")) as budget,
+        pytest.raises(guards.RunBudgetExceeded),
+    ):
+        budget.add(Decimal("0.50"))
+    with conn.cursor() as cur:
+        cur.execute("select result from agent_actions where action = 'run_budget'")
+        result = cur.fetchone()[0]
+    assert result["exceeded"] is True
+    assert result["spent_usd"] == "0.50"

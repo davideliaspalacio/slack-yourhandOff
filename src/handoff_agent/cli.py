@@ -134,7 +134,7 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
         elif r.outcome and r.outcome.reason:
             lines.append(f"Motivo: {r.outcome.reason}")
         if r.aviso:
-            # Solo existe cuando el dossier no se pudo releer.
+            # El dossier no se pudo releer, o se guardó antes de una parada.
             lines.append(f"Aviso: {r.aviso}")
         if r.outcome and r.outcome.errors:
             lines += ["", "Errores: " + "; ".join(r.outcome.errors)]
@@ -152,6 +152,10 @@ def cmd_batch(args) -> int:
         except SYSTEM_STOPS as exc:
             stopped = str(exc)
             row.error = str(exc)
+            # Si la parada llegó en la segunda pasada, el primer dossier ya se guardó.
+            saved = getattr(exc, "saved_version", None)
+            if saved is not None:
+                row.aviso = f"dossier v{saved} guardado antes de la parada"
             break
         except Exception as exc:  # noqa: BLE001 - una fila no tumba el lote
             row.error = f"{type(exc).__name__}: {exc}"

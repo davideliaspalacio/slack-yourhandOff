@@ -61,10 +61,14 @@ class RunBudget:
         self.limit_usd = limit_usd
         self.prospect_id = prospect_id
         self.spent = Decimal(0)
+        # Se recuerda aquí porque la excepción puede capturarse dentro del with
+        # (la segunda pasada lo hace) y entonces __exit__ no la ve.
+        self.exceeded = False
 
     def add(self, cost: Decimal) -> None:
         self.spent += cost
         if self.spent > self.limit_usd:
+            self.exceeded = True
             raise RunBudgetExceeded(f"run spent ${self.spent}, cap is ${self.limit_usd}")
 
     def __enter__(self) -> Self:
@@ -80,7 +84,7 @@ class RunBudget:
             payload={"limit_usd": str(self.limit_usd)},
             result={
                 "spent_usd": str(self.spent),
-                "exceeded": exc_type is RunBudgetExceeded,
+                "exceeded": self.exceeded or exc_type is RunBudgetExceeded,
             },
             prospect_id=self.prospect_id,
         )

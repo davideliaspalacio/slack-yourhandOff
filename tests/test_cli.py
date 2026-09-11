@@ -220,3 +220,34 @@ def test_the_cli_does_not_load_the_mcp_server():
     code = "import sys, handoff_agent.cli; print('handoff_agent.mcp_server' in sys.modules)"
     run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert run.stdout.strip() == "False"
+
+
+def test_a_stop_after_saving_a_dossier_is_told_in_the_report(tmp_path, monkeypatch):
+    """Si la parada llega en la segunda pasada, el primer dossier ya se guardó:
+    la fila no puede quedarse en un simple "error"."""
+    csv = write_csv(tmp_path, ["Ada Ruiz,Acme,", "Leo Gil,Beta,"])
+
+    def research(*a, **k):
+        stop = guards.KillSwitchActive("kill_switch is on")
+        stop.saved_version = 2
+        raise stop
+
+    monkeypatch.setattr(cli.worker, "research_person", research)
+    report = tmp_path / "informe.md"
+    assert cli.main(["research-batch", str(csv), "--salida", str(report)]) == 1
+    text = report.read_text()
+    assert "dossier v2 guardado antes de la parada" in text
+    assert "Con aviso: 1" in text
+    assert "**Lote detenido:** kill_switch is on" in text
+
+
+def test_a_stop_before_any_save_has_no_warning(tmp_path, monkeypatch):
+    csv = write_csv(tmp_path, ["Ada Ruiz,Acme,"])
+
+    def research(*a, **k):
+        raise guards.MonthlyBudgetExceeded("spent $150")
+
+    monkeypatch.setattr(cli.worker, "research_person", research)
+    report = tmp_path / "informe.md"
+    cli.main(["research-batch", str(csv), "--salida", str(report)])
+    assert "Con aviso: 0" in report.read_text()
