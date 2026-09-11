@@ -9,13 +9,19 @@ def make_dossier(**overrides) -> dict:
     data = {
         "persona": {"nombre": "Ada Ruiz", "cargo": "CEO", "fuente": "https://acme.com/"},
         "empresa": {
-            "nombre": "Acme", "dominio": "acme.com", "sector": "SaaS",
-            "empleados_aprox": 60, "ubicacion": "Austin, TX",
-            "descripcion": "Software de logística.", "fuentes": ["https://acme.com/"],
+            "nombre": "Acme",
+            "dominio": "acme.com",
+            "sector": "SaaS",
+            "empleados_aprox": 60,
+            "ubicacion": "Austin, TX",
+            "descripcion": "Software de logística.",
+            "fuentes": ["https://acme.com/"],
         },
         "contratacion": {
-            "vacantes_abiertas": 1, "roles": ["Support Lead"],
-            "roles_deslocalizables": ["Support Lead"], "fuentes": ["https://jobs.example/1"],
+            "vacantes_abiertas": 1,
+            "roles": ["Support Lead"],
+            "roles_deslocalizables": ["Support Lead"],
+            "fuentes": ["https://jobs.example/1"],
         },
         "senales_contexto": [{"hecho": "Contrata soporte", "fuente": "https://acme.com/careers"}],
         "encaje_handoff": {"puntuacion": 2, "razon": "Contrata soporte, que Handoff cubre."},
@@ -38,7 +44,9 @@ def test_missing_sections_are_reported():
 
 
 def test_an_invented_source_is_rejected():
-    data = make_dossier(senales_contexto=[{"hecho": "Levantó $20M", "fuente": "https://inventada.com/x"}])
+    data = make_dossier(
+        senales_contexto=[{"hecho": "Levantó $20M", "fuente": "https://inventada.com/x"}]
+    )
     problems = validate_dossier(data, SOURCES)
     assert any("https://inventada.com/x" in p for p in problems)
 

@@ -11,8 +11,13 @@ from __future__ import annotations
 from decimal import Decimal
 
 REQUIRED_SECTIONS = (
-    "persona", "empresa", "contratacion", "senales_contexto",
-    "encaje_handoff", "huecos", "resumen",
+    "persona",
+    "empresa",
+    "contratacion",
+    "senales_contexto",
+    "encaje_handoff",
+    "huecos",
+    "resumen",
 )
 SOURCE_KEYS = ("fuente", "fuentes")
 
