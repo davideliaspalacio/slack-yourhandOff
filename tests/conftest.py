@@ -14,7 +14,16 @@ MIGRATIONS = sorted(
 )
 
 # Orden inverso a las dependencias de clave ajena.
-TABLES_TO_CLEAN = ["agent_actions", "llm_calls", "cost_events", "dossiers", "prospects"]
+TABLES_TO_CLEAN = [
+    "research_jobs",
+    "slack_messages",
+    "member_snapshots",
+    "agent_actions",
+    "llm_calls",
+    "cost_events",
+    "dossiers",
+    "prospects",
+]
 
 ENV_THAT_MUST_NOT_LEAK = [
     "BRAVE_SEARCH_API_KEY",

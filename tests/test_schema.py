@@ -66,3 +66,51 @@ def test_suite_runs_against_the_test_database(conn):
     with conn.cursor() as cur:
         cur.execute("select current_database()")
         assert cur.fetchone()[0] == "handoff_test"
+
+
+INGEST_TABLES = ["slack_messages", "member_snapshots", "research_jobs"]
+
+
+@pytest.mark.parametrize("table", INGEST_TABLES)
+def test_ingest_table_exists_with_rls(conn, table):
+    with conn.cursor() as cur:
+        cur.execute("select relrowsecurity from pg_class where relname = %s", (table,))
+        row = cur.fetchone()
+    assert row is not None, f"la tabla {table} no existe"
+    assert row[0] is True, f"RLS desactivado en {table}"
+
+
+def test_only_one_open_research_job_per_person(conn):
+    with conn.cursor() as cur:
+        cur.execute("insert into research_jobs (slack_user_id, reason) values ('U1', 'mensaje')")
+    with pytest.raises(psycopg.errors.UniqueViolation), conn.cursor() as cur:
+        cur.execute(
+            "insert into research_jobs (slack_user_id, reason) values ('U1', 'miembro_nuevo')"
+        )
+
+
+def test_a_finished_job_does_not_block_a_new_one(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "insert into research_jobs (slack_user_id, reason, status) values ('U1', 'mensaje', 'hecho')"
+        )
+        cur.execute("insert into research_jobs (slack_user_id, reason) values ('U1', 'mensaje')")
+        cur.execute("select count(*) from research_jobs where slack_user_id = 'U1'")
+        assert cur.fetchone()[0] == 2
+
+
+def test_a_slack_message_is_stored_once(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "insert into slack_messages (channel_id, ts) values ('C1', '1726000000.000100')"
+        )
+    with pytest.raises(psycopg.errors.UniqueViolation), conn.cursor() as cur:
+        cur.execute(
+            "insert into slack_messages (channel_id, ts) values ('C1', '1726000000.000100')"
+        )
+
+
+def test_config_ships_with_an_hourly_research_limit(conn):
+    with conn.cursor() as cur:
+        cur.execute("select value from config where key = 'research_por_hora'")
+        assert cur.fetchone()[0] == 20
