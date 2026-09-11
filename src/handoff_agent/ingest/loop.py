@@ -93,6 +93,9 @@ def run_loop(
             # llamadas de arriba. Morir aquí deja la tarea en_curso y a esa
             # persona bloqueada hasta el siguiente reclaim: mejor avisar una vez
             # por racha y reintentar despacio.
+            # El precio de que la guarda sea tan ancha: un error de programación
+            # (un TypeError tras un refactor) también se queda reintentando en
+            # silencio. Por eso cada vuelta fallida escribe la traza entera.
             if not failing:
                 ops_alerts.alert("ciclo_fallido", f"{type(exc).__name__}: {exc}")
                 failing = True
