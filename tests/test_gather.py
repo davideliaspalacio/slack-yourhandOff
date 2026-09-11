@@ -98,6 +98,94 @@ def test_sources_include_job_urls(monkeypatch):
     assert "https://acme.com/" in result.sources
 
 
+def test_resolve_domain_rejects_sites_that_are_not_the_company(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Acme raises $20M - TechCrunch", "https://techcrunch.com/acme", ""),
+                SearchResult("Some blog", "https://randomblog.io/acme-review", "Acme review"),
+                SearchResult("Acme — Home", "https://acme.io/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Acme", "pid") == "acme.io"
+
+
+def test_resolve_domain_returns_none_when_no_result_is_the_company(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Top 10 CRMs", "https://randomblog.io/crm", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Northwind Ops", "pid") is None
+
+
+def test_multi_word_companies_match_their_compact_domain(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Customer support software", "https://www.helpscout.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Help Scout", "pid") == "helpscout.com"
+
+
+def test_a_company_site_can_match_by_page_title(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Northwind Ops | Logistics software", "https://nwops.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Northwind Ops", "pid") == "nwops.com"
+
+
+def test_legal_suffixes_do_not_have_to_appear_in_the_domain(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Acme", "https://acme.com/", ""),
+            ]
+        ),
+    )
+    assert g.resolve_domain("Acme, Inc.", "pid") == "acme.com"
+
+
+def test_company_tokens_drop_punctuation_accents_and_legal_suffixes():
+    assert g.company_tokens("Café Olé, S.A.") == ["cafe", "ole"]
+    assert g.company_tokens("Acme Inc") == ["acme"]
+
+
+def test_a_guessed_domain_is_flagged_and_a_given_one_is_not(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(
+            default=[
+                SearchResult("Acme", "https://acme.com/", ""),
+            ]
+        ),
+    )
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    assert g.gather("pid", "Ada", "Acme").domain_guessed is True
+    assert g.gather("pid", "Ada", "Acme", domain="acme.com").domain_guessed is False
+
+
 def test_search_outage_degrades_instead_of_crashing(monkeypatch):
     def down(query, limit=8, prospect_id=None):
         raise SearchUnavailable("SearXNG did not answer")

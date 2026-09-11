@@ -166,3 +166,10 @@ def test_cited_urls_are_stored_unescaped(conn, monkeypatch):
     assert dossier["empresa"]["fuentes"] == [url]
     assert dossier["contratacion"]["fuentes"] == [url]
     assert dossier["senales_contexto"][0]["fuente"] == url
+
+
+def test_the_prompt_warns_when_the_domain_was_guessed():
+    guessed = Gathered(domain="acme.com", evidence=[], jobs=[], domain_guessed=True)
+    given = Gathered(domain="acme.com", evidence=[], jobs=[])
+    assert "adivinado" in s.build_prompt("Ada", "Acme", guessed)
+    assert "adivinado" not in s.build_prompt("Ada", "Acme", given)

@@ -79,6 +79,16 @@ class Synthesis:
     attempts: int
 
 
+def _domain_line(gathered: Gathered) -> str:
+    line = f"Dominio detectado: {gathered.domain or 'ninguno'}"
+    if gathered.domain and gathered.domain_guessed:
+        line += (
+            " (adivinado por búsqueda: comprueba en la evidencia que es la web de esta"
+            " empresa; si no lo es, ignora esas páginas y dilo en huecos)"
+        )
+    return line
+
+
 def build_prompt(
     full_name: str | None,
     company: str | None,
@@ -90,7 +100,7 @@ def build_prompt(
         # En el Plan 2b nombre y empresa vendrán del perfil de Slack: los escribe
         # un tercero, así que van delimitados como el resto.
         untrusted.fence(header, "entrada"),
-        f"Dominio detectado: {gathered.domain or 'ninguno'}",
+        _domain_line(gathered),
         "",
         "Evidencia:",
     ]

@@ -87,3 +87,9 @@ def test_suggestions_that_are_not_a_list_mean_no_followup():
     letra por letra lanzaría búsquedas absurdas."""
     for raw in (3, True, "abc", {"q": "x"}):
         assert f.suggested_queries({"busquedas_sugeridas": raw}) == []
+
+
+def test_run_followup_keeps_the_guessed_domain_flag(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    guessed = Gathered("acme.com", [], [], [], domain_guessed=True)
+    assert f.run_followup("pid", guessed, ["x"]).domain_guessed is True

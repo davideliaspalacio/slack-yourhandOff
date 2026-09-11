@@ -8,6 +8,8 @@ the dossier is built from whatever did come back.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -33,6 +35,33 @@ NOT_A_COMPANY_SITE = (
     "pitchbook.com",
     "g2.com",
     "capterra.com",
+    "github.com",
+    "medium.com",
+    "substack.com",
+    "reddit.com",
+    "quora.com",
+    "techcrunch.com",
+    "forbes.com",
+    "businessinsider.com",
+    "nytimes.com",
+    "wsj.com",
+    "cnbc.com",
+    "prnewswire.com",
+    "businesswire.com",
+    "ycombinator.com",
+    "producthunt.com",
+    "wellfound.com",
+    "angel.co",
+    "apollo.io",
+    "rocketreach.co",
+    "owler.com",
+    "craft.co",
+    "tracxn.com",
+    "cbinsights.com",
+    "dnb.com",
+    "trustpilot.com",
+    "yelp.com",
+    "bbb.org",
 )
 
 
@@ -52,6 +81,7 @@ class Gathered:
     errors: list[str] = field(default_factory=list)
     searches_attempted: int = 0
     searches_answered: int = 0
+    domain_guessed: bool = False
 
     @property
     def sources(self) -> set[str]:
@@ -109,11 +139,44 @@ def dedupe_evidence(items: list[Evidence]) -> list[Evidence]:
     return unique
 
 
+def _ascii_words(text: str) -> list[str]:
+    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9.\s]", " ", folded.casefold()).split()
+
+
+def company_tokens(company: str) -> list[str]:
+    """The words of a company name that should appear in its site or title."""
+    words = _ascii_words(company)
+    while words and words[-1] in jobs.LEGAL_SUFFIXES:
+        words.pop()
+    return words
+
+
+def _looks_like_company_site(host: str, title: str, company: str) -> bool:
+    """A search hit counts as the company's own site only if the company's name
+    shows up in its host ("helpscout" in helpscout.com) or as a phrase in the
+    page title. Otherwise a news story or a namesake would be labelled as the
+    person's home, about and careers pages."""
+    tokens = company_tokens(company)
+    if not tokens:
+        return False
+    compact_host = re.sub(r"[^a-z0-9]", "", host.casefold())
+    if "".join(tokens) in compact_host:
+        return True
+    title_words = _ascii_words(title)
+    n = len(tokens)
+    return any(title_words[i : i + n] == tokens for i in range(len(title_words) - n + 1))
+
+
 def resolve_domain(company: str, prospect_id: str, tally: SearchTally | None = None) -> str | None:
     run = tally.run if tally else search.buscar_web
     for result in run(f"{company} official website", limit=8, prospect_id=prospect_id):
         host = (urlparse(result.url).hostname or "").removeprefix("www.")
-        if host and not any(host == d or host.endswith("." + d) for d in NOT_A_COMPANY_SITE):
+        if (
+            host
+            and not any(host == d or host.endswith("." + d) for d in NOT_A_COMPANY_SITE)
+            and _looks_like_company_site(host, result.title, company)
+        ):
             return host
     return None
 
@@ -137,9 +200,11 @@ def gather(
     errors: list[str] = []
     tally = SearchTally()
 
+    domain_guessed = False
     if not domain and company:
         try:
             domain = resolve_domain(company, prospect_id, tally)
+            domain_guessed = domain is not None
         except search.SearchUnavailable as exc:
             errors.append(f"dominio: {exc}")
 
@@ -178,4 +243,5 @@ def gather(
         errors,
         searches_attempted=tally.attempted,
         searches_answered=tally.answered,
+        domain_guessed=domain_guessed,
     )
