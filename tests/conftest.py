@@ -54,7 +54,9 @@ def conn(database_url):
             cur.execute("select current_database()")
             database = cur.fetchone()[0]
             if database != TEST_DB_NAME:
-                raise RuntimeError(f"refusing to truncate {database!r}: tests only run on {TEST_DB_NAME}")
+                raise RuntimeError(
+                    f"refusing to truncate {database!r}: tests only run on {TEST_DB_NAME}"
+                )
             present = _existing(cur, TABLES_TO_CLEAN)
             if present:
                 # Un solo TRUNCATE: en sentencias separadas choca con los locks

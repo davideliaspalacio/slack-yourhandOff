@@ -21,3 +21,6 @@ supabase/.temp/
 
 # Ledger de subagent-driven-development (scratch local)
 .superpowers/
+
+# Informes de research: contienen datos de personas reales
+docs/informes/

@@ -22,7 +22,9 @@ NEUTRALISED = "[etiqueta retirada]"
 # The tag name in any case, with spaces, hyphens or underscores between words.
 # Matching the bare name, not just a well-formed tag, also catches a partial
 # "</contenido-web-no-confiable" left unclosed right before our own closing tag.
-_TAG_NAME = re.compile(r"<?\s*/?\s*contenido[\s_-]*web[\s_-]*no[\s_-]*confiable[^>\n]*>?", re.IGNORECASE)
+_TAG_NAME = re.compile(
+    r"<?\s*/?\s*contenido[\s_-]*web[\s_-]*no[\s_-]*confiable[^>\n]*>?", re.IGNORECASE
+)
 
 
 def neutralise(text: str) -> str:

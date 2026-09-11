@@ -24,6 +24,7 @@ build-backend = "hatchling.build"
 packages = ["src/handoff_agent"]
 
 [project.scripts]
+handoff = "handoff_agent.cli:main"
 handoff-tools = "handoff_agent.mcp_server:main"
 
 [tool.pytest.ini_options]
