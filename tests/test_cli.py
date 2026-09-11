@@ -329,3 +329,25 @@ def test_worker_restores_the_previous_signal_handlers_when_the_loop_returns(monk
     assert cli.main(["worker"]) == 0
     assert signal.getsignal(signal.SIGINT) == previous_int
     assert signal.getsignal(signal.SIGTERM) == previous_term
+
+
+def test_worker_restores_the_previous_signal_handlers_when_the_loop_raises(monkeypatch):
+    """El finally también tiene que correr cuando run_loop revienta; si no, el
+    proceso que siga en marcha se queda con nuestros manejadores puestos."""
+    import signal
+
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+
+    def boom(reader, **kwargs):
+        raise RuntimeError("el bucle se rompió")
+
+    monkeypatch.setattr(cli, "run_loop", boom)
+
+    previous_int = signal.getsignal(signal.SIGINT)
+    previous_term = signal.getsignal(signal.SIGTERM)
+    with pytest.raises(RuntimeError):
+        cli.main(["worker"])
+    assert signal.getsignal(signal.SIGINT) == previous_int
+    assert signal.getsignal(signal.SIGTERM) == previous_term

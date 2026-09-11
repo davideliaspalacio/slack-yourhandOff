@@ -119,3 +119,54 @@ def test_reclaim_stale_logs_only_when_it_recovers_something(wiring, monkeypatch,
     with caplog.at_level("INFO", logger=loop.logger.name):
         run(clock, max_cycles=1)
     assert any("2" in record.getMessage() for record in caplog.records)
+
+
+def test_reclaim_stale_is_silent_when_there_is_nothing_to_recover(wiring, monkeypatch, caplog):
+    monkeypatch.setattr(loop.queue, "reclaim_stale", lambda: 0)
+    with caplog.at_level("INFO", logger=loop.logger.name):
+        run(FakeClock(), max_cycles=1)
+    assert not any("recuperadas" in record.getMessage() for record in caplog.records)
+
+
+def test_a_database_error_does_not_kill_the_worker(wiring, monkeypatch):
+    """Postgres parpadea y el proceso muere: Railway lo reinicia en bucle y cada
+    reinicio deja otra tarea en_curso huérfana. El ciclo tiene que aguantar."""
+
+    def boom(reader):
+        raise RuntimeError("connection pool exhausted")
+
+    monkeypatch.setattr(loop, "run_next_job", boom)
+    clock = FakeClock()
+    assert run(clock, max_cycles=3) == 3
+    assert wiring["alerts"] == ["ciclo_fallido"]
+    # Y no gira en caliente contra una base caída.
+    assert clock.sleeps == [loop.IDLE_SECONDS] * 3
+
+
+def test_a_second_failure_streak_alerts_again(wiring, monkeypatch):
+    outcomes = [RuntimeError("db"), None, RuntimeError("db")]
+
+    def flaky(reader):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(loop, "run_next_job", flaky)
+    run(FakeClock(), max_cycles=3)
+    assert wiring["alerts"] == ["ciclo_fallido", "ciclo_fallido"]
+
+
+def test_reclaim_stale_failing_at_startup_does_not_stop_the_worker(wiring, monkeypatch):
+    calls = {"n": 0}
+
+    def reclaim():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("connection refused")
+        return 0
+
+    monkeypatch.setattr(loop.queue, "reclaim_stale", reclaim)
+    assert run(FakeClock(), max_cycles=1) == 1
+    assert wiring["watch"] == 1
+    assert wiring["alerts"] == []

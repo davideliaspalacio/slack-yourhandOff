@@ -47,40 +47,59 @@ def run_loop(
 ) -> int:
     next_watch = clock()
     cycles = 0
-    _reclaim_stale()
+    failing = False
+    try:
+        _reclaim_stale()
+    except Exception:
+        # Postgres puede no estar listo aún cuando arranca el worker; no
+        # arrancar por eso sería peor. El primer ciclo lo reintenta y avisa.
+        logger.exception("no se pudieron recuperar las tareas abandonadas al arrancar")
     while not should_stop():
-        if clock() >= next_watch:
-            next_watch = clock() + poll_seconds
-            _reclaim_stale()
+        try:
+            if clock() >= next_watch:
+                next_watch = clock() + poll_seconds
+                _reclaim_stale()
+                try:
+                    tick = watch_tick(reader, channels, lookback_hours)
+                    resolved = resolve_pending()
+                    logger.info(
+                        "slack: %d mensajes nuevos, %d miembros nuevos; %d encolados",
+                        tick.messages_new,
+                        tick.members_new,
+                        resolved.enqueued,
+                    )
+                    for error in tick.errors:
+                        logger.warning("slack: %s", error)
+                except SlackAuthFailed as exc:
+                    ops_alerts.alert("slack_auth", str(exc))
+
             try:
-                tick = watch_tick(reader, channels, lookback_hours)
-                resolved = resolve_pending()
-                logger.info(
-                    "slack: %d mensajes nuevos, %d miembros nuevos; %d encolados",
-                    tick.messages_new,
-                    tick.members_new,
-                    resolved.enqueued,
-                )
-                for error in tick.errors:
-                    logger.warning("slack: %s", error)
+                result = run_next_job(reader)
+            except SYSTEM_STOPS as exc:
+                ops_alerts.alert("parada_del_sistema", str(exc))
+                sleep(SYSTEM_STOP_PAUSE_SECONDS)
             except SlackAuthFailed as exc:
                 ops_alerts.alert("slack_auth", str(exc))
-
-        try:
-            result = run_next_job(reader)
-        except SYSTEM_STOPS as exc:
-            ops_alerts.alert("parada_del_sistema", str(exc))
-            sleep(SYSTEM_STOP_PAUSE_SECONDS)
-        except SlackAuthFailed as exc:
-            ops_alerts.alert("slack_auth", str(exc))
+                sleep(IDLE_SECONDS)
+            else:
+                if result is None or result.status == "limitado":
+                    sleep(IDLE_SECONDS)
+                elif result.status != "hecho":
+                    logger.info(
+                        "research %s: %s %s", result.slack_user_id, result.status, result.detail
+                    )
+        except Exception as exc:
+            # Un parpadeo de Postgres o de la red tumba cualquiera de las
+            # llamadas de arriba. Morir aquí deja la tarea en_curso y a esa
+            # persona bloqueada hasta el siguiente reclaim: mejor avisar una vez
+            # por racha y reintentar despacio.
+            if not failing:
+                ops_alerts.alert("ciclo_fallido", f"{type(exc).__name__}: {exc}")
+                failing = True
+            logger.exception("ciclo del worker fallido; se reintenta")
             sleep(IDLE_SECONDS)
         else:
-            if result is None or result.status == "limitado":
-                sleep(IDLE_SECONDS)
-            elif result.status != "hecho":
-                logger.info(
-                    "research %s: %s %s", result.slack_user_id, result.status, result.detail
-                )
+            failing = False
 
         cycles += 1
         if max_cycles is not None and cycles >= max_cycles:
