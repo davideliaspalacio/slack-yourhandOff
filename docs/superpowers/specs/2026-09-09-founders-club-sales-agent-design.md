@@ -285,6 +285,12 @@ que es la parte barata, y el coste cae y se estabiliza.
 
 **La palanca de coste no es el volumen de mensajes: es cuánta gente distinta escribe.**
 
+**Medido el 2026-09-10** contra seis empresas reales (Task 9): el coste medio real por
+dossier fue de **~$0,022** (GPT-4.1, sobre 6 dossiers investigados), muy por debajo de la
+estimación de ~$0,30 de research por persona de la tabla de arriba. Ese ~$0,30 sigue como
+techo de aceptación, pero para research deja de ser la mejor estimación disponible y la
+sustituye esta medición.
+
 ### Métricas
 
 | Métrica | Para qué |
