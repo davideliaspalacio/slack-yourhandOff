@@ -1,48 +1,63 @@
 import os
+import pathlib
 
 import psycopg
 import pytest
 
-DEFAULT_DB = "postgresql://postgres:postgres@127.0.0.1:54332/postgres"
+ADMIN_DB = os.environ.get(
+    "TEST_ADMIN_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres"
+)
+TEST_DB_NAME = "handoff_test"
+TEST_DB = ADMIN_DB.rsplit("/", 1)[0] + f"/{TEST_DB_NAME}"
+MIGRATIONS = sorted(
+    (pathlib.Path(__file__).parent.parent / "supabase" / "migrations").glob("*.sql")
+)
 
 # Orden inverso a las dependencias de clave ajena.
 TABLES_TO_CLEAN = ["agent_actions", "llm_calls", "cost_events", "dossiers", "prospects"]
 
 
+@pytest.fixture(scope="session")
+def database_url() -> str:
+    """Base propia para los tests, recreada en cada sesión desde las migraciones.
+    Así los tests prueban además que las migraciones construyen el esquema
+    desde cero, y nunca tocan los datos de desarrollo."""
+    with psycopg.connect(ADMIN_DB, autocommit=True) as admin:
+        admin.execute(f"drop database if exists {TEST_DB_NAME} with (force)")
+        admin.execute(f"create database {TEST_DB_NAME}")
+    with psycopg.connect(TEST_DB, autocommit=True) as conn:
+        for migration in MIGRATIONS:
+            conn.execute(migration.read_text())
+    return TEST_DB
+
+
+@pytest.fixture(autouse=True)
+def test_environment(monkeypatch, database_url):
+    """Los tests nunca llaman a OpenAI de verdad; load_settings() solo necesita
+    que la variable exista. Valor obvio para que un uso accidental falle."""
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+
+
 def _existing(cur, tables: list[str]) -> list[str]:
-    """Las migraciones se aplican por tareas: hasta la Task 4 varias de estas
-    tablas no existen todavía. Se limpia lo que hay."""
     cur.execute("select table_name from information_schema.tables where table_schema = 'public'")
     present = {row[0] for row in cur.fetchall()}
     return [t for t in tables if t in present]
 
 
-@pytest.fixture(autouse=True)
-def test_environment(monkeypatch):
-    """Los tests nunca llaman a OpenAI de verdad — el cliente va falseado — pero
-    load_settings() exige que la variable exista. Se rellena con un valor obvio
-    para que un uso accidental falle de forma legible, no con una clave real."""
-    monkeypatch.setenv("DATABASE_URL", os.environ.get("DATABASE_URL") or DEFAULT_DB)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
-
-
-@pytest.fixture(scope="session")
-def database_url() -> str:
-    return os.environ.get("DATABASE_URL", DEFAULT_DB)
-
-
 @pytest.fixture
 def conn(database_url):
-    """Conexión limpia. Vacía las tablas antes de cada test, no después:
-    así, cuando un test falla, sus filas siguen ahí para inspeccionarlas."""
+    """Conexión limpia. Vacía las tablas antes de cada test, no después: así,
+    cuando un test falla, sus filas siguen ahí para inspeccionarlas."""
     with psycopg.connect(database_url, autocommit=True) as connection:
         with connection.cursor() as cur:
+            cur.execute("select current_database()")
+            database = cur.fetchone()[0]
+            if database != TEST_DB_NAME:
+                raise RuntimeError(f"refusing to truncate {database!r}: tests only run on {TEST_DB_NAME}")
             present = _existing(cur, TABLES_TO_CLEAN)
             if present:
-                # Un solo TRUNCATE con todas las tablas, no cinco seguidos: en
-                # sentencias separadas esta conexión toma los ACCESS EXCLUSIVE
-                # de una en una mientras el pool del código sostiene locks en
-                # otro orden, y la suite entera se cae por deadlock cada pocas
-                # corridas. Una sentencia los adquiere de golpe.
+                # Un solo TRUNCATE: en sentencias separadas choca con los locks
+                # del pool y la suite se cae por deadlock.
                 cur.execute(f"truncate table {', '.join(present)} restart identity cascade")
         yield connection

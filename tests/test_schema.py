@@ -60,3 +60,9 @@ def test_dossier_versions_are_unique_per_prospect(conn):
             "insert into dossiers (prospect_id, version, content) values (%s, 1, '{}')",
             (prospect_id,),
         )
+
+
+def test_suite_runs_against_the_test_database(conn):
+    with conn.cursor() as cur:
+        cur.execute("select current_database()")
+        assert cur.fetchone()[0] == "handoff_test"
