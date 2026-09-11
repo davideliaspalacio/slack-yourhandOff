@@ -6,13 +6,15 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 
 - Diseño: [`docs/superpowers/specs/2026-09-09-founders-club-sales-agent-design.md`](docs/superpowers/specs/2026-09-09-founders-club-sales-agent-design.md)
 - Plan 1: [`docs/superpowers/plans/2026-09-09-fundacion-toolbox-mcp.md`](docs/superpowers/plans/2026-09-09-fundacion-toolbox-mcp.md)
+- Plan 2a: [`docs/superpowers/plans/2026-09-10-research-worker.md`](docs/superpowers/plans/2026-09-10-research-worker.md)
 
 ## Estado
 
 | Plan | Alcance | Estado |
 |---|---|---|
 | 1. Fundación | Supabase, ledger de costes, guardarraíles, toolbox MCP | **Hecho** |
-| 2. Ingesta y research | slack-watcher, resolver, research worker | Pendiente |
+| 2a. Research worker | recolección, síntesis GPT-4.1, seguimiento, CLI `handoff`, `investigar_persona` | **Hecho** |
+| 2b. Ingesta | slack-watcher, resolver | Pendiente |
 | 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | Pendiente |
 | 4. Panel web | Auth, listado, dossier, descarte, costes | Pendiente |
 
@@ -54,7 +56,7 @@ si OpenAI los cambia o se cambia de modelo, hay que actualizarlos aquí.
 
 ## Usar el toolbox desde Claude Code
 
-`.mcp.json` ya registra el servidor. Cinco herramientas:
+`.mcp.json` ya registra el servidor. Seis herramientas:
 
 | Herramienta | Qué hace |
 |---|---|
@@ -63,6 +65,32 @@ si OpenAI los cambia o se cambia de modelo, hay que actualizarlos aquí.
 | `buscar_ofertas` | Vacantes abiertas de una empresa, vía JobSpy |
 | `historial_prospecto` | Qué sabemos ya de una persona |
 | `resumen_costes` | Gasto de los últimos N días |
+| `investigar_persona` | Investiga a una persona y guarda el dossier (**cuesta dinero**) |
+
+## Research desde la terminal
+
+```bash
+uv run handoff research "Ada Ruiz" --empresa Acme [--dominio acme.com] [--forzar]
+uv run handoff research-batch empresas.csv --salida informe.md [--pausa 15]
+uv run handoff dossier manual:ada-ruiz-acme     # último dossier guardado
+uv run handoff costes --dias 30                 # gasto de los últimos N días
+```
+
+`research` y `research-batch` llaman a GPT-4.1 y gastan dinero. No se repite a
+nadie con un dossier de menos de 6 meses salvo con `--forzar`; quien quedó
+`incompleto` se vuelve a investigar la próxima vez. El CSV del lote lleva las
+columnas `nombre,empresa,dominio`; `--pausa` son los segundos de espera entre
+filas (15 por defecto), para no disparar el CAPTCHA de los buscadores.
+
+**Antes de un lote pagado, comprobar la salud de SearXNG.** Los motores que usa
+pueden quedar vetados por CAPTCHA, y entonces cualquier búsqueda vuelve vacía.
+El research lo detecta —la persona queda `incompleto` con motivo "búsqueda
+degradada"— pero el dossier sale pobre y el dinero ya se ha gastado. Una
+consulta de prueba lo dice en segundos:
+
+```bash
+curl -s "http://127.0.0.1:8080/search?q=test&format=json" | jq '.results | length, .unresponsive_engines'
+```
 
 ## Invariantes del proyecto
 
@@ -83,13 +111,27 @@ Romper cualquiera de estas es un bug, no una preferencia:
 ## Comandos
 
 ```bash
-uv run pytest                                   # 91 tests
+uv run pytest                                   # 204 tests
 supabase db reset                               # rehace el esquema desde cero
 docker compose -f docker-compose.searxng.yml logs -f
 ```
+
+La suite nunca toca los datos de desarrollo: en cada sesión borra y recrea la
+base `handoff_test` desde las migraciones, conectándose como administrador por
+`TEST_ADMIN_DATABASE_URL` (por defecto el Postgres local de Supabase en el
+puerto 54332).
 
 Parar todo el gasto sin redeploy:
 
 ```sql
 update config set value = 'true'::jsonb where key = 'kill_switch';
 ```
+
+## Pendiente para el Plan 2b
+
+- **Lock por persona** alrededor de `research_person`: hoy dos ejecuciones
+  simultáneas sobre la misma persona pagan el research dos veces.
+- **Dominio adivinado**: `resolve_domain` toma el primer resultado que no es un
+  directorio o una red social; puede equivocarse de empresa.
+- **Fallback de búsqueda**: si SearXNG queda vetado no hay otro motor ni una API
+  de búsqueda de pago detrás.
