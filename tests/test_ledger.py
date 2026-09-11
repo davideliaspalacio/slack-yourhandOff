@@ -59,3 +59,16 @@ def test_spend_since_sums_both_ledgers(conn):
     ledger.record_cost_event(source="twilio", cost_usd=1.00)
     total = ledger.spend_since(datetime.now(UTC) - timedelta(hours=1))
     assert total == Decimal("3.00")
+
+
+def test_cost_summary_adds_up_both_ledgers(conn):
+    ledger.record_llm_call(
+        stage="research", model="gpt-4.1", input_tokens=1_000_000, cached_tokens=0
+    )
+    ledger.record_cost_event(source="twilio", cost_usd=0.50)
+    assert ledger.cost_summary(days=30) == {
+        "days": 30,
+        "total_usd": "2.50",
+        "llm_calls": 1,
+        "cost_events": 1,
+    }

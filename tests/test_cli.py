@@ -1,3 +1,6 @@
+import json
+import subprocess
+import sys
 import time
 from decimal import Decimal
 
@@ -169,3 +172,51 @@ def test_the_report_shows_errors_and_marks_degraded_rows(tmp_path, monkeypatch):
     assert "Degradados: 1" in text
     assert "incompleto (búsqueda degradada)" in text
     assert "linkedin: motores vetados" in text
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [guards.KillSwitchActive("kill_switch is on"), guards.MonthlyBudgetExceeded("spent $150")],
+)
+def test_single_research_reports_a_system_stop(capsys, monkeypatch, stop):
+    def research(*a, **k):
+        raise stop
+
+    monkeypatch.setattr(cli.worker, "research_person", research)
+    assert cli.main(["research", "Ada Ruiz"]) == 1
+    assert f"detenido: {stop}" in capsys.readouterr().out
+
+
+def test_unknown_openings_show_as_a_dash_and_zero_stays_zero(tmp_path, monkeypatch):
+    csv = write_csv(tmp_path, ["Ada Ruiz,Acme,", "Leo Gil,Beta,"])
+    empty = {"roles": [], "roles_deslocalizables": []}
+    dossiers = {
+        "manual:ada-ruiz-acme": make_dossier(
+            contratacion={**empty, "vacantes_abiertas": None, "fuentes": []}
+        ),
+        "manual:leo-gil-beta": make_dossier(
+            contratacion={**empty, "vacantes_abiertas": 0, "fuentes": ["https://jobs.example/1"]}
+        ),
+    }
+    results = iter([outcome(), outcome(user="manual:leo-gil-beta")])
+    monkeypatch.setattr(cli.worker, "research_person", lambda *a, **k: next(results))
+    monkeypatch.setattr(
+        cli.prospects, "historial_prospecto", lambda uid: {"dossier": {"content": dossiers[uid]}}
+    )
+    report = tmp_path / "informe.md"
+    cli.main(["research-batch", str(csv), "--salida", str(report)])
+    text = report.read_text()
+    assert "| Ada Ruiz | Acme | investigado | $0.0500 | 2 | — | 1 |" in text
+    assert "| Leo Gil | Beta | investigado | $0.0500 | 2 | 0 | 1 |" in text
+
+
+def test_costes_prints_the_summary(conn, capsys):
+    assert cli.main(["costes", "--dias", "7"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary == {"days": 7, "total_usd": "0.00", "llm_calls": 0, "cost_events": 0}
+
+
+def test_the_cli_does_not_load_the_mcp_server():
+    code = "import sys, handoff_agent.cli; print('handoff_agent.mcp_server' in sys.modules)"
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert run.stdout.strip() == "False"

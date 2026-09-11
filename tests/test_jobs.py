@@ -159,3 +159,25 @@ def test_employer_matching_rejects_lookalikes(row_company, wanted, should_match)
     """El prefijo dejaba pasar Metabase para Meta, y cada oferta ajena suma un
     +2 de corroboración falso al score."""
     assert jobs._matches_company(row_company, wanted) is should_match
+
+
+def test_a_missing_job_url_becomes_empty_not_nan(conn, monkeypatch):
+    """pandas pone NaN en las celdas vacías; str(NaN) es "nan", que entraría
+    en el dossier como si fuera una fuente."""
+    monkeypatch.setattr(
+        jobs,
+        "_scrape",
+        lambda **kw: _frame(
+            [
+                {
+                    "title": "Support Lead",
+                    "company": "Acme",
+                    "location": "Remote",
+                    "job_url": float("nan"),
+                    "site": "linkedin",
+                }
+            ]
+        ),
+    )
+    [posting] = jobs.buscar_ofertas("Acme")
+    assert posting.url == ""

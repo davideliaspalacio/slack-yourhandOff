@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from handoff_agent import ledger, mcp_server
+from handoff_agent import guards, ledger, mcp_server
 from handoff_agent.research.worker import ResearchOutcome
 
 
@@ -84,3 +84,19 @@ def test_investigar_persona_returns_the_errors(conn, monkeypatch):
         lambda uid: {"prospect": None, "dossier": None, "actions": []},
     )
     assert mcp_server.investigar_persona(nombre="Ada", empresa="Acme")["errores"] == ["about: 404"]
+
+
+@pytest.mark.parametrize(
+    ("failure", "estado"),
+    [
+        (ValueError("hace falta al menos un nombre o una empresa"), "error"),
+        (guards.KillSwitchActive("kill_switch is on"), "detenido"),
+        (guards.MonthlyBudgetExceeded("spent $150 of $150 this month"), "detenido"),
+    ],
+)
+def test_investigar_persona_answers_instead_of_raising(monkeypatch, failure, estado):
+    def research(*a, **k):
+        raise failure
+
+    monkeypatch.setattr(mcp_server.worker, "research_person", research)
+    assert mcp_server.investigar_persona() == {"estado": estado, "motivo": str(failure)}

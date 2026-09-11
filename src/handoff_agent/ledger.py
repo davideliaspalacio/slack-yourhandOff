@@ -8,7 +8,7 @@ Langfuse holds the execution trees; it cannot answer that question.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from . import db
@@ -101,3 +101,20 @@ def spend_since(since: datetime) -> Decimal:
         (since, since),
     )
     return Decimal(row["total"])
+
+
+def cost_summary(days: int = 30) -> dict:
+    """Gasto de los últimos N días, sumando llamadas a LLM y costes externos."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    total = spend_since(since)
+    counts = db.fetch_one(
+        "select (select count(*) from llm_calls where created_at >= %s) as llm_calls, "
+        "       (select count(*) from cost_events where created_at >= %s) as cost_events",
+        (since, since),
+    )
+    return {
+        "days": days,
+        "total_usd": f"{total:.2f}",
+        "llm_calls": counts["llm_calls"],
+        "cost_events": counts["cost_events"],
+    }

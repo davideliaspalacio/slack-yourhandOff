@@ -83,6 +83,12 @@ def _matches_company(row_company: str, wanted: str) -> bool:
     return bool(a) and a == _normalise_company(wanted)
 
 
+def _text_or_empty(value) -> str:
+    """pandas deja NaN en las celdas vacías y str(NaN) es "nan": una URL así
+    entraría en el dossier como si fuera una fuente."""
+    return value if isinstance(value, str) else ""
+
+
 def buscar_ofertas(
     company: str, limit: int = 20, prospect_id: str | None = None
 ) -> list[JobPosting]:
@@ -112,7 +118,7 @@ def buscar_ofertas(
             title=str(row.get("title", "")),
             company=str(row.get("company", "")),
             location=str(row.get("location", "")),
-            url=str(row.get("job_url", "")),
+            url=_text_or_empty(row.get("job_url")),
             site=str(row.get("site", "")),
         )
         for _, row in frame.iterrows()

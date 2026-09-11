@@ -11,12 +11,12 @@ FastMCP.
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
 
 from mcp.server.mcpserver import MCPServer
 
-from . import db, ledger, untrusted
+from . import ledger, untrusted
 from .research import worker
+from .serialize import jsonable
 from .tools import jobs, prospects, search, web
 
 mcp = MCPServer("handoff-tools")
@@ -63,19 +63,7 @@ def historial_prospecto(slack_user_id: str) -> dict:
 @mcp.tool()
 def resumen_costes(days: int = 30) -> dict:
     """Gasto de los últimos N días, sumando llamadas a LLM y costes externos."""
-    since = datetime.now(UTC) - timedelta(days=days)
-    total = ledger.spend_since(since)
-    counts = db.fetch_one(
-        "select (select count(*) from llm_calls where created_at >= %s) as llm_calls, "
-        "       (select count(*) from cost_events where created_at >= %s) as cost_events",
-        (since, since),
-    )
-    return {
-        "days": days,
-        "total_usd": f"{total:.2f}",
-        "llm_calls": counts["llm_calls"],
-        "cost_events": counts["cost_events"],
-    }
+    return ledger.cost_summary(days)
 
 
 @mcp.tool()
@@ -88,7 +76,13 @@ def investigar_persona(
     """Investiga a una persona y su empresa y guarda el dossier. Cuesta dinero:
     usa GPT-4.1, con tope por ejecución. No repite si hay un dossier de menos de
     6 meses, salvo con forzar=true."""
-    outcome = worker.research_person(nombre, empresa, dominio, force=forzar)
+    try:
+        outcome = worker.research_person(nombre, empresa, dominio, force=forzar)
+    except ValueError as exc:
+        return {"estado": "error", "motivo": str(exc)}
+    except worker.SYSTEM_STOPS as exc:
+        # Kill switch o tope mensual: una respuesta, no una excepción cruda.
+        return {"estado": "detenido", "motivo": str(exc)}
     history = prospects.historial_prospecto(outcome.slack_user_id)
     return {
         "estado": outcome.status,
@@ -97,16 +91,6 @@ def investigar_persona(
         "motivo": outcome.reason,
         "errores": list(outcome.errors),
         "dossier": jsonable(history["dossier"]),
-    }
-
-
-def jsonable(row: dict | None) -> dict | None:
-    """Datetimes and UUIDs do not survive JSON on their own."""
-    if row is None:
-        return None
-    return {
-        k: (v.isoformat() if hasattr(v, "isoformat") else str(v) if hasattr(v, "hex") else v)
-        for k, v in row.items()
     }
 
 

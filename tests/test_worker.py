@@ -1,3 +1,4 @@
+import hashlib
 import json
 from decimal import Decimal
 
@@ -392,3 +393,11 @@ def test_an_ungrounded_second_pass_falls_back_to_the_first_dossier(conn, real_wi
         "https://news.example/acme-hiring",
         "https://jobs.example/1",
     }
+
+
+def test_a_name_with_no_ascii_letters_still_gets_a_stable_id():
+    """NFKD a ASCII deja "李雷" en nada; sin respaldo, todos esos nombres
+    compartirían el id "manual:" y se pisarían el dossier."""
+    expected = "manual:" + hashlib.sha1("李雷".encode()).hexdigest()[:12]
+    assert w.manual_user_id("李雷", None) == expected
+    assert w.manual_user_id("王芳", None) != expected

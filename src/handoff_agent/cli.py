@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from . import guards, mcp_server
+from . import guards, ledger, serialize
 from .research import worker
 from .tools import prospects
 
@@ -41,7 +41,11 @@ def _dossier_for(outcome: worker.ResearchOutcome) -> dict | None:
 
 
 def cmd_research(args) -> int:
-    outcome = worker.research_person(args.nombre, args.empresa, args.dominio, force=args.forzar)
+    try:
+        outcome = worker.research_person(args.nombre, args.empresa, args.dominio, force=args.forzar)
+    except SYSTEM_STOPS as exc:
+        print(f"detenido: {exc}")
+        return 1
     print(
         f"estado: {outcome.status}   coste: {_money(outcome.cost_usd)}   versión: {outcome.version}"
     )
@@ -107,7 +111,8 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
             status += " (búsqueda degradada)"
         cost = _money(r.outcome.cost_usd) if r.outcome else "—"
         fit = (d.get("encaje_handoff") or {}).get("puntuacion", "—")
-        openings = (d.get("contratacion") or {}).get("vacantes_abiertas", "—")
+        openings = (d.get("contratacion") or {}).get("vacantes_abiertas")
+        openings = "—" if openings is None else openings
         sources = len((d.get("empresa") or {}).get("fuentes") or [])
         lines.append(
             f"| {r.nombre or '—'} | {r.empresa or '—'} | {status} | {cost} | {fit} | {openings} | {sources} |"
@@ -126,12 +131,10 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
             if gaps:
                 lines.append("")
                 lines.append("Huecos: " + "; ".join(map(str, gaps)))
-            if r.aviso:
-                lines.append("")
-                lines.append(f"Aviso: {r.aviso}")
         elif r.outcome and r.outcome.reason:
             lines.append(f"Motivo: {r.outcome.reason}")
-        if r.aviso and not r.dossier:
+        if r.aviso:
+            # Solo existe cuando el dossier no se pudo releer.
             lines.append(f"Aviso: {r.aviso}")
         if r.outcome and r.outcome.errors:
             lines += ["", "Errores: " + "; ".join(r.outcome.errors)]
@@ -177,14 +180,14 @@ def cmd_dossier(args) -> int:
     history = prospects.historial_prospecto(args.slack_user_id)
     print(
         json.dumps(
-            mcp_server.jsonable(history["dossier"]), ensure_ascii=False, indent=2, default=str
+            serialize.jsonable(history["dossier"]), ensure_ascii=False, indent=2, default=str
         )
     )
     return 0
 
 
 def cmd_costes(args) -> int:
-    print(json.dumps(mcp_server.resumen_costes(days=args.dias), indent=2))
+    print(json.dumps(ledger.cost_summary(days=args.dias), indent=2))
     return 0
 
 

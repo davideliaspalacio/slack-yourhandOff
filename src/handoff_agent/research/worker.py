@@ -8,6 +8,7 @@ not a verdict on the person, so those propagate untouched.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -42,7 +43,10 @@ def manual_user_id(full_name: str | None, company: str | None) -> str:
     """Stable id for people researched by hand, before Slack is connected."""
     base = " ".join(part for part in (full_name, company) if part)
     ascii_text = unicodedata.normalize("NFKD", base).encode("ascii", "ignore").decode()
-    return "manual:" + re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+    # Un nombre no latino no deja nada en ASCII; sin esto, todos compartirían
+    # "manual:" y se pisarían el dossier.
+    return "manual:" + (slug or hashlib.sha1(base.encode()).hexdigest()[:12])
 
 
 # Desde qué estados se puede llegar a cada uno. Un research nunca deshace lo

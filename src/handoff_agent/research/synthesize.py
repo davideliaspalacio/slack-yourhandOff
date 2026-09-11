@@ -82,9 +82,11 @@ def build_prompt(
     gathered: Gathered,
     problems: list[str] | None = None,
 ) -> str:
+    header = f"Persona: {full_name or 'desconocida'}\nEmpresa: {company or 'desconocida'}"
     lines = [
-        f"Persona: {full_name or 'desconocida'}",
-        f"Empresa: {company or 'desconocida'}",
+        # En el Plan 2b nombre y empresa vendrán del perfil de Slack: los escribe
+        # un tercero, así que van delimitados como el resto.
+        untrusted.fence(header, "entrada"),
         f"Dominio detectado: {gathered.domain or 'ninguno'}",
         "",
         "Evidencia:",
