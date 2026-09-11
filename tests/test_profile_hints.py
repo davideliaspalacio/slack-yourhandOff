@@ -180,3 +180,15 @@ def test_single_segment_no_marker_not_company(title, company):
 )
 def test_a_work_email_gives_the_company_domain(email, domain):
     assert ph.domain_from_email(email) == domain
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "CEO, formally at Google",
+        "Founder, formally @ Stripe",
+        "Founder | formally Stripe",
+    ],
+)
+def test_formally_treated_like_formerly_in_both_positions(title):
+    assert ph.company_from_title(title) is None

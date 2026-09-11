@@ -69,7 +69,22 @@ ROLE_WORDS = frozenset(
 _SEPARATORS = re.compile(r"\s*[|,·•;]\s*|\s+[-–—]\s+", re.IGNORECASE)
 MAX_COMPANY_CHARS = 60
 
+# Marker vocabulary for previous employers, defined once and used by both checks below.
+# Note: 'formally' (with an 'a') is a common misspelling of 'formerly' (past tense),
+# and treating it as a marker only ever produces a safe None instead of a wrong company.
+_PREV_EMPLOYER_MARKERS = (
+    "previously",
+    "formerly",
+    "formally",
+    "former",
+    "prev",
+    "ex",
+    "antes",
+    "anteriormente",
+)
+
 # Pattern for checking if a word (exactly) is a previous-employer marker
+# Built from _PREV_EMPLOYER_MARKERS
 _WORD_IS_PREV_EMPLOYER = re.compile(
     r"^(?:"
     r"ex-?|"  # "ex-" or "ex"
@@ -77,6 +92,18 @@ _WORD_IS_PREV_EMPLOYER = re.compile(
     r"prev(?:\.|iously)?|"  # "prev", "prev.", "previously"
     r"antes|anteriormente"  # Spanish markers
     r")$",
+    re.IGNORECASE,
+)
+
+# Pattern for checking if candidate starts with a previous-employer marker
+# Built from _PREV_EMPLOYER_MARKERS
+_PREV_EMPLOYER_CANDIDATE = re.compile(
+    r"^(?:"
+    r"ex-|ex\s+|"  # "ex-" or "ex " at the start
+    r"\bformer\b|\bformally\b|\bformerly\b|"  # "former", "formally", or "formerly" as whole words
+    r"\bprev(?:\.|iously|$)?(?:\s|$)|"  # "prev" when followed by ".", a space, "iously", or end
+    r"\bantes\b|\banteriormente\b"  # "antes" and "anteriormente" as whole words
+    r")",
     re.IGNORECASE,
 )
 
@@ -151,18 +178,9 @@ def company_from_title(title: str) -> str | None:
     candidate = candidate.strip()
 
     # Step 3: Reject previous-employer markers (as word-boundary patterns)
-    # Use a single anchored regex, case-insensitive
-    prev_employer_pattern = re.compile(
-        r"^(?:"
-        r"ex-|ex\s+|"  # "ex-" or "ex " at the start
-        r"\bformer\b|\bformerly\b|"  # "former" or "formally" as whole words
-        r"\bprev(?:\.|iously|$)?(?:\s|$)|"  # "prev" when followed by ".", a space, "iously", or end
-        r"\bantes\b|\banteriormente\b"  # "antes" and "anteriormente" as whole words
-        r")",
-        re.IGNORECASE,
-    )
+    # Use the module-level pattern built from _PREV_EMPLOYER_MARKERS
     candidate_lower = candidate.casefold()
-    if prev_employer_pattern.match(candidate_lower):
+    if _PREV_EMPLOYER_CANDIDATE.match(candidate_lower):
         return None
 
     # Step 4: Reject compound roles (only role words)
