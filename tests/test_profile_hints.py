@@ -115,6 +115,45 @@ def test_prev_marker_as_whole_token_only(title, company):
 
 
 @pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        # Company-then-location: keep the company, not the location
+        ("CEO en Rappi en Colombia", "Rappi en Colombia"),
+        ("Regional Sales at Acme at NYC", "Acme at NYC"),
+        ("President at University at Buffalo", "University at Buffalo"),
+        ("Store Manager at Target at Downtown Location", "Target at Downtown Location"),
+    ],
+)
+def test_company_then_location_keeps_company(title, company):
+    assert ph.company_from_title(title) == company
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Bare trailing markers are rejected
+        "CEO, Former",
+        "Founder, Formerly",
+        "CEO, Antes",
+    ],
+)
+def test_bare_trailing_markers_rejected(title):
+    assert ph.company_from_title(title) is None
+
+
+@pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        # Single segment with no marker is not a company
+        ("Ingeniero", None),
+        ("Acme", None),
+    ],
+)
+def test_single_segment_no_marker_not_company(title, company):
+    assert ph.company_from_title(title) == company
+
+
+@pytest.mark.parametrize(
     ("email", "domain"),
     [
         ("ada@acme.com", "acme.com"),

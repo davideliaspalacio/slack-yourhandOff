@@ -64,9 +64,9 @@ ROLE_WORDS = frozenset(
     }
 )
 
-# "@", " at ", " en ", "|", ",", "·" y guiones rodeados de espacios. Un guion
-# pegado ("Co-founder") no separa.
-_SEPARATORS = re.compile(r"\s*@\s*|\s+at\s+|\s+en\s+|\s*[|,·]\s*|\s+[-–—]\s+", re.IGNORECASE)
+# "@", "|", ",", "·", "•", ";", and dashes surrounded by spaces.
+# "at" and "en" are no longer separators; they're markers within the last segment.
+_SEPARATORS = re.compile(r"\s*[|,·•;]\s*|\s+[-–—]\s+", re.IGNORECASE)
 MAX_COMPANY_CHARS = 60
 
 
@@ -102,40 +102,38 @@ def company_from_title(title: str) -> str | None:
         parts = [
             part.strip() for part in _SEPARATORS.split(cleaned_title or "") if part and part.strip()
         ]
-        if len(parts) < 2:
-            return None
 
-        last_segment = parts[-1]
+        # Get the last non-empty part as segment (if no separators, segment is the whole title)
+        segment = parts[-1] if parts else ""
 
-        # Check if last segment contains the whole word "at" or "en"
-        at_match = re.search(r"(?:\s|^)at(?:\s|$)|(?:\s|^)en(?:\s|$)", last_segment, re.IGNORECASE)
+        # Check if segment contains the whole word "at" or "en"
+        at_match = re.search(r"\bat\b|\ben\b", segment, re.IGNORECASE)
         if at_match:
-            # Take text after the first whole-word "at" or "en" in the last segment
-            text_after = last_segment[at_match.end() :].lstrip()
+            # Take text after the first whole-word "at" or "en" in the segment
+            text_after = segment[at_match.end() :].lstrip()
             candidate = text_after
         else:
-            # Take the whole last segment
-            candidate = last_segment
+            # If there were at least two parts, use the segment; otherwise return None
+            if len(parts) < 2:
+                return None
+            candidate = segment
 
     candidate = candidate.strip()
 
-    # Step 3: Reject previous-employer markers (as whole tokens only)
-    # Markers must be followed by whitespace or end of string, not part of a larger word
-    prev_employer_markers = [
-        "ex-",
-        "ex ",
-        "former ",
-        "formerly ",
-        "prev.",
-        "prev ",
-        "previously ",
-        "antes ",
-        "anteriormente ",
-    ]
+    # Step 3: Reject previous-employer markers (as word-boundary patterns)
+    # Use a single anchored regex, case-insensitive
+    prev_employer_pattern = re.compile(
+        r"^(?:"
+        r"ex-|ex\s+|"  # "ex-" or "ex " at the start
+        r"\bformer\b|\bformerly\b|"  # "former" or "formally" as whole words
+        r"\bprev(?:\.|iously|$)?(?:\s|$)|"  # "prev" when followed by ".", a space, "iously", or end
+        r"\bantes\b|\banteriormente\b"  # "antes" and "anteriormente" as whole words
+        r")",
+        re.IGNORECASE,
+    )
     candidate_lower = candidate.casefold()
-    for marker in prev_employer_markers:
-        if candidate_lower.startswith(marker):
-            return None
+    if prev_employer_pattern.match(candidate_lower):
+        return None
 
     # Step 4: Reject compound roles (only role words)
     # Split on &, /, +, comma and words "and"/"y"
