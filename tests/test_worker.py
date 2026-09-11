@@ -1,17 +1,21 @@
+import json
 from decimal import Decimal
 
 import httpx
 import openai
 import pytest
 
-from handoff_agent import db, guards
+from handoff_agent import db, guards, llm
 from handoff_agent.dossier import DossierInvalid
 from handoff_agent.research import worker as w
 from handoff_agent.research.gather import Evidence, Gathered
 from handoff_agent.research.synthesize import Synthesis
-from handoff_agent.tools import prospects
+from handoff_agent.tools import jobs, prospects, search, web
 from handoff_agent.tools.jobs import JobPosting
+from handoff_agent.tools.search import SearchResult
 from tests.test_dossier import make_dossier
+from tests.test_gather import fake_page, fake_search
+from tests.test_synthesize import ScriptedOpenAI
 
 
 def stub_gather(pid, full_name, company, domain=None):
@@ -301,3 +305,90 @@ def test_stored_sources_record_their_provenance(conn, pipeline):
         {"url": "https://acme.com/", "kind": "home", "title": "Acme"},
         {"url": "https://jobs.example/1", "kind": "vacante", "title": "Support Lead"},
     ]
+
+
+# --- Integración: el cableado real, con dobles solo en el borde -------------
+
+FOLLOWUP_URL = "https://news.example/acme-ronda"
+FOLLOWUP_QUERY = "ronda acme 2026"
+
+
+@pytest.fixture
+def real_wiring(monkeypatch):
+    """gather, synthesize y run_followup de verdad; solo se falsean las
+    herramientas de red y el cliente de OpenAI."""
+    monkeypatch.setattr(
+        search,
+        "buscar_web",
+        fake_search(
+            {
+                "linkedin.com/in": [
+                    SearchResult(
+                        "Ada Ruiz - CEO - Acme", "https://www.linkedin.com/in/adaruiz", "CEO"
+                    )
+                ],
+                "funding OR raises": [
+                    SearchResult("Acme contrata", "https://news.example/acme-hiring", "Soporte")
+                ],
+                FOLLOWUP_QUERY: [SearchResult("Acme levanta una ronda", FOLLOWUP_URL, "Serie A")],
+            }
+        ),
+    )
+    monkeypatch.setattr(web, "leer_sitio", fake_page())
+    monkeypatch.setattr(
+        jobs,
+        "buscar_ofertas",
+        lambda company, limit=20, prospect_id=None: [
+            JobPosting("Support Lead", "Acme", "Remote", "https://jobs.example/1", "linkedin")
+        ],
+    )
+
+    def script(*dossiers):
+        fake = ScriptedOpenAI(*(json.dumps(d) for d in dossiers))
+        monkeypatch.setattr(llm, "_client", lambda: fake)
+        return fake
+
+    return script
+
+
+def stored_dossier(pid):
+    return db.fetch_one(
+        "select content, sources from dossiers where prospect_id = %s "
+        "order by version desc limit 1",
+        (pid,),
+    )
+
+
+def test_a_followup_source_reaches_the_stored_dossier(conn, real_wiring):
+    fake = real_wiring(
+        make_dossier(busquedas_sugeridas=[FOLLOWUP_QUERY]),
+        make_dossier(senales_contexto=[{"hecho": "Levantó una Serie A", "fuente": FOLLOWUP_URL}]),
+    )
+    outcome = w.research_person("Ada Ruiz", "Acme", domain="acme.com")
+    assert outcome.status == "investigado"
+    assert len(fake.calls) == 2
+    stored = stored_dossier(outcome.prospect_id)
+    assert stored["content"]["senales_contexto"][0]["fuente"] == FOLLOWUP_URL
+    assert {"url": FOLLOWUP_URL, "kind": "seguimiento", "title": "Acme levanta una ronda"} in (
+        stored["sources"]
+    )
+
+
+def test_an_ungrounded_second_pass_falls_back_to_the_first_dossier(conn, real_wiring):
+    invented = make_dossier(
+        senales_contexto=[{"hecho": "Levantó $20M", "fuente": "https://inventada.example/x"}]
+    )
+    fake = real_wiring(make_dossier(busquedas_sugeridas=[FOLLOWUP_QUERY]), invented, invented)
+    outcome = w.research_person("Ada Ruiz", "Acme", domain="acme.com")
+    assert outcome.status == "investigado"
+    assert outcome.version == 1
+    assert len(fake.calls) == 3
+    stored = stored_dossier(outcome.prospect_id)
+    assert stored["content"]["busquedas_sugeridas"] == [FOLLOWUP_QUERY]
+    assert {s["url"] for s in stored["sources"]} == {
+        "https://acme.com/",
+        "https://acme.com/careers",
+        "https://www.linkedin.com/in/adaruiz",
+        "https://news.example/acme-hiring",
+        "https://jobs.example/1",
+    }
