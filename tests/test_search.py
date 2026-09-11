@@ -78,3 +78,23 @@ def test_buscar_web_works_without_an_openai_key(conn, monkeypatch):
         )
     )
     assert len(search.buscar_web("acme")) == 1
+
+
+@respx.mock
+def test_zero_results_with_unresponsive_engines_is_an_outage(conn):
+    """Con los motores vetados por CAPTCHA, SearXNG contesta 200 con cero
+    resultados: eso no es "no hay nada", es que no hubo búsqueda."""
+    respx.get(f"{SEARXNG}/search").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "results": [],
+                "unresponsive_engines": [["google", "CAPTCHA"], ["duckduckgo", "timeout"]],
+            },
+        )
+    )
+    with pytest.raises(search.SearchUnavailable) as info:
+        search.buscar_web("acme")
+    message = str(info.value)
+    assert "google" in message and "CAPTCHA" in message
+    assert "duckduckgo" in message and "timeout" in message

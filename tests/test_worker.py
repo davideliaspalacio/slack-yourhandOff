@@ -198,3 +198,49 @@ def test_a_followup_crash_keeps_the_first_dossier(conn, pipeline):
     outcome = w.research_person("Ada Ruiz", "Acme")
     assert outcome.status == "investigado"
     assert stored_resumen(outcome.prospect_id) == "Primera pasada."
+
+
+def gather_with(errors, attempted, answered):
+    def fake(pid, full_name, company, domain=None):
+        return Gathered(
+            "acme.com",
+            [Evidence("home", "https://acme.com/", "Acme", "t")],
+            [],
+            list(errors),
+            searches_attempted=attempted,
+            searches_answered=answered,
+        )
+
+    return fake
+
+
+def test_gathering_errors_are_recorded_and_returned(conn, pipeline):
+    pipeline.setattr(w, "gather", gather_with(["about: 404"], attempted=2, answered=2))
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "investigado"
+    assert outcome.errors == ("about: 404",)
+    action = db.fetch_one("select payload from agent_actions where action = 'research_errores'")
+    assert action["payload"]["errores"] == ["about: 404"]
+
+
+def test_a_degraded_search_saves_the_dossier_but_leaves_the_person_incomplete(conn, pipeline):
+    """D2: se guarda lo que haya, pero sin congelar: la próxima vez se repite."""
+    errors = ["linkedin: motores vetados", "prensa: motores vetados"]
+    pipeline.setattr(w, "gather", gather_with(errors, attempted=2, answered=0))
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier(), make_dossier()))
+
+    degraded = w.research_person("Ada Ruiz", "Acme")
+    assert degraded.status == "incompleto"
+    assert degraded.version == 1
+    assert degraded.reason.startswith("búsqueda degradada")
+    assert degraded.errors == tuple(errors)
+    state = db.fetch_one("select state from prospects where id = %s", (degraded.prospect_id,))
+    assert state["state"] == "incompleto"
+
+    pipeline.setattr(w, "gather", gather_with([], attempted=2, answered=2))
+    healthy = w.research_person("Ada Ruiz", "Acme")
+    assert healthy.status == "investigado"
+    assert healthy.version == 2
+    state = db.fetch_one("select state from prospects where id = %s", (healthy.prospect_id,))
+    assert state["state"] == "investigado"

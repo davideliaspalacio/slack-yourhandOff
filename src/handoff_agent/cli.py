@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -46,6 +47,10 @@ def cmd_research(args) -> int:
     )
     if outcome.reason:
         print(f"motivo: {outcome.reason}")
+    if outcome.errors:
+        print("errores:")
+        for error in outcome.errors:
+            print(f"  - {error}")
     dossier = _dossier_for(outcome)
     if dossier:
         print(json.dumps(dossier, ensure_ascii=False, indent=2))
@@ -64,6 +69,11 @@ def _read_rows(path: Path) -> list[BatchRow]:
         ]
 
 
+def _degraded(row: BatchRow) -> bool:
+    reason = row.outcome.reason if row.outcome else None
+    return bool(reason) and reason.startswith(worker.DEGRADED_REASON)
+
+
 def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None:
     done = [r for r in rows if r.outcome]
     investigated = [r for r in done if r.outcome.status == "investigado"]
@@ -76,6 +86,7 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
         f"- Investigados: {len(investigated)}",
         f"- Incompletos: {sum(1 for r in done if r.outcome.status == 'incompleto')}",
         f"- Omitidos: {sum(1 for r in done if r.outcome.status == 'omitido')}",
+        f"- Degradados: {sum(1 for r in rows if _degraded(r))}",
         f"- Con error: {sum(1 for r in rows if r.error)}",
         f"- Con aviso: {sum(1 for r in rows if r.aviso)}",
         f"- Coste total: {_money(total)}",
@@ -92,6 +103,8 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
     for r in rows:
         d = r.dossier or {}
         status = r.outcome.status if r.outcome else ("error" if r.error else "sin procesar")
+        if _degraded(r):
+            status += " (búsqueda degradada)"
         cost = _money(r.outcome.cost_usd) if r.outcome else "—"
         fit = (d.get("encaje_handoff") or {}).get("puntuacion", "—")
         openings = (d.get("contratacion") or {}).get("vacantes_abiertas", "—")
@@ -103,6 +116,8 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
     lines += ["", "## Detalle"]
     for r in rows:
         lines += ["", f"### {r.nombre or '—'} — {r.empresa or '—'}"]
+        if _degraded(r):
+            lines += [f"**Búsqueda degradada:** {r.outcome.reason}", ""]
         if r.error:
             lines.append(f"Error: {r.error}")
         elif r.dossier:
@@ -118,6 +133,8 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
             lines.append(f"Motivo: {r.outcome.reason}")
         if r.aviso and not r.dossier:
             lines.append(f"Aviso: {r.aviso}")
+        if r.outcome and r.outcome.errors:
+            lines += ["", "Errores: " + "; ".join(r.outcome.errors)]
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -126,7 +143,7 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
 def cmd_batch(args) -> int:
     rows = _read_rows(Path(args.archivo))
     stopped = None
-    for row in rows:
+    for index, row in enumerate(rows):
         try:
             row.outcome = worker.research_person(row.nombre, row.empresa, row.dominio)
         except SYSTEM_STOPS as exc:
@@ -147,6 +164,9 @@ def cmd_batch(args) -> int:
         if row.aviso:
             console_line += f" — aviso: {row.aviso}"
         print(console_line)
+        if index < len(rows) - 1:
+            # Una ráfaga de búsquedas es lo que hace saltar el CAPTCHA de los motores.
+            time.sleep(args.pausa)
 
     _write_report(Path(args.salida), rows, stopped)
     print(f"informe: {args.salida}")
@@ -182,6 +202,13 @@ def build_parser() -> argparse.ArgumentParser:
     batch = sub.add_parser("research-batch", help="investiga un CSV y genera un informe")
     batch.add_argument("archivo")
     batch.add_argument("--salida", required=True)
+    batch.add_argument(
+        "--pausa",
+        type=float,
+        default=15.0,
+        metavar="SEGUNDOS",
+        help="espera entre filas para no disparar el CAPTCHA de los buscadores",
+    )
     batch.set_defaults(func=cmd_batch)
 
     show = sub.add_parser("dossier", help="muestra el último dossier de una persona")

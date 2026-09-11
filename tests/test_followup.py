@@ -47,3 +47,23 @@ def test_run_followup_degrades_on_search_outage(monkeypatch):
     enriched = f.run_followup("pid", base(), ["acme funding"])
     assert len(enriched.evidence) == 1
     assert enriched.errors
+
+
+def test_run_followup_keeps_the_search_tally_and_adds_its_own(monkeypatch):
+    queries = iter([[SearchResult("Acme", "https://news.example/a", "x")], []])
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: next(queries))
+    start = Gathered("acme.com", [], [], [], searches_attempted=3, searches_answered=0)
+    assert start.search_degraded
+    enriched = f.run_followup("pid", start, ["uno", "dos"])
+    assert enriched.searches_attempted == 5
+    assert enriched.searches_answered == 1
+    assert not enriched.search_degraded
+
+
+def test_a_followup_that_also_fails_stays_degraded(monkeypatch):
+    def down(q, limit=5, prospect_id=None):
+        raise SearchUnavailable("down")
+
+    monkeypatch.setattr(f.search, "buscar_web", down)
+    start = Gathered("acme.com", [], [], [], searches_attempted=3, searches_answered=0)
+    assert f.run_followup("pid", start, ["uno"]).search_degraded

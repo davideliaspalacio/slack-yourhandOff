@@ -50,10 +50,33 @@ class Gathered:
     evidence: list[Evidence]
     jobs: list[jobs.JobPosting]
     errors: list[str] = field(default_factory=list)
+    searches_attempted: int = 0
+    searches_answered: int = 0
 
     @property
     def sources(self) -> set[str]:
         return {e.url for e in self.evidence} | {j.url for j in self.jobs if j.url}
+
+    @property
+    def search_degraded(self) -> bool:
+        """Se buscó y ninguna búsqueda trajo nada: casi siempre el buscador
+        vetado, no una empresa sin rastro. Un dossier así no es de fiar."""
+        return self.searches_attempted > 0 and self.searches_answered == 0
+
+
+@dataclass
+class SearchTally:
+    """Cuenta las búsquedas intentadas y las que devolvieron algo."""
+
+    attempted: int = 0
+    answered: int = 0
+
+    def run(self, query: str, limit: int, prospect_id: str | None) -> list[search.SearchResult]:
+        self.attempted += 1
+        results = search.buscar_web(query, limit=limit, prospect_id=prospect_id)
+        if results:
+            self.answered += 1
+        return results
 
 
 def dedupe_evidence(items: list[Evidence]) -> list[Evidence]:
@@ -67,19 +90,18 @@ def dedupe_evidence(items: list[Evidence]) -> list[Evidence]:
     return unique
 
 
-def resolve_domain(company: str, prospect_id: str) -> str | None:
-    for result in search.buscar_web(
-        f"{company} official website", limit=8, prospect_id=prospect_id
-    ):
+def resolve_domain(company: str, prospect_id: str, tally: SearchTally | None = None) -> str | None:
+    run = tally.run if tally else search.buscar_web
+    for result in run(f"{company} official website", limit=8, prospect_id=prospect_id):
         host = (urlparse(result.url).hostname or "").removeprefix("www.")
         if host and not any(host == d or host.endswith("." + d) for d in NOT_A_COMPANY_SITE):
             return host
     return None
 
 
-def _search_into(evidence, errors, kind, query, limit, prospect_id) -> None:
+def _search_into(evidence, errors, tally, kind, query, limit, prospect_id) -> None:
     try:
-        for r in search.buscar_web(query, limit=limit, prospect_id=prospect_id):
+        for r in tally.run(query, limit=limit, prospect_id=prospect_id):
             if r.title or r.snippet:
                 evidence.append(Evidence(kind, r.url, r.title, r.snippet))
     except search.SearchUnavailable as exc:
@@ -94,10 +116,11 @@ def gather(
 ) -> Gathered:
     evidence: list[Evidence] = []
     errors: list[str] = []
+    tally = SearchTally()
 
     if not domain and company:
         try:
-            domain = resolve_domain(company, prospect_id)
+            domain = resolve_domain(company, prospect_id, tally)
         except search.SearchUnavailable as exc:
             errors.append(f"dominio: {exc}")
 
@@ -115,12 +138,25 @@ def gather(
         # Fragmentos del buscador, nunca la página: descargar LinkedIn va contra
         # sus términos y es lo que tumbó a Proxycurl.
         query = f'site:linkedin.com/in "{full_name}"' + (f' "{company}"' if company else "")
-        _search_into(evidence, errors, "linkedin", query, 3, prospect_id)
+        _search_into(evidence, errors, tally, "linkedin", query, 3, prospect_id)
 
     if company:
         _search_into(
-            evidence, errors, "prensa", f'"{company}" funding OR raises OR hiring', 5, prospect_id
+            evidence,
+            errors,
+            tally,
+            "prensa",
+            f'"{company}" funding OR raises OR hiring',
+            5,
+            prospect_id,
         )
 
     found_jobs = jobs.buscar_ofertas(company, limit=20, prospect_id=prospect_id) if company else []
-    return Gathered(domain, dedupe_evidence(evidence), found_jobs, errors)
+    return Gathered(
+        domain,
+        dedupe_evidence(evidence),
+        found_jobs,
+        errors,
+        searches_attempted=tally.attempted,
+        searches_answered=tally.answered,
+    )

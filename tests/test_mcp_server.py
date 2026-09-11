@@ -68,3 +68,19 @@ def test_investigar_persona_returns_outcome_and_dossier(conn, monkeypatch):
     assert result["estado"] == "investigado"
     assert result["coste_usd"] == "0.0310"
     assert result["dossier"]["content"] == {"resumen": "ok"}
+
+
+def test_investigar_persona_returns_the_errors(conn, monkeypatch):
+    monkeypatch.setattr(
+        mcp_server.worker,
+        "research_person",
+        lambda *a, **k: ResearchOutcome(
+            "pid", "manual:ada-acme", "investigado", 1, Decimal("0.03"), None, ("about: 404",)
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server.prospects,
+        "historial_prospecto",
+        lambda uid: {"prospect": None, "dossier": None, "actions": []},
+    )
+    assert mcp_server.investigar_persona(nombre="Ada", empresa="Acme")["errores"] == ["about: 404"]

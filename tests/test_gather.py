@@ -127,3 +127,47 @@ def test_dedupe_keeps_the_first_occurrence_of_each_url():
     a = g.Evidence("home", "https://acme.com/", "t", "primero")
     b = g.Evidence("about", "https://acme.com/", "t", "redirigió a home")
     assert g.dedupe_evidence([a, b]) == [a]
+
+
+def no_jobs(company, limit=20, prospect_id=None):
+    return []
+
+
+def test_every_search_failing_marks_the_gathering_degraded(monkeypatch):
+    def down(query, limit=8, prospect_id=None):
+        raise SearchUnavailable("motores vetados")
+
+    monkeypatch.setattr(g.search, "buscar_web", down)
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", no_jobs)
+    result = g.gather("pid", "Ada Ruiz", "Acme")
+    assert result.searches_attempted == 3  # dominio, linkedin, prensa
+    assert result.searches_answered == 0
+    assert result.search_degraded
+
+
+def test_searches_with_zero_results_also_count_as_degraded(monkeypatch):
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", no_jobs)
+    result = g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com")
+    assert result.searches_attempted == 2  # linkedin y prensa; el dominio ya venía
+    assert result.search_degraded
+
+
+def test_one_search_with_results_is_enough(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search({"funding": [SearchResult("Acme raises", "https://news.example/a", "x")]}),
+    )
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", no_jobs)
+    result = g.gather("pid", "Ada Ruiz", "Acme")
+    assert result.searches_attempted == 3
+    assert result.searches_answered == 1
+    assert not result.search_degraded
+
+
+def test_no_search_attempted_is_not_degraded():
+    assert not g.Gathered("acme.com", [], [], []).search_degraded

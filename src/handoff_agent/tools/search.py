@@ -25,6 +25,13 @@ class SearchResult:
     snippet: str
 
 
+def _describe_engine(entry) -> str:
+    """SearXNG da cada motor como un par [motor, motivo]."""
+    if isinstance(entry, (list, tuple)) and len(entry) == 2:
+        return f"{entry[0]} ({entry[1]})"
+    return str(entry)
+
+
 def buscar_web(query: str, limit: int = 8, prospect_id: str | None = None) -> list[SearchResult]:
     """Search the public web. Returns at most `limit` results, best first.
 
@@ -43,13 +50,23 @@ def buscar_web(query: str, limit: int = 8, prospect_id: str | None = None) -> li
     except (httpx.HTTPError, ValueError) as exc:
         raise SearchUnavailable(f"SearXNG did not answer: {exc}") from exc
 
+    items = payload.get("results") or []
+    stalled = payload.get("unresponsive_engines") or []
+    if not items and stalled:
+        # Con los motores vetados (CAPTCHA) SearXNG contesta 200 y cero
+        # resultados. Eso no es "no hay nada": es que no hubo búsqueda.
+        raise SearchUnavailable(
+            "SearXNG sin resultados; motores sin respuesta: "
+            + ", ".join(_describe_engine(entry) for entry in stalled)
+        )
+
     results = [
         SearchResult(
             title=item.get("title", ""),
             url=item.get("url", ""),
             snippet=item.get("content", ""),
         )
-        for item in payload.get("results", [])[:limit]
+        for item in items[:limit]
     ]
     ledger.record_action(
         action="buscar_web",

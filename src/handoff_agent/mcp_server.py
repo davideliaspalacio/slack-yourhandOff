@@ -95,6 +95,7 @@ def investigar_persona(
         "version": outcome.version,
         "coste_usd": f"{outcome.cost_usd:.4f}",
         "motivo": outcome.reason,
+        "errores": list(outcome.errors),
         "dossier": jsonable(history["dossier"]),
     }
 
