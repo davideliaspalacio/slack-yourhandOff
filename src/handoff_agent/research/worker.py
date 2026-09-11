@@ -70,7 +70,7 @@ def _set_state(
 def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | None]:
     """Guarda el dossier y deja el estado. Devuelve la versión y, si la
     búsqueda salió degradada, el motivo (la persona queda en incompleto)."""
-    version = prospects.save_dossier(pid, result.dossier, sorted(gathered.sources))
+    version = prospects.save_dossier(pid, result.dossier, gathered.source_records())
     if gathered.errors:
         ledger.record_action("research_errores", {"errores": gathered.errors}, prospect_id=pid)
     degraded = None

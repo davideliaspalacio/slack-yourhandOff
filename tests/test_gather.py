@@ -171,3 +171,25 @@ def test_one_search_with_results_is_enough(monkeypatch):
 
 def test_no_search_attempted_is_not_degraded():
     assert not g.Gathered("acme.com", [], [], []).search_degraded
+
+
+def test_source_records_carry_kind_and_title_once_per_url():
+    gathered = g.Gathered(
+        "acme.com",
+        [
+            g.Evidence("home", "https://acme.com/", "Acme", "t"),
+            g.Evidence("prensa", "https://news.example/a", "Acme raises", "t"),
+        ],
+        [
+            JobPosting("Support Lead", "Acme", "Remote", "https://jobs.example/1", "linkedin"),
+            JobPosting("Support Lead", "Acme", "Remote", "https://jobs.example/1", "indeed"),
+            JobPosting("Ops", "Acme", "Remote", "", "indeed"),
+            JobPosting("Home dup", "Acme", "Remote", "https://acme.com/", "indeed"),
+        ],
+    )
+    assert gathered.source_records() == [
+        {"url": "https://acme.com/", "kind": "home", "title": "Acme"},
+        {"url": "https://news.example/a", "kind": "prensa", "title": "Acme raises"},
+        {"url": "https://jobs.example/1", "kind": "vacante", "title": "Support Lead"},
+    ]
+    assert {r["url"] for r in gathered.source_records()} == gathered.sources

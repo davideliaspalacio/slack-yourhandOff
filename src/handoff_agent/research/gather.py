@@ -57,6 +57,25 @@ class Gathered:
     def sources(self) -> set[str]:
         return {e.url for e in self.evidence} | {j.url for j in self.jobs if j.url}
 
+    def source_records(self) -> list[dict]:
+        """Las fuentes con su procedencia, una por URL, para guardar en
+        `dossiers.sources`: `{"url", "kind", "title"}`; las vacantes llevan
+        `kind="vacante"` y el título de la oferta.
+
+        Las 6 filas antiguas (prueba real del 2026-09-10) guardan URLs sueltas:
+        quien lea `dossiers.sources` debe aceptar ambas formas.
+        """
+        records: list[dict] = []
+        seen: set[str] = set()
+        candidates = [(e.url, e.kind, e.title) for e in self.evidence] + [
+            (j.url, "vacante", j.title) for j in self.jobs
+        ]
+        for url, kind, title in candidates:
+            if url and url not in seen:
+                seen.add(url)
+                records.append({"url": url, "kind": kind, "title": title})
+        return records
+
     @property
     def search_degraded(self) -> bool:
         """Se buscó y ninguna búsqueda trajo nada: casi siempre el buscador

@@ -35,6 +35,10 @@ def upsert_prospect(slack_user_id: str, full_name: str | None = None) -> dict:
 def save_dossier(prospect_id: str, content: dict, sources: list) -> int:
     """Store a new dossier version for the person. Returns the version number.
 
+    `sources` are `{"url", "kind", "title"}` records (Gathered.source_records).
+    The six rows from the first live test hold bare URL strings instead, so
+    anything reading `dossiers.sources` must accept both shapes.
+
     The advisory lock is not optional. Under READ COMMITTED, two concurrent
     saves both read the same max(version) and the second one dies on the unique
     constraint — throwing away a dossier that cost real money to research. Both

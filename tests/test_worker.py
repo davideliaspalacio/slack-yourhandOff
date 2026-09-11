@@ -10,6 +10,7 @@ from handoff_agent.research import worker as w
 from handoff_agent.research.gather import Evidence, Gathered
 from handoff_agent.research.synthesize import Synthesis
 from handoff_agent.tools import prospects
+from handoff_agent.tools.jobs import JobPosting
 from tests.test_dossier import make_dossier
 
 
@@ -279,3 +280,24 @@ def test_a_person_discarded_mid_run_stays_discarded(conn, pipeline):
     outcome = w.research_person("Ada Ruiz", "Acme")
     assert outcome.version == 1
     assert state_of(outcome.prospect_id) == "descartado"
+
+
+def test_stored_sources_record_their_provenance(conn, pipeline):
+    def gather_with_a_job(pid, full_name, company, domain=None):
+        return Gathered(
+            "acme.com",
+            [Evidence("home", "https://acme.com/", "Acme", "t")],
+            [JobPosting("Support Lead", "Acme", "Remote", "https://jobs.example/1", "linkedin")],
+            [],
+        )
+
+    pipeline.setattr(w, "gather", gather_with_a_job)
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    stored = db.fetch_one(
+        "select sources from dossiers where prospect_id = %s", (outcome.prospect_id,)
+    )
+    assert stored["sources"] == [
+        {"url": "https://acme.com/", "kind": "home", "title": "Acme"},
+        {"url": "https://jobs.example/1", "kind": "vacante", "title": "Support Lead"},
+    ]
