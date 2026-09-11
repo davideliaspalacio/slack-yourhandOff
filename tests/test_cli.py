@@ -81,3 +81,25 @@ def test_single_research_prints_the_outcome(capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "investigado" in out
     assert "$0.0500" in out
+
+
+def test_a_dossier_read_failure_is_a_warning_not_an_error(tmp_path, capsys, monkeypatch):
+    csv = write_csv(tmp_path, ["Ada Ruiz,Acme,acme.com"])
+    monkeypatch.setattr(cli.worker, "research_person", lambda *a, **k: outcome())
+    monkeypatch.setattr(
+        cli.prospects,
+        "historial_prospecto",
+        lambda uid: (_ for _ in ()).throw(RuntimeError("db caída")),
+    )
+    report = tmp_path / "informe.md"
+
+    assert cli.main(["research-batch", str(csv), "--salida", str(report)]) == 0
+
+    text = report.read_text()
+    assert "Investigados: 1" in text
+    assert "Con error: 0" in text
+    assert "Con aviso: 1" in text
+    assert "db caída" in text
+
+    out = capsys.readouterr().out
+    assert "aviso" in out

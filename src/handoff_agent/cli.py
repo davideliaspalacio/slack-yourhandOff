@@ -25,6 +25,7 @@ class BatchRow:
     dominio: str | None
     outcome: worker.ResearchOutcome | None = None
     error: str | None = None
+    aviso: str | None = None
     dossier: dict | None = None
 
 
@@ -76,6 +77,7 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
         f"- Incompletos: {sum(1 for r in done if r.outcome.status == 'incompleto')}",
         f"- Omitidos: {sum(1 for r in done if r.outcome.status == 'omitido')}",
         f"- Con error: {sum(1 for r in rows if r.error)}",
+        f"- Con aviso: {sum(1 for r in rows if r.aviso)}",
         f"- Coste total: {_money(total)}",
         f"- Coste medio por dossier: {_money(average)}",
     ]
@@ -109,8 +111,13 @@ def _write_report(path: Path, rows: list[BatchRow], stopped: str | None) -> None
             if gaps:
                 lines.append("")
                 lines.append("Huecos: " + "; ".join(map(str, gaps)))
+            if r.aviso:
+                lines.append("")
+                lines.append(f"Aviso: {r.aviso}")
         elif r.outcome and r.outcome.reason:
             lines.append(f"Motivo: {r.outcome.reason}")
+        if r.aviso and not r.dossier:
+            lines.append(f"Aviso: {r.aviso}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -122,17 +129,24 @@ def cmd_batch(args) -> int:
     for row in rows:
         try:
             row.outcome = worker.research_person(row.nombre, row.empresa, row.dominio)
-            row.dossier = _dossier_for(row.outcome)
         except SYSTEM_STOPS as exc:
             stopped = str(exc)
             row.error = str(exc)
             break
         except Exception as exc:  # noqa: BLE001 - una fila no tumba el lote
             row.error = f"{type(exc).__name__}: {exc}"
-        print(
-            f"{row.nombre or '—'} / {row.empresa or '—'}: "
-            f"{row.outcome.status if row.outcome else row.error}"
-        )
+
+        if row.outcome:
+            try:
+                row.dossier = _dossier_for(row.outcome)
+            except Exception as exc:  # noqa: BLE001
+                row.aviso = f"dossier guardado pero no se pudo leer: {type(exc).__name__}: {exc}"
+
+        status_msg = row.outcome.status if row.outcome else row.error
+        console_line = f"{row.nombre or '—'} / {row.empresa or '—'}: {status_msg}"
+        if row.aviso:
+            console_line += f" — aviso: {row.aviso}"
+        print(console_line)
 
     _write_report(Path(args.salida), rows, stopped)
     print(f"informe: {args.salida}")
@@ -143,7 +157,7 @@ def cmd_dossier(args) -> int:
     history = prospects.historial_prospecto(args.slack_user_id)
     print(
         json.dumps(
-            mcp_server._jsonable(history["dossier"]), ensure_ascii=False, indent=2, default=str
+            mcp_server.jsonable(history["dossier"]), ensure_ascii=False, indent=2, default=str
         )
     )
     return 0

@@ -53,9 +53,9 @@ def historial_prospecto(slack_user_id: str) -> dict:
     """Qué sabemos ya de esta persona: ficha, último dossier y acciones recientes."""
     history = prospects.historial_prospecto(slack_user_id)
     return {
-        "prospect": _jsonable(history["prospect"]),
-        "dossier": _jsonable(history["dossier"]),
-        "actions": [_jsonable(a) for a in history["actions"]],
+        "prospect": jsonable(history["prospect"]),
+        "dossier": jsonable(history["dossier"]),
+        "actions": [jsonable(a) for a in history["actions"]],
     }
 
 
@@ -77,7 +77,7 @@ def resumen_costes(days: int = 30) -> dict:
     }
 
 
-def _jsonable(row: dict | None) -> dict | None:
+def jsonable(row: dict | None) -> dict | None:
     """Datetimes and UUIDs do not survive JSON on their own."""
     if row is None:
         return None
