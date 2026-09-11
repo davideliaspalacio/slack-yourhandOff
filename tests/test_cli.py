@@ -1,4 +1,5 @@
 import json
+import logging
 import subprocess
 import sys
 import time
@@ -8,6 +9,7 @@ import pytest
 
 from handoff_agent import cli, guards
 from handoff_agent.research.worker import ResearchOutcome
+from tests.slack_fakes import FakeReader
 from tests.test_dossier import make_dossier
 
 
@@ -251,3 +253,79 @@ def test_a_stop_before_any_save_has_no_warning(tmp_path, monkeypatch):
     report = tmp_path / "informe.md"
     cli.main(["research-batch", str(csv), "--salida", str(report)])
     assert "Con aviso: 0" in report.read_text()
+
+
+def test_vigilar_without_a_token_explains_what_is_missing(capsys):
+    assert cli.main(["vigilar"]) == 1
+    assert "SLACK_USER_TOKEN" in capsys.readouterr().out
+
+
+def test_vigilar_reads_once_and_resolves(conn, monkeypatch, capsys):
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
+    fake = FakeReader()
+    fake.post("C1", "U1", "hola", "9999999999.000001")
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: fake)
+    monkeypatch.setattr(cli, "watch_tick", lambda reader, channels, lookback_hours: cli_tick())
+    assert cli.main(["vigilar"]) == 0
+    assert "mensajes nuevos" in capsys.readouterr().out
+
+
+def cli_tick():
+    from handoff_agent.ingest.watcher import TickResult
+
+    return TickResult(messages_new=1)
+
+
+def test_cola_prints_the_queue_counts(conn, capsys):
+    from handoff_agent.ingest import queue
+
+    queue.enqueue("U1", "mensaje")
+    assert cli.main(["cola"]) == 0
+    assert '"pendiente": 1' in capsys.readouterr().out
+
+
+def test_worker_without_channels_explains_what_is_missing(monkeypatch, capsys):
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
+    assert cli.main(["worker"]) == 1
+    assert "SLACK_CHANNEL_IDS" in capsys.readouterr().out
+
+
+def test_worker_runs_the_loop_with_the_settings(monkeypatch):
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1,C2")
+    monkeypatch.setenv("SLACK_POLL_SECONDS", "900")
+    seen = {}
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "run_loop", lambda reader, **kwargs: seen.update(kwargs) or 0)
+    assert cli.main(["worker"]) == 0
+    assert seen["channels"] == ["C1", "C2"]
+    assert seen["poll_seconds"] == 900
+
+
+def test_worker_leaves_the_httpx_logger_at_warning(monkeypatch):
+    """Carried requirement A: httpx logs full request URLs at INFO, and the
+    alert webhook URL is a credential -- it must never reach the logs."""
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "run_loop", lambda reader, **kwargs: 0)
+    assert cli.main(["worker"]) == 0
+    assert logging.getLogger("httpx").level == logging.WARNING
+
+
+def test_worker_restores_the_previous_signal_handlers_when_the_loop_returns(monkeypatch):
+    """Carried requirement C: cmd_worker must not leave SIGINT/SIGTERM handlers
+    installed once run_loop returns -- the test suite runs long after this."""
+    import signal
+
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "run_loop", lambda reader, **kwargs: 0)
+
+    previous_int = signal.getsignal(signal.SIGINT)
+    previous_term = signal.getsignal(signal.SIGTERM)
+    assert cli.main(["worker"]) == 0
+    assert signal.getsignal(signal.SIGINT) == previous_int
+    assert signal.getsignal(signal.SIGTERM) == previous_term

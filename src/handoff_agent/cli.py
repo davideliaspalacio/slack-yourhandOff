@@ -5,15 +5,24 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
+import signal
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from . import guards, ledger, serialize
+from . import guards, ledger, ops_alerts, serialize
+from .config import load_settings
+from .ingest import queue
+from .ingest.loop import run_loop
+from .ingest.resolver import resolve_pending
+from .ingest.watcher import watch_tick
 from .research import worker
+from .slack_client import FoundersClubReader, SlackAuthFailed
 from .tools import prospects
 
 SYSTEM_STOPS = (guards.KillSwitchActive, guards.MonthlyBudgetExceeded)
@@ -195,6 +204,78 @@ def cmd_costes(args) -> int:
     return 0
 
 
+def _slack_reader(settings):
+    """None, con un mensaje claro, si falta configuración de Slack."""
+    if not settings.slack_user_token:
+        print("falta SLACK_USER_TOKEN en .env (token de usuario xoxp del Founders Club)")
+        return None
+    if not settings.slack_channel_ids:
+        print("falta SLACK_CHANNEL_IDS en .env (IDs de los canales a vigilar, separados por comas)")
+        return None
+    return FoundersClubReader(settings.slack_user_token)
+
+
+def cmd_vigilar(args) -> int:
+    settings = load_settings()
+    reader = _slack_reader(settings)
+    if reader is None:
+        return 1
+    try:
+        tick = watch_tick(reader, list(settings.slack_channel_ids), settings.slack_lookback_hours)
+    except SlackAuthFailed as exc:
+        ops_alerts.alert("slack_auth", str(exc))
+        print(f"detenido: {exc}")
+        return 1
+    resolved = resolve_pending()
+    print(
+        f"mensajes nuevos: {tick.messages_new} · ignorados: {tick.messages_ignored} · "
+        f"miembros nuevos: {tick.members_new}"
+    )
+    print(
+        f"encolados: {resolved.enqueued} · archivados: {resolved.archived} · "
+        f"a scoring: {resolved.to_scoring}"
+    )
+    for error in tick.errors:
+        print(f"error: {error}")
+    return 0
+
+
+def cmd_cola(args) -> int:
+    print(json.dumps(queue.status_counts(), indent=2))
+    for failure in queue.recent_failures():
+        print(f"fallido {failure['slack_user_id']}: {failure['last_error']}")
+    return 0
+
+
+def cmd_worker(args) -> int:
+    settings = load_settings()
+    reader = _slack_reader(settings)
+    if reader is None:
+        return 1
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # httpx logs every request at INFO with the full URL, and the alert
+    # webhook URL is itself a credential -- it must never reach the logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    stop = threading.Event()
+    previous_handlers = {
+        sig: signal.signal(sig, lambda *_: stop.set()) for sig in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        run_loop(
+            reader,
+            channels=list(settings.slack_channel_ids),
+            lookback_hours=settings.slack_lookback_hours,
+            poll_seconds=settings.slack_poll_seconds,
+            should_stop=stop.is_set,
+        )
+    finally:
+        # Never leave our handlers installed once the loop ends -- a test
+        # suite, or anything else run in the same process, runs after this.
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="handoff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -225,6 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
     costs = sub.add_parser("costes", help="gasto de los últimos N días")
     costs.add_argument("--dias", type=int, default=30)
     costs.set_defaults(func=cmd_costes)
+
+    watch = sub.add_parser("vigilar", help="lee el Slack una vez y encola research")
+    watch.set_defaults(func=cmd_vigilar)
+
+    jobs_cmd = sub.add_parser("cola", help="estado de la cola de research")
+    jobs_cmd.set_defaults(func=cmd_cola)
+
+    loop_cmd = sub.add_parser("worker", help="vigila el Slack y procesa la cola sin parar")
+    loop_cmd.set_defaults(func=cmd_worker)
     return parser
 
 
