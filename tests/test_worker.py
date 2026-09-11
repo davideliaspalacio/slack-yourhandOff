@@ -456,3 +456,79 @@ def test_a_company_name_that_is_not_a_string_falls_back_to_the_input(conn, pipel
         "select state, company_name from prospects where id = %s", (outcome.prospect_id,)
     )
     assert person == {"state": "investigado", "company_name": "Acme"}
+
+
+# --- B: un dossier degradado se marca y nunca se congela ----------------------
+
+HEALTHY = {"attempted": 2, "answered": 2}
+DEGRADED = {"attempted": 2, "answered": 0}
+
+
+def age_dossiers(pid, days=200):
+    db.execute(
+        "update dossiers set created_at = now() - make_interval(days => %s) where prospect_id = %s",
+        (days, pid),
+    )
+
+
+def dossier_content(pid, version):
+    return db.fetch_one(
+        "select content from dossiers where prospect_id = %s and version = %s", (pid, version)
+    )["content"]
+
+
+def test_a_healthy_dossier_carries_no_degraded_marker_and_stays_fresh(conn, pipeline):
+    pipeline.setattr(w, "gather", gather_with([], **HEALTHY))
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    first = w.research_person("Ada Ruiz", "Acme")
+    assert "degradado" not in dossier_content(first.prospect_id, 1)
+    again = w.research_person("Ada Ruiz", "Acme")
+    assert again.status == "omitido"
+    assert again.reason == "dossier vigente"
+
+
+def test_a_degraded_new_person_is_incomplete_and_marked(conn, pipeline):
+    pipeline.setattr(w, "gather", gather_with(["prensa: vetado"], **DEGRADED))
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "incompleto"
+    assert outcome.reason.startswith("búsqueda degradada")
+    assert outcome.errors == ("prensa: vetado",)
+    assert dossier_content(outcome.prospect_id, 1)["degradado"] is True
+
+
+def test_the_model_cannot_mark_a_healthy_dossier_as_degraded(conn, pipeline):
+    pipeline.setattr(w, "gather", gather_with([], **HEALTHY))
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier(degradado=True)))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert "degradado" not in dossier_content(outcome.prospect_id, 1)
+    assert w.research_person("Ada Ruiz", "Acme").status == "omitido"
+
+
+@pytest.mark.parametrize("state", ["investigado", "contactado", "cliente"])
+def test_a_degraded_re_research_keeps_the_state_but_never_freezes(conn, pipeline, state):
+    """D2 + I4: la persona conserva su estado, pero la versión pobre no se
+    congela 180 días: la próxima ejecución investiga otra vez sin --forzar."""
+    pipeline.setattr(w, "gather", gather_with([], **HEALTHY))
+    pipeline.setattr(w, "synthesize", synth_returning(*[make_dossier()] * 3))
+    first = w.research_person("Ada Ruiz", "Acme")
+    pid = first.prospect_id
+    db.execute("update prospects set state = %s where id = %s", (state, pid))
+    age_dossiers(pid)
+
+    pipeline.setattr(w, "gather", gather_with(["prensa: vetado"], **DEGRADED))
+    degraded = w.research_person("Ada Ruiz", "Acme")
+    assert degraded.version == 2
+    assert state_of(pid) == state
+    assert degraded.status == "investigado"
+    assert degraded.reason.startswith("búsqueda degradada")
+    assert f"se conserva el estado {state}" in degraded.reason
+    assert degraded.errors == ("prensa: vetado",)
+    assert dossier_content(pid, 2)["degradado"] is True
+
+    pipeline.setattr(w, "gather", gather_with([], **HEALTHY))
+    healthy = w.research_person("Ada Ruiz", "Acme")
+    assert healthy.status == "investigado"
+    assert healthy.version == 3
+    assert "degradado" not in dossier_content(pid, 3)
+    assert state_of(pid) == state

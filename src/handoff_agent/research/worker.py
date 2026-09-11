@@ -25,6 +25,7 @@ from .synthesize import synthesize
 FRESH_FOR = timedelta(days=180)
 SYSTEM_STOPS = (guards.KillSwitchActive, guards.MonthlyBudgetExceeded)
 DEGRADED_REASON = "búsqueda degradada"
+DEGRADED_KEY = "degradado"
 
 
 @dataclass(frozen=True)
@@ -60,15 +61,17 @@ ALLOWED_FROM = {
 
 def _set_state(
     prospect_id: str, state: str, company: str | None = None, domain: str | None = None
-) -> None:
-    db.execute(
+) -> str:
+    """Pide el estado y devuelve el que de verdad quedó (puede ser otro: I4)."""
+    row = db.fetch_one(
         "update prospects set "
         "state = case when state = any(%s) then %s else state end, "
         "company_name = coalesce(%s, company_name), "
         "company_domain = coalesce(%s, company_domain), updated_at = now() "
-        "where id = %s",
+        "where id = %s returning state",
         (list(ALLOWED_FROM[state]), state, company, domain, prospect_id),
     )
+    return row["state"]
 
 
 def _company_name(dossier: dict, company: str | None) -> str | None:
@@ -78,25 +81,32 @@ def _company_name(dossier: dict, company: str | None) -> str | None:
     return name.strip() if isinstance(name, str) and name.strip() else company
 
 
-def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | None]:
-    """Guarda el dossier y deja el estado. Devuelve la versión y, si la
-    búsqueda salió degradada, el motivo (la persona queda en incompleto)."""
-    version = prospects.save_dossier(pid, result.dossier, gathered.source_records())
-    if gathered.errors:
-        ledger.record_action("research_errores", {"errores": gathered.errors}, prospect_id=pid)
+def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | None, str]:
+    """Guarda el dossier y deja el estado. Devuelve la versión, el motivo si la
+    búsqueda salió degradada (o None) y el estado en que quedó la persona.
+
+    Un dossier degradado lleva `"degradado": true` en su contenido: la regla de
+    frescura no lo protege, así que la próxima ejecución lo repite. Solo lo pone
+    el código; si el modelo devolviera esa clave, se descarta.
+    """
+    content = {k: v for k, v in result.dossier.items() if k != DEGRADED_KEY}
     degraded = None
     if gathered.search_degraded:
+        content[DEGRADED_KEY] = True
         degraded = (
             f"{DEGRADED_REASON}: ninguna de las {gathered.searches_attempted} "
             "búsquedas devolvió resultados"
         )
-    _set_state(
+    version = prospects.save_dossier(pid, content, gathered.source_records())
+    if gathered.errors:
+        ledger.record_action("research_errores", {"errores": gathered.errors}, prospect_id=pid)
+    state = _set_state(
         pid,
         "incompleto" if degraded else "investigado",
         company=_company_name(result.dossier, company),
         domain=gathered.domain,
     )
-    return version, degraded
+    return version, degraded, state
 
 
 def research_person(
@@ -116,14 +126,20 @@ def research_person(
     if person["state"] == "descartado":
         return ResearchOutcome(pid, user_id, "omitido", None, Decimal(0), "persona descartada")
 
-    # Incompleto significa que falta algo: la frescura no protege ese dossier.
+    # Incompleto significa que falta algo, y un dossier degradado salió de una
+    # búsqueda que no funcionó: la frescura no protege ninguno de los dos.
     if not force and person["state"] != "incompleto":
         latest = db.fetch_one(
-            "select version, created_at from dossiers where prospect_id = %s "
-            "order by version desc limit 1",
-            (pid,),
+            "select version, created_at, "
+            "coalesce((content->>%s)::boolean, false) as degraded "
+            "from dossiers where prospect_id = %s order by version desc limit 1",
+            (DEGRADED_KEY, pid),
         )
-        if latest and datetime.now(UTC) - latest["created_at"] < FRESH_FOR:
+        if (
+            latest
+            and not latest["degraded"]
+            and datetime.now(UTC) - latest["created_at"] < FRESH_FOR
+        ):
             return ResearchOutcome(
                 pid, user_id, "omitido", latest["version"], Decimal(0), "dossier vigente"
             )
@@ -158,7 +174,7 @@ def research_person(
                     prospect_id=pid,
                 )
 
-            version, degraded = _store(pid, result, gathered, company)
+            version, degraded, state = _store(pid, result, gathered, company)
     except (DossierInvalid, guards.RunBudgetExceeded) as exc:
         _set_state(pid, "incompleto")
         errors = tuple(gathered.errors) if gathered else ()
@@ -168,6 +184,11 @@ def research_person(
         return ResearchOutcome(pid, user_id, "incompleto", None, budget.spent, str(exc), errors)
 
     errors = tuple(gathered.errors)
-    if degraded:
+    if degraded and state == "incompleto":
         return ResearchOutcome(pid, user_id, "incompleto", version, budget.spent, degraded, errors)
+    if degraded:
+        # I4: quien ya estaba investigado, contactado o cliente no baja a
+        # incompleto; el estado se dice tal como quedó.
+        reason = f"{degraded}; se conserva el estado {state}"
+        return ResearchOutcome(pid, user_id, "investigado", version, budget.spent, reason, errors)
     return ResearchOutcome(pid, user_id, "investigado", version, budget.spent, None, errors)

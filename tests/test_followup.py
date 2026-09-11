@@ -49,14 +49,27 @@ def test_run_followup_degrades_on_search_outage(monkeypatch):
     assert enriched.errors
 
 
-def test_run_followup_keeps_the_search_tally_and_adds_its_own(monkeypatch):
+def test_followup_results_do_not_change_the_search_health(monkeypatch):
+    """La salud del buscador se mide en la recolección inicial (dominio,
+    linkedin, prensa); el seguimiento solo arrastra ese recuento."""
     queries = iter([[SearchResult("Acme", "https://news.example/a", "x")], []])
     monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: next(queries))
     start = Gathered("acme.com", [], [], [], searches_attempted=3, searches_answered=0)
     assert start.search_degraded
     enriched = f.run_followup("pid", start, ["uno", "dos"])
-    assert enriched.searches_attempted == 5
-    assert enriched.searches_answered == 1
+    assert enriched.searches_attempted == 3
+    assert enriched.searches_answered == 0
+    assert enriched.search_degraded
+
+
+def test_a_failing_followup_does_not_degrade_a_healthy_gathering(monkeypatch):
+    def down(q, limit=5, prospect_id=None):
+        raise SearchUnavailable("down")
+
+    monkeypatch.setattr(f.search, "buscar_web", down)
+    start = Gathered("acme.com", [], [], [], searches_attempted=3, searches_answered=2)
+    enriched = f.run_followup("pid", start, ["uno"])
+    assert (enriched.searches_attempted, enriched.searches_answered) == (3, 2)
     assert not enriched.search_degraded
 
 
