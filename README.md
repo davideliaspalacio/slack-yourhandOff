@@ -78,15 +78,33 @@ uv run handoff costes --dias 30                 # gasto de los últimos N días
 
 `research` y `research-batch` llaman a GPT-4.1 y gastan dinero. No se repite a
 nadie con un dossier de menos de 6 meses salvo con `--forzar`; quien quedó
-`incompleto` se vuelve a investigar la próxima vez. El CSV del lote lleva las
+`incompleto` se vuelve a investigar la próxima vez, y lo mismo quien tenga como
+último un dossier degradado (ver abajo). El CSV del lote lleva las
 columnas `nombre,empresa,dominio`; `--pausa` son los segundos de espera entre
 filas (15 por defecto), para no disparar el CAPTCHA de los buscadores.
 
 **Antes de un lote pagado, comprobar la salud de SearXNG.** Los motores que usa
 pueden quedar vetados por CAPTCHA, y entonces cualquier búsqueda vuelve vacía.
-El research lo detecta —la persona queda `incompleto` con motivo "búsqueda
-degradada"— pero el dossier sale pobre y el dinero ya se ha gastado. Una
-consulta de prueba lo dice en segundos:
+El research lo detecta —el motivo empieza por "búsqueda degradada"— pero el
+dossier sale pobre y el dinero ya se ha gastado. Una consulta de prueba lo dice
+en segundos (el comando va más abajo).
+
+Qué pasa con un dossier degradado (la recolección inicial intentó buscar y
+ninguna búsqueda —dominio, linkedin, prensa— trajo resultados):
+
+- Se guarda igual, con `"degradado": true` en su contenido. Los dossiers sanos
+  no llevan esa clave.
+- La regla de los 6 meses no lo protege: la próxima ejecución lo vuelve a
+  investigar sin `--forzar`.
+- Quien era `nuevo` o `incompleto` queda `incompleto`. Quien ya estaba
+  `investigado`, `contactado` o `cliente` conserva su estado; el motivo lo dice
+  ("se conserva el estado …").
+- Ojo con el coste: una empresa poco conocida con dominio conocido cuyas
+  búsquedas vuelven vacías sin error de ningún motor también cuenta como
+  degradada. Se vuelve a investigar —y a pagar— en cada lote hasta que alguna
+  búsqueda devuelva algo.
+
+Comprobación de salud de SearXNG:
 
 ```bash
 curl -s "http://127.0.0.1:8080/search?q=test&format=json" | jq '.results | length, .unresponsive_engines'
@@ -111,7 +129,7 @@ Romper cualquiera de estas es un bug, no una preferencia:
 ## Comandos
 
 ```bash
-uv run pytest                                   # 204 tests
+uv run pytest                                   # 226 tests
 supabase db reset                               # rehace el esquema desde cero
 docker compose -f docker-compose.searxng.yml logs -f
 ```
