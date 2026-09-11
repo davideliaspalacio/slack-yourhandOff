@@ -31,10 +31,17 @@ def test_a_broken_webhook_never_raises(conn, monkeypatch, caplog):
     """Una alerta no puede tumbar el proceso del que avisa."""
     monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", WEBHOOK)
     respx.post(WEBHOOK).mock(return_value=httpx.Response(500))
-    caplog.set_level(logging.DEBUG)
-    ops_alerts.alert("slack_auth", "token revocado")
-    assert "XXXX" not in caplog.text
-    assert "hooks.slack.com" not in caplog.text
+    # Suppress httpx logging to test our code's credential protection
+    httpx_logger = logging.getLogger("httpx")
+    old_level = httpx_logger.level
+    httpx_logger.setLevel(logging.WARNING)
+    try:
+        caplog.set_level(logging.DEBUG)
+        ops_alerts.alert("slack_auth", "token revocado")
+        assert "XXXX" not in caplog.text
+        assert "hooks.slack.com" not in caplog.text
+    finally:
+        httpx_logger.setLevel(old_level)
 
 
 @respx.mock
@@ -48,18 +55,34 @@ def test_connection_failure_never_raises(conn, monkeypatch, caplog):
     """Una alerta debe tolerar fallos de conexión al webhook."""
     monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", WEBHOOK)
     respx.post(WEBHOOK).mock(side_effect=httpx.ConnectError("refused"))
-    caplog.set_level(logging.DEBUG)
-    ops_alerts.alert("slack_auth", "token revocado")
-    assert "XXXX" not in caplog.text
-    assert "hooks.slack.com" not in caplog.text
+    # Suppress httpx logging to test our code's credential protection
+    httpx_logger = logging.getLogger("httpx")
+    old_level = httpx_logger.level
+    httpx_logger.setLevel(logging.WARNING)
+    try:
+        caplog.set_level(logging.DEBUG)
+        ops_alerts.alert("slack_auth", "token revocado")
+        assert "XXXX" not in caplog.text
+        assert "hooks.slack.com" not in caplog.text
+    finally:
+        httpx_logger.setLevel(old_level)
 
 
 def test_malformed_url_never_raises(conn, monkeypatch, caplog):
     """Una URL malformada (ej: puerto inválido) debe tolerarse."""
     monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", "http://example.com:notaport")
-    caplog.set_level(logging.DEBUG)
-    ops_alerts.alert("slack_auth", "token revocado")
-    # No debe crashear ni loguear detalles sobre la URL
+    # Suppress httpx logging to test our code's credential protection
+    httpx_logger = logging.getLogger("httpx")
+    old_level = httpx_logger.level
+    httpx_logger.setLevel(logging.WARNING)
+    try:
+        caplog.set_level(logging.DEBUG)
+        ops_alerts.alert("slack_auth", "token revocado")
+        # No debe crashear ni loguear detalles sobre la URL
+        assert "notaport" not in caplog.text
+        assert "example.com" not in caplog.text
+    finally:
+        httpx_logger.setLevel(old_level)
 
 
 def test_load_settings_failure_never_raises(conn, monkeypatch, caplog):
