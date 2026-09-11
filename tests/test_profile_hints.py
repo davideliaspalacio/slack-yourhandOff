@@ -74,6 +74,47 @@ def test_unicode_company_survives(title, company):
 
 
 @pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        # Marker precedence: last segment wins if it has no marker, or text after marker in last segment
+        ("Growth at heart, Founder | Acme", "Acme"),  # @ not present, so look at last segment
+        # Single-segment titles with marker inside: take text after marker (documented accepted misses)
+        ("Data at scale guy", "scale guy"),  # Single segment; documented miss
+        ("Director en jefe", "jefe"),  # Single segment; documented miss
+    ],
+)
+def test_marker_precedence(title, company):
+    assert ph.company_from_title(title) == company
+
+
+@pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        # Nested and unclosed parentheses should be stripped completely
+        ("CEO @ Acme (based in SF (approx))", "Acme"),
+        ("CEO @ Acme (antes en Globant", "Acme"),  # Unclosed paren
+    ],
+)
+def test_parenthesis_cleanup(title, company):
+    assert ph.company_from_title(title) == company
+
+
+@pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        # prev/ex markers should only match as whole tokens, not as prefixes within words
+        ("CEO @ Previsora", "Previsora"),  # "prev" is only a prefix, not a whole token
+        (
+            "Founder at Prevail Health",
+            "Prevail Health",
+        ),  # "prev" is only a prefix, not a whole token
+    ],
+)
+def test_prev_marker_as_whole_token_only(title, company):
+    assert ph.company_from_title(title) == company
+
+
+@pytest.mark.parametrize(
     ("email", "domain"),
     [
         ("ada@acme.com", "acme.com"),

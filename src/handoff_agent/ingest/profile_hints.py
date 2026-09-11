@@ -74,16 +74,23 @@ def company_from_title(title: str) -> str | None:
     if not title:
         return None
 
-    # Step 1: Drop parenthetical asides
-    cleaned_title = re.sub(r"\s*\([^)]*\)", "", title)
+    # Step 1: Drop parenthetical asides (repeatedly to handle nesting)
+    cleaned_title = title
+    prev = None
+    while prev != cleaned_title:
+        prev = cleaned_title
+        cleaned_title = re.sub(r"\s*\([^)]*\)", "", cleaned_title)
+    # Remove any leftover unmatched parenthesis
+    if "(" in cleaned_title:
+        cleaned_title = cleaned_title.split("(")[0]
+    cleaned_title = cleaned_title.replace(")", "")
 
-    # Step 2: Prefer current employer (@, at, en - whole words, case-insensitive)
-    # Find the FIRST occurrence of @ or whole words "at" or "en"
-    at_match = re.search(r"@|(?:\s|^)at(?:\s|$)|(?:\s|^)en(?:\s|$)", cleaned_title, re.IGNORECASE)
-
-    if at_match:
-        # Extract text after the marker
-        text_after = cleaned_title[at_match.end() :].lstrip()
+    # Step 2: Prefer current employer (@, at, en)
+    # Check if @ is present
+    if "@" in cleaned_title:
+        # Take text after the FIRST @
+        at_index = cleaned_title.index("@")
+        text_after = cleaned_title[at_index + 1 :].lstrip()
         # Cut at the next separator (|, comma, ·, •, ;, or dash surrounded by spaces)
         sep_match = re.search(r"\s*[|,·•;]\s*|\s+[-–—]\s+", text_after)
         if sep_match:
@@ -91,27 +98,39 @@ def company_from_title(title: str) -> str | None:
         else:
             candidate = text_after
     else:
-        # Step 2b: Fall back to last segment behavior (only if 2+ segments)
+        # Step 2b: No @, so split on separators and look at last segment
         parts = [
             part.strip() for part in _SEPARATORS.split(cleaned_title or "") if part and part.strip()
         ]
         if len(parts) < 2:
             return None
-        candidate = parts[-1]
+
+        last_segment = parts[-1]
+
+        # Check if last segment contains the whole word "at" or "en"
+        at_match = re.search(r"(?:\s|^)at(?:\s|$)|(?:\s|^)en(?:\s|$)", last_segment, re.IGNORECASE)
+        if at_match:
+            # Take text after the first whole-word "at" or "en" in the last segment
+            text_after = last_segment[at_match.end() :].lstrip()
+            candidate = text_after
+        else:
+            # Take the whole last segment
+            candidate = last_segment
 
     candidate = candidate.strip()
 
-    # Step 3: Reject previous-employer markers (case-insensitive)
+    # Step 3: Reject previous-employer markers (as whole tokens only)
+    # Markers must be followed by whitespace or end of string, not part of a larger word
     prev_employer_markers = [
         "ex-",
         "ex ",
-        "former",
-        "formerly",
-        "prev",
+        "former ",
+        "formerly ",
         "prev.",
-        "previously",
-        "antes",
-        "anteriormente",
+        "prev ",
+        "previously ",
+        "antes ",
+        "anteriormente ",
     ]
     candidate_lower = candidate.casefold()
     for marker in prev_employer_markers:
