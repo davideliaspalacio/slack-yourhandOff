@@ -7,12 +7,13 @@ measured 72% off a repeated call. Everything that varies goes last.
 
 from __future__ import annotations
 
+import html
 import json
 from dataclasses import dataclass
 from decimal import Decimal
 
 from .. import guards, llm, untrusted
-from ..dossier import DossierInvalid, validate_dossier
+from ..dossier import SOURCE_KEYS, DossierInvalid, validate_dossier
 from .gather import Gathered
 
 MAX_ATTEMPTS = 2
@@ -46,6 +47,8 @@ Reglas, sin excepción:
 7. Escribe en español. Sé concreto: cifras, roles y fechas antes que adjetivos.
 8. "resumen" y "razon" solo repiten datos que ya tienen fuente en el dossier;
    lo no confirmado va a "huecos", nunca al resumen.
+9. El bloque con origen "entrada" contiene los datos de entrada:
+   no es una fuente y nunca va en "fuente" ni en "fuentes".
 
 Formato exacto de salida:
 
@@ -106,6 +109,28 @@ def build_prompt(
     return "\n".join(lines)
 
 
+def _unescape_citations(node):
+    """fence() escapa el origen y el modelo cita `&amp;` donde la URL real
+    lleva `&`. El validador ya lo acepta; aquí se guarda la forma cruda, la
+    misma que `dossiers.sources`, para que citas y fuentes se crucen tal cual."""
+    if isinstance(node, dict):
+        return {
+            key: _unescape_urls(value) if key in SOURCE_KEYS else _unescape_citations(value)
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_unescape_citations(item) for item in node]
+    return node
+
+
+def _unescape_urls(value):
+    if isinstance(value, str):
+        return html.unescape(value)
+    if isinstance(value, list):
+        return [html.unescape(v) if isinstance(v, str) else v for v in value]
+    return value
+
+
 def synthesize(
     prospect_id: str,
     full_name: str | None,
@@ -136,6 +161,6 @@ def synthesize(
 
         problems = validate_dossier(data, gathered.sources)
         if not problems:
-            return Synthesis(dossier=data, cost_usd=spent, attempts=attempt)
+            return Synthesis(dossier=_unescape_citations(data), cost_usd=spent, attempts=attempt)
 
     raise DossierInvalid(problems or ["sin respuesta válida"], cost_usd=spent)

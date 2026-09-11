@@ -133,3 +133,36 @@ def test_the_run_budget_stops_further_attempts(conn, monkeypatch):
 def test_the_prompt_keeps_unsourced_claims_out_of_the_summary():
     assert '"resumen" y "razon" solo repiten datos que ya tienen fuente' in s.SYSTEM_PROMPT
     assert 'lo no confirmado va a "huecos", nunca al resumen' in s.SYSTEM_PROMPT
+
+
+def test_the_input_block_is_not_a_source():
+    """La cabecera va delimitada con origen "entrada": si el modelo la citara,
+    el validador la rechazaría y habría un reintento pagado."""
+    assert 'El bloque con origen "entrada" contiene los datos de entrada' in s.SYSTEM_PROMPT
+    assert 'no es una fuente y nunca va en "fuente" ni en "fuentes"' in s.SYSTEM_PROMPT
+    header = untrusted.fence("Persona: Ada Ruiz\nEmpresa: Acme", "entrada")
+    assert header in s.build_prompt("Ada Ruiz", "Acme", gathered())
+
+
+def test_cited_urls_are_stored_unescaped(conn, monkeypatch):
+    """fence() escapa el origen y el modelo copia `&amp;`; el dossier guardado
+    debe llevar la URL cruda, la misma que `dossiers.sources`."""
+    url = "https://acme.com/?q=1&page=2"
+    escaped = "https://acme.com/?q=1&amp;page=2"
+    evidence = Gathered(
+        domain="acme.com",
+        evidence=[Evidence("home", url, "Acme", "Software de logística.")],
+        jobs=[],
+    )
+    cited = make_dossier(
+        persona={"nombre": "Ada Ruiz", "cargo": "CEO", "fuente": escaped},
+        empresa={**make_dossier()["empresa"], "fuentes": [escaped]},
+        contratacion={**make_dossier()["contratacion"], "fuentes": [escaped]},
+        senales_contexto=[{"hecho": "Contrata soporte", "fuente": escaped}],
+    )
+    monkeypatch.setattr(llm, "_client", lambda: ScriptedOpenAI(json.dumps(cited)))
+    dossier = s.synthesize(real_pid(), "Ada Ruiz", "Acme", evidence).dossier
+    assert dossier["persona"]["fuente"] == url
+    assert dossier["empresa"]["fuentes"] == [url]
+    assert dossier["contratacion"]["fuentes"] == [url]
+    assert dossier["senales_contexto"][0]["fuente"] == url
