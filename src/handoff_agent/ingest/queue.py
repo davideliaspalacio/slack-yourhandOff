@@ -4,17 +4,26 @@ One open job per person (a partial unique index), claimed with
 FOR UPDATE SKIP LOCKED so several workers never take the same job. System
 stops (kill switch, monthly cap) hand the job back untouched: they are not the
 person's fault and must not burn a retry.
+
+Every state transition below is guarded on the job still being en_curso, so a
+late or duplicate call (a retried webhook, two workers finishing the same job)
+cannot reopen a job that already finished or double-release one that already
+went back to pendiente.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 
 from .. import db
+
+logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 REASONS = ("mensaje", "miembro_nuevo", "manual")
 DEFAULT_HOURLY_LIMIT = 20
+STALE_AFTER_MINUTES = 30
 
 
 def enqueue(slack_user_id: str, reason: str) -> bool:
@@ -48,16 +57,25 @@ def claim_next() -> dict | None:
     )
 
 
-def complete(job_id, outcome: dict) -> None:
-    db.execute(
+def complete(job_id, outcome: dict) -> bool:
+    """Mark a job done. False (no-op) if it was not en_curso."""
+    updated = db.execute(
         "update research_jobs set status = 'hecho', outcome = %s, finished_at = now(), "
-        "last_error = null where id = %s",
+        "last_error = null where id = %s and status = 'en_curso'",
         (json.dumps(outcome), job_id),
     )
+    if not updated:
+        logger.warning("complete: la tarea %s no estaba en_curso", job_id)
+    return bool(updated)
 
 
-def fail(job_id, error: str) -> str:
-    """Retry later with a growing wait, or give up after MAX_ATTEMPTS."""
+def fail(job_id, error: str) -> str | None:
+    """Retry later with a growing wait, or give up after MAX_ATTEMPTS.
+
+    Returns the new status, or None (no-op, nothing changed) if the job does
+    not exist or was not en_curso -- so a late or duplicate call cannot reopen
+    a job that already finished.
+    """
     row = db.fetch_one(
         """
         update research_jobs set
@@ -66,28 +84,67 @@ def fail(job_id, error: str) -> str:
                                else now() + attempts * interval '15 minutes' end,
             finished_at = case when attempts >= %s then now() else null end,
             last_error  = %s
-        where id = %s
+        where id = %s and status = 'en_curso'
         returning status
         """,
         (MAX_ATTEMPTS, MAX_ATTEMPTS, MAX_ATTEMPTS, error, job_id),
     )
+    if row is None:
+        logger.warning("fail: la tarea %s no estaba en_curso", job_id)
+        return None
     return row["status"]
 
 
-def give_up(job_id, error: str) -> None:
-    db.execute(
+def give_up(job_id, error: str) -> bool:
+    """Fail a job at once. False (no-op) if it was not en_curso."""
+    updated = db.execute(
         "update research_jobs set status = 'fallido', finished_at = now(), last_error = %s "
-        "where id = %s",
+        "where id = %s and status = 'en_curso'",
         (error, job_id),
     )
+    if not updated:
+        logger.warning("give_up: la tarea %s no estaba en_curso", job_id)
+    return bool(updated)
 
 
-def release(job_id) -> None:
-    """Hand a job back after a system stop, without counting the attempt."""
-    db.execute(
+def release(job_id) -> bool:
+    """Hand a job back after a system stop, without counting the attempt.
+
+    False (no-op) if it was not en_curso, so a second release cannot wipe a
+    real attempt.
+    """
+    updated = db.execute(
         "update research_jobs set status = 'pendiente', started_at = null, "
-        "attempts = greatest(attempts - 1, 0) where id = %s",
+        "attempts = greatest(attempts - 1, 0) where id = %s and status = 'en_curso'",
         (job_id,),
+    )
+    if not updated:
+        logger.warning("release: la tarea %s no estaba en_curso", job_id)
+    return bool(updated)
+
+
+def reclaim_stale(older_than_minutes: int = STALE_AFTER_MINUTES) -> int:
+    """Give back jobs abandoned by a worker that died mid-research.
+
+    Every Railway redeploy kills whatever worker is mid-job. Without this, its
+    job stays en_curso forever and, because of the one-open-job index, that
+    person can never be queued again. The attempt is kept on purpose -- the
+    process may have died *because* of that job -- except once a job already
+    used up all its attempts, in which case it is given up for good instead of
+    coming back to loop forever. Returns how many jobs were touched.
+    """
+    return db.execute(
+        """
+        update research_jobs set
+            status      = case when attempts >= %s then 'fallido' else 'pendiente' end,
+            started_at  = case when attempts >= %s then started_at else null end,
+            not_before  = case when attempts >= %s then not_before else null end,
+            finished_at = case when attempts >= %s then now() else finished_at end,
+            last_error  = case when attempts >= %s then 'abandonada: el worker no terminó'
+                               else last_error end
+        where status = 'en_curso' and started_at < now() - %s * interval '1 minute'
+        """,
+        (MAX_ATTEMPTS, MAX_ATTEMPTS, MAX_ATTEMPTS, MAX_ATTEMPTS, MAX_ATTEMPTS, older_than_minutes),
     )
 
 
@@ -100,8 +157,21 @@ def finished_last_hour() -> int:
 
 
 def hourly_limit() -> int:
+    """Read the hourly throttle from config, falling back to the default.
+
+    config.value is jsonb and psycopg decodes it straight to a Python object:
+    true would come back as int(True) == 1, 20.7 would truncate to 20, and a
+    string or null would raise. Only a real, non-boolean, non-negative int is
+    trusted; anything else logs a warning and uses DEFAULT_HOURLY_LIMIT.
+    """
     row = db.fetch_one("select value from config where key = 'research_por_hora'")
-    return int(row["value"]) if row else DEFAULT_HOURLY_LIMIT
+    if row is None:
+        return DEFAULT_HOURLY_LIMIT
+    value = row["value"]
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    logger.warning("hourly_limit: valor de config inválido: %r", value)
+    return DEFAULT_HOURLY_LIMIT
 
 
 def status_counts() -> dict[str, int]:

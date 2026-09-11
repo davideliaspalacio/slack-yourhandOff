@@ -1,3 +1,4 @@
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -111,3 +112,146 @@ def test_recent_failures_lists_the_newest_first(conn):
     queue.enqueue("U2", "mensaje")
     queue.give_up(queue.claim_next()["id"], "segundo")
     assert [f["last_error"] for f in queue.recent_failures()] == ["segundo", "primero"]
+
+
+# -- Transiciones protegidas: solo una tarea en_curso puede cambiar de estado --
+
+
+def test_fail_on_a_finished_job_is_a_no_op(conn):
+    queue.enqueue("U1", "mensaje")
+    job = queue.claim_next()
+    queue.complete(job["id"], {"estado": "investigado"})
+    assert queue.fail(job["id"], "tarde") is None
+    row = db.fetch_one(
+        "select status, outcome, finished_at from research_jobs where id = %s", (job["id"],)
+    )
+    assert row["status"] == "hecho"
+    assert row["outcome"] == {"estado": "investigado"}
+    assert row["finished_at"] is not None
+
+
+def test_fail_on_a_given_up_job_is_a_no_op(conn):
+    queue.enqueue("U1", "mensaje")
+    job = queue.claim_next()
+    queue.give_up(job["id"], "sin nombre ni empresa")
+    assert queue.fail(job["id"], "tarde") is None
+    row = db.fetch_one("select status from research_jobs where id = %s", (job["id"],))
+    assert row["status"] == "fallido"
+
+
+def test_fail_on_an_unknown_job_returns_none(conn):
+    assert queue.fail(uuid.uuid4(), "x") is None
+
+
+def test_complete_give_up_release_are_no_ops_on_a_job_that_is_not_en_curso(conn):
+    queue.enqueue("U1", "mensaje")
+    job_id = db.fetch_one("select id from research_jobs")["id"]
+    assert queue.complete(job_id, {"x": 1}) is False
+    assert queue.give_up(job_id, "y") is False
+    assert queue.release(job_id) is False
+    row = db.fetch_one("select status, attempts, outcome, last_error from research_jobs")
+    assert row["status"] == "pendiente"
+    assert row["attempts"] == 0
+    assert row["outcome"] is None
+    assert row["last_error"] is None
+
+
+def test_a_second_release_of_the_same_job_is_a_no_op(conn):
+    queue.enqueue("U1", "mensaje")
+    job = queue.claim_next()
+    assert queue.release(job["id"]) is True
+    assert queue.release(job["id"]) is False
+    row = db.fetch_one("select status, attempts from research_jobs")
+    assert row["status"] == "pendiente"
+    assert row["attempts"] == 0
+
+
+# -- Backoff real: comprobar los minutos, no solo el estado --
+
+
+def test_backoff_after_the_first_failure_is_about_fifteen_minutes(conn):
+    queue.enqueue("U1", "mensaje")
+    job = queue.claim_next()
+    queue.fail(job["id"], "timeout")
+    row = db.fetch_one("select not_before, now() as db_now from research_jobs")
+    delta = (row["not_before"] - row["db_now"]).total_seconds()
+    assert abs(delta - 15 * 60) < 5
+
+
+def test_backoff_after_the_second_failure_is_about_thirty_minutes(conn):
+    queue.enqueue("U1", "mensaje")
+    db.execute("update research_jobs set not_before = null")
+    queue.fail(queue.claim_next()["id"], "timeout")
+    db.execute("update research_jobs set not_before = null")
+    queue.fail(queue.claim_next()["id"], "timeout otra vez")
+    row = db.fetch_one("select not_before, now() as db_now from research_jobs")
+    delta = (row["not_before"] - row["db_now"]).total_seconds()
+    assert abs(delta - 30 * 60) < 5
+
+
+# -- Reclamar tareas abandonadas por un worker caído --
+
+
+def test_reclaim_stale_returns_an_abandoned_job_to_pending(conn):
+    queue.enqueue("U1", "mensaje")
+    job = queue.claim_next()
+    db.execute(
+        "update research_jobs set started_at = now() - interval '45 minutes' where id = %s",
+        (job["id"],),
+    )
+    assert queue.reclaim_stale() == 1
+    row = db.fetch_one(
+        "select status, attempts, started_at, not_before from research_jobs where id = %s",
+        (job["id"],),
+    )
+    assert row["status"] == "pendiente"
+    assert row["attempts"] == 1
+    assert row["started_at"] is None
+    assert row["not_before"] is None
+    again = queue.claim_next()
+    assert again["id"] == job["id"]
+
+
+def test_reclaim_stale_leaves_recent_jobs_alone(conn):
+    queue.enqueue("U1", "mensaje")
+    job = queue.claim_next()
+    db.execute(
+        "update research_jobs set started_at = now() - interval '5 minutes' where id = %s",
+        (job["id"],),
+    )
+    assert queue.reclaim_stale() == 0
+    row = db.fetch_one("select status from research_jobs where id = %s", (job["id"],))
+    assert row["status"] == "en_curso"
+
+
+def test_reclaim_stale_gives_up_a_job_that_exhausted_its_attempts(conn):
+    queue.enqueue("U1", "mensaje")
+    job = queue.claim_next()
+    db.execute(
+        "update research_jobs set started_at = now() - interval '45 minutes', attempts = %s "
+        "where id = %s",
+        (queue.MAX_ATTEMPTS, job["id"]),
+    )
+    assert queue.reclaim_stale() == 1
+    row = db.fetch_one(
+        "select status, finished_at, last_error from research_jobs where id = %s", (job["id"],)
+    )
+    assert row["status"] == "fallido"
+    assert row["finished_at"] is not None
+    assert row["last_error"] == "abandonada: el worker no terminó"
+
+
+# -- hourly_limit no debe confiar ciegamente en lo que hay en config --
+
+
+def test_hourly_limit_falls_back_to_default_for_bad_config_values(conn):
+    bad_values = ("true", "20.7", '"veinte"', "null", "-1")
+    try:
+        for bad_value in bad_values:
+            db.execute(
+                "update config set value = %s::jsonb where key = 'research_por_hora'",
+                (bad_value,),
+            )
+            assert queue.hourly_limit() == queue.DEFAULT_HOURLY_LIMIT
+    finally:
+        db.execute("update config set value = '20'::jsonb where key = 'research_por_hora'")
