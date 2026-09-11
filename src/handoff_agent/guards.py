@@ -49,6 +49,11 @@ def check_monthly_budget() -> None:
         raise MonthlyBudgetExceeded(f"spent ${spent} of ${limit} this month")
 
 
+def run_budget_limit() -> Decimal:
+    """Per-run cap from the config table, so it can change without a redeploy."""
+    return Decimal(str(_config_value("run_budget_usd", 1.0)))
+
+
 class RunBudget:
     """Caps a single research run. Use as a context manager around the loop."""
 
