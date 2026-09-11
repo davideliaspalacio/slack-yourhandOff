@@ -25,3 +25,99 @@ def test_settings_load_without_an_openai_key(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert load_settings().openai_api_key is None
+
+
+def test_slack_channel_ids_parsing(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", " C1, C2,")
+    settings = load_settings()
+    assert settings.slack_channel_ids == ("C1", "C2")
+
+
+def test_slack_channel_ids_defaults_to_empty_tuple(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("SLACK_CHANNEL_IDS", raising=False)
+    settings = load_settings()
+    assert settings.slack_channel_ids == ()
+
+
+def test_slack_lookback_hours_defaults_to_1(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("SLACK_LOOKBACK_HOURS", raising=False)
+    settings = load_settings()
+    assert settings.slack_lookback_hours == 1.0
+
+
+def test_slack_lookback_hours_parses_float_value(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SLACK_LOOKBACK_HOURS", "2.5")
+    settings = load_settings()
+    assert settings.slack_lookback_hours == 2.5
+
+
+def test_slack_poll_seconds_defaults_to_3600(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("SLACK_POLL_SECONDS", raising=False)
+    settings = load_settings()
+    assert settings.slack_poll_seconds == 3600
+
+
+def test_slack_poll_seconds_parses_int_value(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SLACK_POLL_SECONDS", "900")
+    settings = load_settings()
+    assert settings.slack_poll_seconds == 900
+
+
+def test_slack_user_token_defaults_to_none(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("SLACK_USER_TOKEN", raising=False)
+    settings = load_settings()
+    assert settings.slack_user_token is None
+
+
+def test_slack_user_token_parses_value(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test-token")
+    settings = load_settings()
+    assert settings.slack_user_token == "xoxp-test-token"
+
+
+def test_alert_webhook_url_defaults_to_none(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("HANDOFF_ALERT_WEBHOOK_URL", raising=False)
+    settings = load_settings()
+    assert settings.alert_webhook_url is None
+
+
+def test_alert_webhook_url_parses_value(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", "https://hooks.slack.com/services/test")
+    settings = load_settings()
+    assert settings.alert_webhook_url == "https://hooks.slack.com/services/test"
+
+
+def test_brave_search_api_key_defaults_to_none(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+    settings = load_settings()
+    assert settings.brave_search_api_key is None
+
+
+def test_price_brave_per_query_defaults_to_0_005(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("PRICE_BRAVE_PER_QUERY", raising=False)
+    settings = load_settings()
+    assert settings.price_brave_per_query == 0.005

@@ -1,3 +1,6 @@
+import http.client
+from urllib.error import URLError
+
 import pytest
 from slack_sdk.errors import SlackApiError
 from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
@@ -106,9 +109,28 @@ def test_a_missing_token_is_an_auth_failure():
         sc.FoundersClubReader(token=None)
 
 
-def test_the_real_client_retries_on_rate_limits():
+@pytest.mark.parametrize(
+    "error",
+    [
+        URLError("dns"),
+        TimeoutError("timed out"),
+        http.client.RemoteDisconnected("closed"),
+    ],
+)
+def test_transport_errors_are_retryable(error):
+    fake = FakeWebClient(error=error)
+    with pytest.raises(sc.SlackUnavailable):
+        sc.FoundersClubReader(client=fake).members("C1")
+
+
+def test_the_real_client_retries_on_rate_limits_and_connection_errors():
     reader = sc.FoundersClubReader(token="xoxp-test")
-    assert any(isinstance(h, RateLimitErrorRetryHandler) for h in reader._client.retry_handlers)
+    handlers = reader._client.retry_handlers
+    assert any(isinstance(h, RateLimitErrorRetryHandler) for h in handlers)
+    # ConnectionErrorRetryHandler is included via default_retry_handlers()
+    from slack_sdk.http_retry.builtin_handlers import ConnectionErrorRetryHandler
+
+    assert any(isinstance(h, ConnectionErrorRetryHandler) for h in handlers)
 
 
 def test_only_read_methods_ever_reach_slack():

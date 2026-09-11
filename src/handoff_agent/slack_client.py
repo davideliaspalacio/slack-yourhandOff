@@ -8,10 +8,12 @@ posts goes to Handoff's own Slack, through a different credential.
 
 from __future__ import annotations
 
+import http.client
 from dataclasses import dataclass
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+from slack_sdk.http_retry import default_retry_handlers
 from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
 
 # No se arreglan reintentando: hace falta una persona (token nuevo o más scopes).
@@ -54,7 +56,10 @@ class FoundersClubReader:
                 raise SlackAuthFailed("SLACK_USER_TOKEN no está configurado")
             client = WebClient(
                 token=token,
-                retry_handlers=[RateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES)],
+                retry_handlers=[
+                    *default_retry_handlers(),
+                    RateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES),
+                ],
             )
         self._client = client
 
@@ -67,6 +72,12 @@ class FoundersClubReader:
             if error in AUTH_ERRORS:
                 raise SlackAuthFailed(f"Slack rechazó el token: {error}") from exc
             raise SlackUnavailable(f"{method}: {error or exc}") from exc
+        except (OSError, http.client.HTTPException) as exc:
+            # Transport errors (timeout, DNS error, connection reset, remote disconnect)
+            # are retryable when wrapped; they signal a temporary unavailability.
+            raise SlackUnavailable(
+                f"{method}: sin conexión con Slack: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def owner_id(self) -> str:
         """The member whose token this is (Anthony, in production)."""
