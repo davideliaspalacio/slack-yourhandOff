@@ -27,14 +27,57 @@ def test_an_alert_reaches_the_handoff_webhook_when_configured(conn, monkeypatch)
 
 
 @respx.mock
-def test_a_broken_webhook_never_raises(conn, monkeypatch):
+def test_a_broken_webhook_never_raises(conn, monkeypatch, caplog):
     """Una alerta no puede tumbar el proceso del que avisa."""
     monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", WEBHOOK)
     respx.post(WEBHOOK).mock(return_value=httpx.Response(500))
+    caplog.set_level(logging.DEBUG)
     ops_alerts.alert("slack_auth", "token revocado")
+    assert "XXXX" not in caplog.text
+    assert "hooks.slack.com" not in caplog.text
 
 
 @respx.mock
 def test_without_a_webhook_no_request_is_made(conn):
     # respx.mock sin rutas hace fallar cualquier petición: si pasa, no hubo ninguna.
     ops_alerts.alert("slack_auth", "token revocado")
+
+
+@respx.mock
+def test_connection_failure_never_raises(conn, monkeypatch, caplog):
+    """Una alerta debe tolerar fallos de conexión al webhook."""
+    monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", WEBHOOK)
+    respx.post(WEBHOOK).mock(side_effect=httpx.ConnectError("refused"))
+    caplog.set_level(logging.DEBUG)
+    ops_alerts.alert("slack_auth", "token revocado")
+    assert "XXXX" not in caplog.text
+    assert "hooks.slack.com" not in caplog.text
+
+
+def test_malformed_url_never_raises(conn, monkeypatch, caplog):
+    """Una URL malformada (ej: puerto inválido) debe tolerarse."""
+    monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", "http://example.com:notaport")
+    caplog.set_level(logging.DEBUG)
+    ops_alerts.alert("slack_auth", "token revocado")
+    # No debe crashear ni loguear detalles sobre la URL
+
+
+def test_load_settings_failure_never_raises(conn, monkeypatch, caplog):
+    """Una alerta debe tolerar fallos al cargar settings."""
+    caplog.set_level(logging.DEBUG)
+
+    def raise_error(*args, **kwargs):
+        raise RuntimeError("DATABASE_URL is not set")
+
+    monkeypatch.setattr(ops_alerts, "load_settings", raise_error)
+    ops_alerts.alert("slack_auth", "token revocado")
+
+    # La alerta crítica debe seguir siendo registrada
+    assert "ALERTA slack_auth: token revocado" in caplog.text
+    # El ledger debe seguir siendo escrito
+    with conn.cursor() as cur:
+        cur.execute(
+            "select payload from agent_actions where action = 'alerta_operativa' order by created_at desc limit 1"
+        )
+        payload = cur.fetchone()[0]
+        assert payload == {"tipo": "slack_auth", "mensaje": "token revocado"}
