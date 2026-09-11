@@ -8,3 +8,13 @@ search:
   formats:
     - html
     - json
+# Repartir la carga entre más motores retrasa el CAPTCHA de cada uno.
+engines:
+  - name: bing
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: google cse
+    disabled: true

@@ -31,6 +31,8 @@ class Settings:
     price_cached_input_per_m: float
     price_output_per_m: float
     http_timeout_seconds: float
+    brave_search_api_key: str | None
+    price_brave_per_query: float
 
 
 def _required(name: str) -> str:
@@ -53,4 +55,6 @@ def load_settings() -> Settings:
         price_cached_input_per_m=float(os.environ.get("PRICE_CACHED_INPUT_PER_M", "0.50")),
         price_output_per_m=float(os.environ.get("PRICE_OUTPUT_PER_M", "8.00")),
         http_timeout_seconds=float(os.environ.get("HTTP_TIMEOUT_SECONDS", "30")),
+        brave_search_api_key=os.environ.get("BRAVE_SEARCH_API_KEY") or None,
+        price_brave_per_query=float(os.environ.get("PRICE_BRAVE_PER_QUERY", "0.005")),
     )

@@ -16,6 +16,13 @@ MIGRATIONS = sorted(
 # Orden inverso a las dependencias de clave ajena.
 TABLES_TO_CLEAN = ["agent_actions", "llm_calls", "cost_events", "dossiers", "prospects"]
 
+ENV_THAT_MUST_NOT_LEAK = [
+    "BRAVE_SEARCH_API_KEY",
+    "SLACK_USER_TOKEN",
+    "SLACK_CHANNEL_IDS",
+    "HANDOFF_ALERT_WEBHOOK_URL",
+]
+
 
 @pytest.fixture(scope="session")
 def database_url() -> str:
@@ -37,6 +44,10 @@ def test_environment(monkeypatch, database_url):
     que la variable exista. Valor obvio para que un uso accidental falle."""
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    # Si algún día hay claves reales en .env, load_dotenv las mete en el entorno
+    # y los tests acabarían llamando a Brave, a Slack o al webhook de verdad.
+    for name in ENV_THAT_MUST_NOT_LEAK:
+        monkeypatch.delenv(name, raising=False)
 
 
 def _existing(cur, tables: list[str]) -> list[str]:
