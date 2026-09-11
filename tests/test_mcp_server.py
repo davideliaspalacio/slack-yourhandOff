@@ -1,6 +1,9 @@
+from decimal import Decimal
+
 import pytest
 
 from handoff_agent import ledger, mcp_server
+from handoff_agent.research.worker import ResearchOutcome
 
 
 @pytest.mark.asyncio
@@ -13,6 +16,7 @@ async def test_server_exposes_the_expected_tools():
         "buscar_ofertas",
         "historial_prospecto",
         "resumen_costes",
+        "investigar_persona",
     } <= names
 
 
@@ -41,3 +45,26 @@ def test_resumen_costes_adds_up_both_ledgers(conn):
     summary = mcp_server.resumen_costes(days=30)
     assert summary["total_usd"] == "2.50"
     assert summary["llm_calls"] == 1
+
+
+def test_investigar_persona_returns_outcome_and_dossier(conn, monkeypatch):
+    monkeypatch.setattr(
+        mcp_server.worker,
+        "research_person",
+        lambda *a, **k: ResearchOutcome(
+            "pid", "manual:ada-acme", "investigado", 1, Decimal("0.031"), None
+        ),
+    )
+    monkeypatch.setattr(
+        mcp_server.prospects,
+        "historial_prospecto",
+        lambda uid: {
+            "prospect": None,
+            "dossier": {"version": 1, "content": {"resumen": "ok"}},
+            "actions": [],
+        },
+    )
+    result = mcp_server.investigar_persona(nombre="Ada", empresa="Acme")
+    assert result["estado"] == "investigado"
+    assert result["coste_usd"] == "0.0310"
+    assert result["dossier"]["content"] == {"resumen": "ok"}

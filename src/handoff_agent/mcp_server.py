@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from mcp.server.mcpserver import MCPServer
 
 from . import db, ledger, untrusted
+from .research import worker
 from .tools import jobs, prospects, search, web
 
 mcp = MCPServer("handoff-tools")
@@ -74,6 +75,27 @@ def resumen_costes(days: int = 30) -> dict:
         "total_usd": f"{total:.2f}",
         "llm_calls": counts["llm_calls"],
         "cost_events": counts["cost_events"],
+    }
+
+
+@mcp.tool()
+def investigar_persona(
+    nombre: str | None = None,
+    empresa: str | None = None,
+    dominio: str | None = None,
+    forzar: bool = False,
+) -> dict:
+    """Investiga a una persona y su empresa y guarda el dossier. Cuesta dinero:
+    usa GPT-4.1, con tope por ejecución. No repite si hay un dossier de menos de
+    6 meses, salvo con forzar=true."""
+    outcome = worker.research_person(nombre, empresa, dominio, force=forzar)
+    history = prospects.historial_prospecto(outcome.slack_user_id)
+    return {
+        "estado": outcome.status,
+        "version": outcome.version,
+        "coste_usd": f"{outcome.cost_usd:.4f}",
+        "motivo": outcome.reason,
+        "dossier": jsonable(history["dossier"]),
     }
 
 
