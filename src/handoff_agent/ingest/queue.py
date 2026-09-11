@@ -9,6 +9,14 @@ Every state transition below is guarded on the job still being en_curso, so a
 late or duplicate call (a retried webhook, two workers finishing the same job)
 cannot reopen a job that already finished or double-release one that already
 went back to pendiente.
+
+They are also guarded on started_at matching the row this worker actually
+claimed. reclaim_stale() can hand a still-running job back to pendiente and
+let a second worker claim it while the first worker is unaware and still
+plodding along; without the started_at check, the first worker's late
+complete/fail/give_up/release would land on the second worker's claim
+instead of being the no-op it must be. Callers pass the full job dict
+returned by claim_next(), not a bare id.
 """
 
 from __future__ import annotations
@@ -57,24 +65,29 @@ def claim_next() -> dict | None:
     )
 
 
-def complete(job_id, outcome: dict) -> bool:
-    """Mark a job done. False (no-op) if it was not en_curso."""
+def complete(job: dict, outcome: dict) -> bool:
+    """Mark a job done. False (no-op) if it was not en_curso, or is no longer
+    the same claim (started_at moved on -- reclaim_stale gave it to someone
+    else while this worker was still running it)."""
     updated = db.execute(
         "update research_jobs set status = 'hecho', outcome = %s, finished_at = now(), "
-        "last_error = null where id = %s and status = 'en_curso'",
-        (json.dumps(outcome), job_id),
+        "last_error = null where id = %s and status = 'en_curso' and started_at = %s",
+        (json.dumps(outcome), job["id"], job["started_at"]),
     )
     if not updated:
-        logger.warning("complete: la tarea %s no estaba en_curso", job_id)
+        logger.warning(
+            "complete: la tarea %s ya no era nuestra (no en_curso o reclamada por otro)", job["id"]
+        )
     return bool(updated)
 
 
-def fail(job_id, error: str) -> str | None:
+def fail(job: dict, error: str) -> str | None:
     """Retry later with a growing wait, or give up after MAX_ATTEMPTS.
 
     Returns the new status, or None (no-op, nothing changed) if the job does
-    not exist or was not en_curso -- so a late or duplicate call cannot reopen
-    a job that already finished.
+    not exist, was not en_curso, or is no longer the same claim (started_at
+    moved on) -- so a late or duplicate call cannot reopen a job that already
+    finished, nor land on a claim that is not its own.
     """
     row = db.fetch_one(
         """
@@ -84,42 +97,51 @@ def fail(job_id, error: str) -> str | None:
                                else now() + attempts * interval '15 minutes' end,
             finished_at = case when attempts >= %s then now() else null end,
             last_error  = %s
-        where id = %s and status = 'en_curso'
+        where id = %s and status = 'en_curso' and started_at = %s
         returning status
         """,
-        (MAX_ATTEMPTS, MAX_ATTEMPTS, MAX_ATTEMPTS, error, job_id),
+        (MAX_ATTEMPTS, MAX_ATTEMPTS, MAX_ATTEMPTS, error, job["id"], job["started_at"]),
     )
     if row is None:
-        logger.warning("fail: la tarea %s no estaba en_curso", job_id)
+        logger.warning(
+            "fail: la tarea %s ya no era nuestra (no en_curso o reclamada por otro)", job["id"]
+        )
         return None
     return row["status"]
 
 
-def give_up(job_id, error: str) -> bool:
-    """Fail a job at once. False (no-op) if it was not en_curso."""
+def give_up(job: dict, error: str) -> bool:
+    """Fail a job at once. False (no-op) if it was not en_curso, or is no
+    longer the same claim (started_at moved on)."""
     updated = db.execute(
         "update research_jobs set status = 'fallido', finished_at = now(), last_error = %s "
-        "where id = %s and status = 'en_curso'",
-        (error, job_id),
+        "where id = %s and status = 'en_curso' and started_at = %s",
+        (error, job["id"], job["started_at"]),
     )
     if not updated:
-        logger.warning("give_up: la tarea %s no estaba en_curso", job_id)
+        logger.warning(
+            "give_up: la tarea %s ya no era nuestra (no en_curso o reclamada por otro)", job["id"]
+        )
     return bool(updated)
 
 
-def release(job_id) -> bool:
+def release(job: dict) -> bool:
     """Hand a job back after a system stop, without counting the attempt.
 
-    False (no-op) if it was not en_curso, so a second release cannot wipe a
-    real attempt.
+    False (no-op) if it was not en_curso, or is no longer the same claim
+    (started_at moved on), so a second release cannot wipe a real attempt
+    nor land on a claim that is not its own.
     """
     updated = db.execute(
         "update research_jobs set status = 'pendiente', started_at = null, "
-        "attempts = greatest(attempts - 1, 0) where id = %s and status = 'en_curso'",
-        (job_id,),
+        "attempts = greatest(attempts - 1, 0) "
+        "where id = %s and status = 'en_curso' and started_at = %s",
+        (job["id"], job["started_at"]),
     )
     if not updated:
-        logger.warning("release: la tarea %s no estaba en_curso", job_id)
+        logger.warning(
+            "release: la tarea %s ya no era nuestra (no en_curso o reclamada por otro)", job["id"]
+        )
     return bool(updated)
 
 

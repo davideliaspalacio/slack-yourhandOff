@@ -54,7 +54,7 @@ def test_concurrent_workers_never_claim_the_same_job(conn):
 def test_complete_stores_the_outcome(conn):
     queue.enqueue("U1", "mensaje")
     job = queue.claim_next()
-    queue.complete(job["id"], {"estado": "investigado"})
+    queue.complete(job, {"estado": "investigado"})
     row = db.fetch_one("select status, outcome, finished_at from research_jobs")
     assert row["status"] == "hecho"
     assert row["outcome"] == {"estado": "investigado"}
@@ -66,7 +66,7 @@ def test_failures_retry_with_backoff_then_give_up(conn):
     for attempt in range(1, queue.MAX_ATTEMPTS + 1):
         db.execute("update research_jobs set not_before = null")
         job = queue.claim_next()
-        status = queue.fail(job["id"], f"fallo {attempt}")
+        status = queue.fail(job, f"fallo {attempt}")
         assert status == ("fallido" if attempt == queue.MAX_ATTEMPTS else "pendiente")
     row = db.fetch_one("select attempts, last_error from research_jobs")
     assert row["attempts"] == queue.MAX_ATTEMPTS
@@ -75,14 +75,14 @@ def test_failures_retry_with_backoff_then_give_up(conn):
 
 def test_a_retry_waits_before_it_can_be_claimed_again(conn):
     queue.enqueue("U1", "mensaje")
-    queue.fail(queue.claim_next()["id"], "timeout")
+    queue.fail(queue.claim_next(), "timeout")
     assert queue.claim_next() is None
 
 
 def test_release_hands_the_job_back_without_burning_an_attempt(conn):
     queue.enqueue("U1", "mensaje")
     job = queue.claim_next()
-    queue.release(job["id"])
+    queue.release(job)
     again = queue.claim_next()
     assert again["id"] == job["id"]
     assert again["attempts"] == 1
@@ -90,15 +90,15 @@ def test_release_hands_the_job_back_without_burning_an_attempt(conn):
 
 def test_give_up_fails_at_once(conn):
     queue.enqueue("U1", "mensaje")
-    queue.give_up(queue.claim_next()["id"], "sin nombre ni empresa")
+    queue.give_up(queue.claim_next(), "sin nombre ni empresa")
     assert queue.status_counts() == {"fallido": 1}
 
 
 def test_finished_last_hour_counts_done_and_failed_jobs(conn):
     for user in ("U1", "U2", "U3"):
         queue.enqueue(user, "mensaje")
-    queue.complete(queue.claim_next()["id"], {})
-    queue.give_up(queue.claim_next()["id"], "x")
+    queue.complete(queue.claim_next(), {})
+    queue.give_up(queue.claim_next(), "x")
     assert queue.finished_last_hour() == 2
 
 
@@ -108,9 +108,9 @@ def test_the_hourly_limit_comes_from_config(conn):
 
 def test_recent_failures_lists_the_newest_first(conn):
     queue.enqueue("U1", "mensaje")
-    queue.give_up(queue.claim_next()["id"], "primero")
+    queue.give_up(queue.claim_next(), "primero")
     queue.enqueue("U2", "mensaje")
-    queue.give_up(queue.claim_next()["id"], "segundo")
+    queue.give_up(queue.claim_next(), "segundo")
     assert [f["last_error"] for f in queue.recent_failures()] == ["segundo", "primero"]
 
 
@@ -120,8 +120,8 @@ def test_recent_failures_lists_the_newest_first(conn):
 def test_fail_on_a_finished_job_is_a_no_op(conn):
     queue.enqueue("U1", "mensaje")
     job = queue.claim_next()
-    queue.complete(job["id"], {"estado": "investigado"})
-    assert queue.fail(job["id"], "tarde") is None
+    queue.complete(job, {"estado": "investigado"})
+    assert queue.fail(job, "tarde") is None
     row = db.fetch_one(
         "select status, outcome, finished_at from research_jobs where id = %s", (job["id"],)
     )
@@ -133,22 +133,22 @@ def test_fail_on_a_finished_job_is_a_no_op(conn):
 def test_fail_on_a_given_up_job_is_a_no_op(conn):
     queue.enqueue("U1", "mensaje")
     job = queue.claim_next()
-    queue.give_up(job["id"], "sin nombre ni empresa")
-    assert queue.fail(job["id"], "tarde") is None
+    queue.give_up(job, "sin nombre ni empresa")
+    assert queue.fail(job, "tarde") is None
     row = db.fetch_one("select status from research_jobs where id = %s", (job["id"],))
     assert row["status"] == "fallido"
 
 
 def test_fail_on_an_unknown_job_returns_none(conn):
-    assert queue.fail(uuid.uuid4(), "x") is None
+    assert queue.fail({"id": uuid.uuid4(), "started_at": None}, "x") is None
 
 
 def test_complete_give_up_release_are_no_ops_on_a_job_that_is_not_en_curso(conn):
     queue.enqueue("U1", "mensaje")
-    job_id = db.fetch_one("select id from research_jobs")["id"]
-    assert queue.complete(job_id, {"x": 1}) is False
-    assert queue.give_up(job_id, "y") is False
-    assert queue.release(job_id) is False
+    job = db.fetch_one("select id, started_at from research_jobs")
+    assert queue.complete(job, {"x": 1}) is False
+    assert queue.give_up(job, "y") is False
+    assert queue.release(job) is False
     row = db.fetch_one("select status, attempts, outcome, last_error from research_jobs")
     assert row["status"] == "pendiente"
     assert row["attempts"] == 0
@@ -159,11 +159,94 @@ def test_complete_give_up_release_are_no_ops_on_a_job_that_is_not_en_curso(conn)
 def test_a_second_release_of_the_same_job_is_a_no_op(conn):
     queue.enqueue("U1", "mensaje")
     job = queue.claim_next()
-    assert queue.release(job["id"]) is True
-    assert queue.release(job["id"]) is False
+    assert queue.release(job) is True
+    assert queue.release(job) is False
     row = db.fetch_one("select status, attempts from research_jobs")
     assert row["status"] == "pendiente"
     assert row["attempts"] == 0
+
+
+# -- Un worker no puede tocar una tarea que reclaim_stale ya dio a otro --
+
+
+def test_complete_after_a_stale_reclaim_leaves_the_new_claim_untouched(conn):
+    queue.enqueue("U1", "mensaje")
+    first = queue.claim_next()
+    db.execute(
+        "update research_jobs set started_at = now() - interval '45 minutes' where id = %s",
+        (first["id"],),
+    )
+    assert queue.reclaim_stale() == 1
+    second = queue.claim_next()
+    assert second["id"] == first["id"]
+
+    assert queue.complete(first, {"estado": "investigado"}) is False
+
+    row = db.fetch_one(
+        "select status, outcome, started_at from research_jobs where id = %s", (first["id"],)
+    )
+    assert row["status"] == "en_curso"
+    assert row["outcome"] is None
+    assert row["started_at"] == second["started_at"]
+
+
+def test_fail_after_a_stale_reclaim_leaves_the_new_claim_untouched(conn):
+    queue.enqueue("U1", "mensaje")
+    first = queue.claim_next()
+    db.execute(
+        "update research_jobs set started_at = now() - interval '45 minutes' where id = %s",
+        (first["id"],),
+    )
+    assert queue.reclaim_stale() == 1
+    second = queue.claim_next()
+    assert second["id"] == first["id"]
+
+    assert queue.fail(first, "tarde, ya no es mía") is None
+
+    row = db.fetch_one(
+        "select status, attempts, last_error from research_jobs where id = %s", (first["id"],)
+    )
+    assert row["status"] == "en_curso"
+    assert row["attempts"] == second["attempts"]
+    assert row["last_error"] is None
+
+
+def test_give_up_after_a_stale_reclaim_leaves_the_new_claim_untouched(conn):
+    queue.enqueue("U1", "mensaje")
+    first = queue.claim_next()
+    db.execute(
+        "update research_jobs set started_at = now() - interval '45 minutes' where id = %s",
+        (first["id"],),
+    )
+    assert queue.reclaim_stale() == 1
+    second = queue.claim_next()
+    assert second["id"] == first["id"]
+
+    assert queue.give_up(first, "sin nombre ni empresa") is False
+
+    row = db.fetch_one("select status from research_jobs where id = %s", (first["id"],))
+    assert row["status"] == "en_curso"
+
+
+def test_release_after_a_stale_reclaim_leaves_the_new_claim_untouched(conn):
+    queue.enqueue("U1", "mensaje")
+    first = queue.claim_next()
+    db.execute(
+        "update research_jobs set started_at = now() - interval '45 minutes' where id = %s",
+        (first["id"],),
+    )
+    assert queue.reclaim_stale() == 1
+    second = queue.claim_next()
+    assert second["id"] == first["id"]
+
+    assert queue.release(first) is False
+
+    row = db.fetch_one(
+        "select status, started_at, attempts from research_jobs where id = %s", (first["id"],)
+    )
+    assert row["status"] == "en_curso"
+    assert row["started_at"] == second["started_at"]
+    assert row["attempts"] == second["attempts"]
 
 
 # -- Backoff real: comprobar los minutos, no solo el estado --
@@ -172,7 +255,7 @@ def test_a_second_release_of_the_same_job_is_a_no_op(conn):
 def test_backoff_after_the_first_failure_is_about_fifteen_minutes(conn):
     queue.enqueue("U1", "mensaje")
     job = queue.claim_next()
-    queue.fail(job["id"], "timeout")
+    queue.fail(job, "timeout")
     row = db.fetch_one("select not_before, now() as db_now from research_jobs")
     delta = (row["not_before"] - row["db_now"]).total_seconds()
     assert abs(delta - 15 * 60) < 5
@@ -181,9 +264,9 @@ def test_backoff_after_the_first_failure_is_about_fifteen_minutes(conn):
 def test_backoff_after_the_second_failure_is_about_thirty_minutes(conn):
     queue.enqueue("U1", "mensaje")
     db.execute("update research_jobs set not_before = null")
-    queue.fail(queue.claim_next()["id"], "timeout")
+    queue.fail(queue.claim_next(), "timeout")
     db.execute("update research_jobs set not_before = null")
-    queue.fail(queue.claim_next()["id"], "timeout otra vez")
+    queue.fail(queue.claim_next(), "timeout otra vez")
     row = db.fetch_one("select not_before, now() as db_now from research_jobs")
     delta = (row["not_before"] - row["db_now"]).total_seconds()
     assert abs(delta - 30 * 60) < 5
