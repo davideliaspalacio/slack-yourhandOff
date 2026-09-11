@@ -45,15 +45,25 @@ def manual_user_id(full_name: str | None, company: str | None) -> str:
     return "manual:" + re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
 
 
+# Desde qué estados se puede llegar a cada uno. Un research nunca deshace lo
+# que hizo una persona: contactado y cliente se quedan, descartado es final, y
+# un fallo no rebaja a quien ya estaba investigado.
+ALLOWED_FROM = {
+    "investigado": ("nuevo", "incompleto", "investigado"),
+    "incompleto": ("nuevo", "incompleto"),
+}
+
+
 def _set_state(
     prospect_id: str, state: str, company: str | None = None, domain: str | None = None
 ) -> None:
     db.execute(
-        "update prospects set state = %s, "
+        "update prospects set "
+        "state = case when state = any(%s) then %s else state end, "
         "company_name = coalesce(%s, company_name), "
         "company_domain = coalesce(%s, company_domain), updated_at = now() "
         "where id = %s",
-        (state, company, domain, prospect_id),
+        (list(ALLOWED_FROM[state]), state, company, domain, prospect_id),
     )
 
 

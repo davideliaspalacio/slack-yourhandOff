@@ -244,3 +244,38 @@ def test_a_degraded_search_saves_the_dossier_but_leaves_the_person_incomplete(co
     assert healthy.version == 2
     state = db.fetch_one("select state from prospects where id = %s", (healthy.prospect_id,))
     assert state["state"] == "investigado"
+
+
+def state_of(pid):
+    return db.fetch_one("select state from prospects where id = %s", (pid,))["state"]
+
+
+def test_a_contacted_person_keeps_their_state_when_re_researched(conn, pipeline):
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier(), make_dossier()))
+    first = w.research_person("Ada Ruiz", "Acme")
+    db.execute("update prospects set state = 'contactado' where id = %s", (first.prospect_id,))
+    again = w.research_person("Ada Ruiz", "Acme", force=True)
+    assert again.version == 2
+    assert state_of(again.prospect_id) == "contactado"
+
+
+def test_a_failed_forced_re_research_does_not_downgrade_an_investigated_person(conn, pipeline):
+    pipeline.setattr(
+        w, "synthesize", synth_returning(make_dossier(), DossierInvalid(["mal"], Decimal("0.02")))
+    )
+    first = w.research_person("Ada Ruiz", "Acme")
+    again = w.research_person("Ada Ruiz", "Acme", force=True)
+    assert again.status == "incompleto"
+    assert state_of(first.prospect_id) == "investigado"
+
+
+def test_a_person_discarded_mid_run_stays_discarded(conn, pipeline):
+    def synth(pid, full_name, company, gathered, budget=None):
+        # Alguien descarta a la persona desde el panel mientras el research corre.
+        db.execute("update prospects set state = 'descartado' where id = %s", (pid,))
+        return Synthesis(dossier=make_dossier(), cost_usd=Decimal("0.02"), attempts=1)
+
+    pipeline.setattr(w, "synthesize", synth)
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.version == 1
+    assert state_of(outcome.prospect_id) == "descartado"
