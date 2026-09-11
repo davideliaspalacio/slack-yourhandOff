@@ -25,6 +25,55 @@ def test_titles_without_a_company_give_none(title):
 
 
 @pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        # Current employer wins over previous employer
+        ("CEO @ Acme | ex-Google", "Acme"),
+        ("Founder @ Acme · prev. Stripe", "Acme"),
+        ("CEO @ Acme (antes en Globant)", "Acme"),
+        ("Head of Growth at Acme", "Acme"),
+        ("Partner at Sequoia Capital", "Sequoia Capital"),
+        ("CEO en Rappi", "Rappi"),
+    ],
+)
+def test_current_employer_wins_over_previous(title, company):
+    assert ph.company_from_title(title) == company
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "CEO, ex-Google",
+        "Founder | formerly Stripe",
+    ],
+)
+def test_previous_employer_only_titles_give_none(title):
+    assert ph.company_from_title(title) is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Jane Doe, Co-Founder & CEO",
+        "Jane Doe, CEO/Founder",
+        "Some Name - Co-Founder & CEO",
+    ],
+)
+def test_compound_roles_give_none(title):
+    assert ph.company_from_title(title) is None
+
+
+@pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        ("Fundadora en Café Olé", "Café Olé"),
+    ],
+)
+def test_unicode_company_survives(title, company):
+    assert ph.company_from_title(title) == company
+
+
+@pytest.mark.parametrize(
     ("email", "domain"),
     [
         ("ada@acme.com", "acme.com"),
