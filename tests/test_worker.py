@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import httpx
+import openai
 import pytest
 
 from handoff_agent import db, guards
@@ -147,3 +149,52 @@ def test_the_kill_switch_stops_the_system_without_blaming_the_person(conn, pipel
         "select state from prospects where slack_user_id = 'manual:ada-ruiz-acme'"
     )["state"]
     assert state == "nuevo"
+
+
+def stored_resumen(pid):
+    return db.fetch_one(
+        "select content from dossiers where prospect_id = %s order by version desc limit 1",
+        (pid,),
+    )["content"]["resumen"]
+
+
+def test_an_openai_timeout_in_the_second_pass_keeps_the_first_dossier(conn, pipeline):
+    first = make_dossier(busquedas_sugeridas=["acme funding"], resumen="Primera pasada.")
+    timeout = openai.APITimeoutError(
+        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    )
+    pipeline.setattr(w, "synthesize", synth_returning(first, timeout))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "investigado"
+    assert outcome.version == 1
+    assert stored_resumen(outcome.prospect_id) == "Primera pasada."
+    action = db.fetch_one(
+        "select payload from agent_actions where action = 'seguimiento_descartado'"
+    )
+    assert action["payload"]["motivo"].startswith("APITimeoutError")
+
+
+def test_a_system_stop_in_the_second_pass_saves_the_first_and_propagates(conn, pipeline):
+    first = make_dossier(busquedas_sugeridas=["acme funding"], resumen="Primera pasada.")
+    pipeline.setattr(w, "synthesize", synth_returning(first, guards.MonthlyBudgetExceeded("tope")))
+    with pytest.raises(guards.MonthlyBudgetExceeded):
+        w.research_person("Ada Ruiz", "Acme")
+    person = db.fetch_one(
+        "select id, state from prospects where slack_user_id = 'manual:ada-ruiz-acme'"
+    )
+    assert person["state"] == "investigado"
+    assert stored_resumen(person["id"]) == "Primera pasada."
+    assert db.fetch_one("select 1 from agent_actions where action = 'seguimiento_cortado'")
+
+
+def test_a_followup_crash_keeps_the_first_dossier(conn, pipeline):
+    first = make_dossier(busquedas_sugeridas=["acme funding"], resumen="Primera pasada.")
+    pipeline.setattr(w, "synthesize", synth_returning(first))
+
+    def broken_followup(pid, gathered, queries):
+        raise RuntimeError("la BD se cayó")
+
+    pipeline.setattr(w, "run_followup", broken_followup)
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    assert outcome.status == "investigado"
+    assert stored_resumen(outcome.prospect_id) == "Primera pasada."

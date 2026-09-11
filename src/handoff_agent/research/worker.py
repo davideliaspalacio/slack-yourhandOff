@@ -22,6 +22,7 @@ from .gather import gather
 from .synthesize import synthesize
 
 FRESH_FOR = timedelta(days=180)
+SYSTEM_STOPS = (guards.KillSwitchActive, guards.MonthlyBudgetExceeded)
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,13 @@ def _set_state(
         "where id = %s",
         (state, company, domain, prospect_id),
     )
+
+
+def _store(pid: str, result, gathered, company: str | None) -> int:
+    version = prospects.save_dossier(pid, result.dossier, sorted(gathered.sources))
+    empresa = result.dossier.get("empresa") or {}
+    _set_state(pid, "investigado", company=empresa.get("nombre") or company, domain=gathered.domain)
+    return version
 
 
 def research_person(
@@ -86,24 +94,31 @@ def research_person(
         with budget:
             gathered = gather(pid, full_name, company, domain)
             result = synthesize(pid, full_name, company, gathered, budget=budget)
+            # Desde aquí hay un dossier válido y pagado: todo camino lo guarda.
+            first_result, first_gathered = result, gathered
 
             queries = suggested_queries(result.dossier)
             if queries:
-                enriched = run_followup(pid, gathered, queries)
                 try:
+                    enriched = run_followup(pid, gathered, queries)
                     result = synthesize(pid, full_name, company, enriched, budget=budget)
                     gathered = enriched
-                except (DossierInvalid, guards.RunBudgetExceeded) as exc:
-                    # La primera pasada ya es válida y está pagada: se guarda.
+                except SYSTEM_STOPS as exc:
+                    # La parada del sistema se propaga, pero lo pagado se conserva.
+                    _store(pid, first_result, first_gathered, company)
                     ledger.record_action(
-                        "seguimiento_descartado", {"motivo": str(exc)}, prospect_id=pid
+                        "seguimiento_cortado", {"motivo": str(exc)}, prospect_id=pid
+                    )
+                    raise
+                except Exception as exc:  # noqa: BLE001 - la primera pasada ya vale
+                    result, gathered = first_result, first_gathered
+                    ledger.record_action(
+                        "seguimiento_descartado",
+                        {"motivo": f"{type(exc).__name__}: {exc}"},
+                        prospect_id=pid,
                     )
 
-            version = prospects.save_dossier(pid, result.dossier, sorted(gathered.sources))
-            empresa = result.dossier.get("empresa") or {}
-            _set_state(
-                pid, "investigado", company=empresa.get("nombre") or company, domain=gathered.domain
-            )
+            version = _store(pid, result, gathered, company)
     except (DossierInvalid, guards.RunBudgetExceeded) as exc:
         _set_state(pid, "incompleto")
         ledger.record_action("research_incompleto", {"motivo": str(exc)}, prospect_id=pid)
