@@ -14,7 +14,7 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 |---|---|---|
 | 1. Fundación | Supabase, ledger de costes, guardarraíles, toolbox MCP | **Hecho** |
 | 2a. Research worker | recolección, síntesis GPT-4.1, seguimiento, CLI `handoff`, `investigar_persona` | **Hecho** |
-| 2b. Ingesta | slack-watcher, resolver | Pendiente |
+| 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Brave Search como respaldo de SearXNG | **Hecho** |
 | 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | Pendiente |
 | 4. Panel web | Auth, listado, dossier, descarte, costes | Pendiente |
 
@@ -110,6 +110,69 @@ Comprobación de salud de SearXNG:
 curl -s "http://127.0.0.1:8080/search?q=test&format=json" | jq '.results | length, .unresponsive_engines'
 ```
 
+## Ingesta desde Slack (Plan 2b)
+
+Cada hora (o al llamar a mano) el agente lee los canales del Founders Club,
+detecta quién escribió o quién es nuevo en el padrón, y encola su research. Una
+cola en Postgres (`research_jobs`, una tarea abierta por persona) evita pagar
+dos veces por la misma persona cuando dos disparadores coinciden.
+
+```bash
+uv run handoff vigilar   # una lectura de Slack + resolución de la cola
+uv run handoff cola      # estado de la cola: pendientes, en curso, hechos, fallidos
+uv run handoff worker    # vigila y procesa sin parar; Ctrl+C para detener
+```
+
+`vigilar` y `worker` fallan con un aviso claro y código 1 si falta
+`SLACK_USER_TOKEN` o `SLACK_CHANNEL_IDS`, sin tocar la red.
+
+### Variables nuevas
+
+| Variable | Hace falta para | Dónde se saca |
+|---|---|---|
+| `SLACK_USER_TOKEN` | Leer el Slack del Founders Club | api.slack.com/apps → OAuth & Permissions, User OAuth Token |
+| `SLACK_CHANNEL_IDS` | Qué canales vigilar (IDs separados por comas) | el ID de cada canal, empieza por `C` |
+| `SLACK_LOOKBACK_HOURS` | Cuánto mira hacia atrás la primera lectura de un canal | por defecto 1 |
+| `SLACK_POLL_SECONDS` | Cada cuánto vuelve a leer `handoff worker` | por defecto 3600 |
+| `HANDOFF_ALERT_WEBHOOK_URL` | Avisos operativos (fallo de auth de Slack, ciclo del worker caído) | un webhook del Slack de Handoff, nunca el del Founders Club |
+| `BRAVE_SEARCH_API_KEY` | Búsqueda web sin CAPTCHA (Brave antes que SearXNG) | api-dashboard.search.brave.com |
+| `PRICE_BRAVE_PER_QUERY` | Contabilizar el coste de Brave en `cost_events` | factura de Brave; por defecto $0,005 |
+
+Además, en la tabla `config` hay un tope nuevo:
+
+```sql
+insert into config (key, value) values ('research_por_hora', '20'::jsonb)
+    on conflict (key) do update set value = excluded.value;
+```
+
+`research_por_hora` limita cuántas tareas puede terminar `handoff worker` en
+una hora (20 si la fila no existe). Un valor que no sea un entero no negativo
+se ignora, con un aviso en el log, y se usa el valor por defecto.
+
+### Montar un Slack de pruebas
+
+1. Crear un workspace de Slack de pruebas.
+2. En api.slack.com/apps → *Create New App* → *From scratch*, y en *OAuth &
+   Permissions* añadir los **User Token Scopes** `channels:history`,
+   `channels:read`, `groups:history`, `groups:read`, `users:read` y
+   `users:read.email`. Ningún scope de escritura.
+3. *Install to Workspace* y copiar el *User OAuth Token* (`xoxp-…`) a
+   `SLACK_USER_TOKEN`.
+4. Copiar el ID de cada canal (empieza por `C`) a `SLACK_CHANNEL_IDS`.
+5. `uv run handoff vigilar` (la primera lectura es solo línea base), escribir
+   un mensaje con otra cuenta, `uv run handoff vigilar` otra vez para ver el
+   encolado, y `uv run handoff worker` para investigarlo.
+
+### Límites conocidos
+
+- Todavía no se leen las respuestas dentro de hilos (`conversations.replies`).
+- Sin backfill a propósito: la primera lectura de un canal nunca encola a todo
+  el padrón (ver Invariantes, más abajo).
+- El lock por persona (una tarea de research abierta por persona) solo cubre
+  el camino automático, la cola. Las ejecuciones manuales de
+  `handoff research` no lo comprueban: dos a la vez sobre la misma persona
+  pagan el research dos veces.
+
 ## Invariantes del proyecto
 
 Romper cualquiera de estas es un bug, no una preferencia:
@@ -129,7 +192,7 @@ Romper cualquiera de estas es un bug, no una preferencia:
 ## Comandos
 
 ```bash
-uv run pytest                                   # 226 tests
+uv run pytest                                   # 428 tests
 supabase db reset                               # rehace el esquema desde cero
 docker compose -f docker-compose.searxng.yml logs -f
 ```
@@ -145,11 +208,13 @@ Parar todo el gasto sin redeploy:
 update config set value = 'true'::jsonb where key = 'kill_switch';
 ```
 
-## Pendiente para el Plan 2b
+## Pendiente
 
-- **Lock por persona** alrededor de `research_person`: hoy dos ejecuciones
-  simultáneas sobre la misma persona pagan el research dos veces.
 - **Dominio adivinado**: `resolve_domain` toma el primer resultado que no es un
-  directorio o una red social; puede equivocarse de empresa.
-- **Fallback de búsqueda**: si SearXNG queda vetado no hay otro motor ni una API
-  de búsqueda de pago detrás.
+  directorio o una red social; sigue pudiendo equivocarse de empresa (más
+  estricto desde el Plan 2b, pero no infalible).
+- **Lock por persona en la CLI manual**: `handoff research`/`research-batch` no
+  pasan por la cola, así que su propio candado sigue pendiente (ver "Límites
+  conocidos" de la ingesta, arriba).
+- **Respuestas en hilos, scoring y permalinks**: fuera de este plan, quedan
+  para el Plan 3.
