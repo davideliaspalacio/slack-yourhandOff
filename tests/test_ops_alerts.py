@@ -8,6 +8,16 @@ from handoff_agent import ops_alerts
 WEBHOOK = "https://hooks.slack.com/services/T000/B000/XXXX"
 
 
+def _nuestros_logs(caplog) -> str:
+    """Solo las líneas que escribimos nosotros.
+
+    Que httpx no loguee la URL completa por su cuenta se apaga una vez por
+    proceso en cli.main, y eso lo prueba test_cli. Apagarlo aquí dentro haría
+    que estas aserciones pasaran aunque borráramos la protección de verdad.
+    """
+    return "\n".join(r.getMessage() for r in caplog.records if not r.name.startswith("httpx"))
+
+
 def test_an_alert_is_logged_and_recorded(conn, caplog):
     with caplog.at_level(logging.CRITICAL):
         ops_alerts.alert("slack_auth", "token revocado")
@@ -28,20 +38,16 @@ def test_an_alert_reaches_the_handoff_webhook_when_configured(conn, monkeypatch)
 
 @respx.mock
 def test_a_broken_webhook_never_raises(conn, monkeypatch, caplog):
-    """Una alerta no puede tumbar el proceso del que avisa."""
+    """Una alerta no puede tumbar el proceso del que avisa, ni dejar la URL del
+    webhook (que es la credencial) en nuestros logs."""
     monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", WEBHOOK)
     respx.post(WEBHOOK).mock(return_value=httpx.Response(500))
-    # Suppress httpx logging to test our code's credential protection
-    httpx_logger = logging.getLogger("httpx")
-    old_level = httpx_logger.level
-    httpx_logger.setLevel(logging.WARNING)
-    try:
-        caplog.set_level(logging.DEBUG)
-        ops_alerts.alert("slack_auth", "token revocado")
-        assert "XXXX" not in caplog.text
-        assert "hooks.slack.com" not in caplog.text
-    finally:
-        httpx_logger.setLevel(old_level)
+    caplog.set_level(logging.DEBUG)
+    ops_alerts.alert("slack_auth", "token revocado")
+    # Si no capturáramos nuestro propio logging, lo de abajo pasaría en vacío.
+    assert "ALERTA" in _nuestros_logs(caplog)
+    assert "XXXX" not in _nuestros_logs(caplog)
+    assert "hooks.slack.com" not in _nuestros_logs(caplog)
 
 
 @respx.mock
@@ -55,34 +61,22 @@ def test_connection_failure_never_raises(conn, monkeypatch, caplog):
     """Una alerta debe tolerar fallos de conexión al webhook."""
     monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", WEBHOOK)
     respx.post(WEBHOOK).mock(side_effect=httpx.ConnectError("refused"))
-    # Suppress httpx logging to test our code's credential protection
-    httpx_logger = logging.getLogger("httpx")
-    old_level = httpx_logger.level
-    httpx_logger.setLevel(logging.WARNING)
-    try:
-        caplog.set_level(logging.DEBUG)
-        ops_alerts.alert("slack_auth", "token revocado")
-        assert "XXXX" not in caplog.text
-        assert "hooks.slack.com" not in caplog.text
-    finally:
-        httpx_logger.setLevel(old_level)
+    caplog.set_level(logging.DEBUG)
+    ops_alerts.alert("slack_auth", "token revocado")
+    assert "ALERTA" in _nuestros_logs(caplog)
+    assert "XXXX" not in _nuestros_logs(caplog)
+    assert "hooks.slack.com" not in _nuestros_logs(caplog)
 
 
 def test_malformed_url_never_raises(conn, monkeypatch, caplog):
     """Una URL malformada (ej: puerto inválido) debe tolerarse."""
     monkeypatch.setenv("HANDOFF_ALERT_WEBHOOK_URL", "http://example.com:notaport")
-    # Suppress httpx logging to test our code's credential protection
-    httpx_logger = logging.getLogger("httpx")
-    old_level = httpx_logger.level
-    httpx_logger.setLevel(logging.WARNING)
-    try:
-        caplog.set_level(logging.DEBUG)
-        ops_alerts.alert("slack_auth", "token revocado")
-        # No debe crashear ni loguear detalles sobre la URL
-        assert "notaport" not in caplog.text
-        assert "example.com" not in caplog.text
-    finally:
-        httpx_logger.setLevel(old_level)
+    caplog.set_level(logging.DEBUG)
+    ops_alerts.alert("slack_auth", "token revocado")
+    # No debe crashear ni contar nada de la URL en nuestros logs.
+    assert "ALERTA" in _nuestros_logs(caplog)
+    assert "notaport" not in _nuestros_logs(caplog)
+    assert "example.com" not in _nuestros_logs(caplog)
 
 
 def test_load_settings_failure_never_raises(conn, monkeypatch, caplog):
