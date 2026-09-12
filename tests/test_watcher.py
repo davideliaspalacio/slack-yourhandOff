@@ -76,6 +76,73 @@ def test_new_members_are_queued_on_later_reads(conn, reader):
     assert job == {"slack_user_id": "U2", "reason": "miembro_nuevo"}
 
 
+def test_messages_are_stored_oldest_first(conn, reader, monkeypatch):
+    """Slack devuelve primero lo más nuevo y cada mensaje se confirma por
+    separado, así que hay que guardar de viejo a nuevo: el marcador de
+    reanudación es el ts más alto guardado."""
+    reader.post("C1", "U1", "viejo", ts(600))
+    reader.post("C1", "U2", "nuevo", ts(60))
+    stored: list[str] = []
+    real_store = watcher._store
+
+    def spy(channel, message, status):
+        stored.append(message["ts"])
+        return real_store(channel, message, status)
+
+    monkeypatch.setattr(watcher, "_store", spy)
+    tick(reader)
+    assert stored == [ts(600), ts(60)]
+
+
+def test_an_interrupted_batch_does_not_lose_the_older_messages(conn, reader, monkeypatch):
+    """Un parpadeo de Postgres a media tanda no puede dejar mensajes fuera de
+    todas las lecturas futuras."""
+    reader.post("C1", "U1", "viejo", ts(600))
+    reader.post("C1", "U2", "nuevo", ts(60))
+    real_store = watcher._store
+    calls = {"n": 0}
+
+    def flaky(channel, message, status):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("Postgres parpadeó")
+        return real_store(channel, message, status)
+
+    monkeypatch.setattr(watcher, "_store", flaky)
+    with pytest.raises(RuntimeError):
+        tick(reader)
+    monkeypatch.undo()
+    tick(reader)
+    stored = {row["user_id"] for row in db.fetch_all("select user_id from slack_messages")}
+    assert stored == {"U1", "U2"}
+
+
+def test_an_interrupted_member_diff_does_not_lose_the_stragglers(conn, reader, monkeypatch):
+    """La instantánea del padrón se guarda al final: si se corta a media lista,
+    la vuelta siguiente tiene que volver a ver a los que faltaban."""
+    reader.set_members("C1", "U1")
+    tick(reader)
+    reader.set_members("C1", "U1", "U2", "U3")
+    real_enqueue = queue.enqueue
+    calls = {"n": 0}
+
+    def flaky(user_id, reason):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("Postgres parpadeó")
+        return real_enqueue(user_id, reason)
+
+    monkeypatch.setattr(watcher.queue, "enqueue", flaky)
+    with pytest.raises(RuntimeError):
+        tick(reader)
+    monkeypatch.undo()
+    tick(reader)
+    queued = {
+        row["slack_user_id"] for row in db.fetch_all("select slack_user_id from research_jobs")
+    }
+    assert queued == {"U2", "U3"}
+
+
 def test_one_channel_down_does_not_stop_the_others(conn, reader):
     reader.unavailable_channels.add("C1")
     reader.post("C2", "U1", "hola", ts(60))

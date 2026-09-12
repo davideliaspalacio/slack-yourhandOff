@@ -23,7 +23,10 @@ class FakeReader:
         self.history_calls.append((channel, oldest))
         if channel in self.unavailable_channels:
             raise SlackUnavailable(f"{channel}: internal_error")
-        return [m for m in self.messages.get(channel, []) if float(m["ts"]) > float(oldest)]
+        fresh = [m for m in self.messages.get(channel, []) if float(m["ts"]) > float(oldest)]
+        # Como el Slack real: primero lo más nuevo. Devolverlos en orden de
+        # inserción escondía que el watcher los guardaba de nuevo a viejo.
+        return sorted(fresh, key=lambda m: float(m["ts"]), reverse=True)
 
     def members(self, channel: str) -> set[str]:
         return set(self.channel_members.get(channel, set()))

@@ -92,15 +92,18 @@ def _diff_members(reader, channel: str, owner_id: str, result: TickResult) -> No
         "select members from member_snapshots where channel_id = %s order by taken_at desc limit 1",
         (channel,),
     )
+    if previous is not None:  # sin línea base no se encola a todo el padrón
+        for user_id in sorted(current - set(previous["members"]) - {owner_id}):
+            if queue.enqueue(user_id, "miembro_nuevo"):
+                result.members_new += 1
+    # La instantánea se guarda al final, nunca antes de encolar. Si esto se
+    # interrumpe a media lista, la instantánea vieja sigue siendo la base y la
+    # vuelta siguiente ve otra vez a los que faltaban; guardarla primero los
+    # borraba del diff para siempre. Repetir no cuesta: enqueue es idempotente.
     db.execute(
         "insert into member_snapshots (channel_id, members) values (%s, %s)",
         (channel, sorted(current)),
     )
-    if previous is None:
-        return  # línea base: nunca se encola a todo el padrón
-    for user_id in sorted(current - set(previous["members"]) - {owner_id}):
-        if queue.enqueue(user_id, "miembro_nuevo"):
-            result.members_new += 1
 
 
 def watch_tick(
@@ -114,7 +117,15 @@ def watch_tick(
     owner_id = reader.owner_id()
     for channel in channels:
         try:
-            for message in reader.history(channel, oldest=_oldest(channel, lookback_hours, now)):
+            history = reader.history(channel, oldest=_oldest(channel, lookback_hours, now))
+            # De más viejo a más nuevo, a propósito. El marcador de reanudación
+            # es el ts más alto ya guardado y cada mensaje se confirma por
+            # separado, así que una interrupción a media tanda tiene que dejar
+            # guardado un prefijo por abajo. Slack devuelve primero lo más
+            # nuevo: guardarlo en ese orden subiría el marcador y dejaría los
+            # mensajes viejos de esa misma tanda fuera de todas las lecturas
+            # futuras, sin error y para siempre.
+            for message in sorted(history, key=lambda m: float(m["ts"])):
                 status = classify(message, owner_id)
                 if _store(channel, message, status):
                     if status == "nuevo":

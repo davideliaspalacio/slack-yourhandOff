@@ -31,7 +31,13 @@ def _reclaim_stale() -> None:
     that person forever."""
     reclaimed = queue.reclaim_stale()
     if reclaimed:
-        logger.info("recuperadas %d tareas abandonadas por un worker anterior", reclaimed)
+        # Aviso, no log: recuperar una tarea significa que alguien murió a
+        # media investigación y, si en realidad seguía vivo, que puede haberse
+        # pagado el research dos veces. Tiene que poder verse después.
+        ops_alerts.alert(
+            "tareas_recuperadas",
+            f"{reclaimed} tarea(s) abandonada(s) devueltas a la cola",
+        )
 
 
 def run_loop(

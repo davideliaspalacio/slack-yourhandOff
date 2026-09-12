@@ -113,19 +113,21 @@ def test_reclaim_stale_runs_at_startup_and_on_each_slack_read(wiring, monkeypatc
     assert calls["n"] == 4
 
 
-def test_reclaim_stale_logs_only_when_it_recovers_something(wiring, monkeypatch, caplog):
-    monkeypatch.setattr(loop.queue, "reclaim_stale", lambda: 2)
-    clock = FakeClock()
-    with caplog.at_level("INFO", logger=loop.logger.name):
-        run(clock, max_cycles=1)
-    assert any("2" in record.getMessage() for record in caplog.records)
+def test_recovering_a_job_raises_an_alert(wiring, monkeypatch):
+    """Un reclamo puede significar que se pagó el research dos veces: un log no
+    basta, tiene que avisar."""
+    recuperadas = iter([2])
+    monkeypatch.setattr(loop.queue, "reclaim_stale", lambda: next(recuperadas, 0))
+    run(FakeClock(), max_cycles=1)
+    # El reclamo del arranque encuentra las dos; el de la primera lectura ya no
+    # encuentra nada, y entonces no vuelve a avisar.
+    assert wiring["alerts"] == ["tareas_recuperadas"]
 
 
-def test_reclaim_stale_is_silent_when_there_is_nothing_to_recover(wiring, monkeypatch, caplog):
+def test_reclaim_stale_is_silent_when_there_is_nothing_to_recover(wiring, monkeypatch):
     monkeypatch.setattr(loop.queue, "reclaim_stale", lambda: 0)
-    with caplog.at_level("INFO", logger=loop.logger.name):
-        run(FakeClock(), max_cycles=1)
-    assert not any("recuperadas" in record.getMessage() for record in caplog.records)
+    run(FakeClock(), max_cycles=1)
+    assert wiring["alerts"] == []
 
 
 def test_a_database_error_does_not_kill_the_worker(wiring, monkeypatch):

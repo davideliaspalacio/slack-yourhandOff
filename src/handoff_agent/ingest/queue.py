@@ -154,7 +154,17 @@ def reclaim_stale(older_than_minutes: int = STALE_AFTER_MINUTES) -> int:
     process may have died *because* of that job -- except once a job already
     used up all its attempts, in which case it is given up for good instead of
     coming back to loop forever. Returns how many jobs were touched.
+
+    This goes by the clock, not by any sign of life: it cannot tell a dead
+    worker from a slow one. The threshold must therefore exceed the slowest
+    research that can really happen, and nothing here enforces that. Reclaim a
+    job whose worker is still plodding along and a second worker will research
+    -- and pay for -- the same person again; the started_at guard keeps the
+    bookkeeping straight, but the money is already spent. That is why every
+    reclaim raises an operational alert.
     """
+    if older_than_minutes <= 0:
+        raise ValueError("older_than_minutes tiene que ser mayor que cero")
     return db.execute(
         """
         update research_jobs set
