@@ -1,3 +1,10 @@
+> **Instantánea del Plan 1, enviada el 2026-09-09.** Se conserva tal cual se
+> mandó; no es el estado actual. Desde entonces han entrado los planes 2a
+> (research worker) y 2b (ingesta desde Slack). Para saber dónde está el
+> proyecto hoy, ver `README.md`. En particular, la línea de abajo sobre "no
+> paid search API" ya no se sostiene: desde el Plan 2b la búsqueda usa la API
+> de Brave por delante de SearXNG, y Brave cobra por consulta.
+
 *Founders Club Sales Agent — build update*
 
 *What this is*
