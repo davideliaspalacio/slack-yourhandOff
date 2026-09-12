@@ -99,7 +99,12 @@ def _diff_members(reader, channel: str, owner_id: str, result: TickResult) -> No
     # La instantánea se guarda al final, nunca antes de encolar. Si esto se
     # interrumpe a media lista, la instantánea vieja sigue siendo la base y la
     # vuelta siguiente ve otra vez a los que faltaban; guardarla primero los
-    # borraba del diff para siempre. Repetir no cuesta: enqueue es idempotente.
+    # borraba del diff para siempre.
+    # Reencolar a quien ya se encoló sale gratis solo mientras su tarea siga
+    # abierta: el ON CONFLICT de enqueue no mira las terminadas. Si el reintento
+    # llega con la investigación ya hecha se crea una segunda tarea, y lo que
+    # evita pagarla es la frescura de research_person, que no cubre ni un
+    # dossier degradado ni a alguien en estado incompleto.
     db.execute(
         "insert into member_snapshots (channel_id, members) values (%s, %s)",
         (channel, sorted(current)),
