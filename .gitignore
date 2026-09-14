@@ -24,3 +24,6 @@ supabase/.temp/
 
 # Informes de research: contienen datos de personas reales
 docs/informes/
+
+# Copias de la base: llevan datos personales de las personas investigadas
+backups/
