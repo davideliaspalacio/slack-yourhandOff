@@ -1,0 +1,21 @@
+# Nunca dentro de la imagen: secretos y datos de personas reales.
+.env
+.env.*
+backups/
+docs/informes/
+.superpowers/
+
+# No hacen falta para correr el worker.
+.git/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.claude/
+tests/
+docs/
+supabase/
+searxng/
+scripts/
+*.log

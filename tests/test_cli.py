@@ -351,3 +351,30 @@ def test_worker_restores_the_previous_signal_handlers_when_the_loop_raises(monke
         cli.main(["worker"])
     assert signal.getsignal(signal.SIGINT) == previous_int
     assert signal.getsignal(signal.SIGTERM) == previous_term
+
+
+def test_a_stop_signal_wakes_the_worker_from_its_sleep(monkeypatch):
+    """Railway manda SIGTERM y, al poco, SIGKILL. Si el worker está en una de
+    sus esperas (30 s entre vueltas, 10 min tras una parada del sistema) con un
+    sleep que no se entera de la señal, lo matan a mitad en vez de pararse
+    solo. La señal tiene que despertarlo."""
+    import os
+    import signal
+
+    monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    seen = {}
+
+    def fake_loop(reader, **kwargs):
+        os.kill(os.getpid(), signal.SIGTERM)
+        started = time.monotonic()
+        kwargs["sleep"](5)
+        seen["slept"] = time.monotonic() - started
+        seen["stopped"] = kwargs["should_stop"]()
+        return 0
+
+    monkeypatch.setattr(cli, "run_loop", fake_loop)
+    assert cli.main(["worker"]) == 0
+    assert seen["stopped"] is True
+    assert seen["slept"] < 1

@@ -267,6 +267,10 @@ def cmd_worker(args) -> int:
             lookback_hours=settings.slack_lookback_hours,
             poll_seconds=settings.slack_poll_seconds,
             should_stop=stop.is_set,
+            # Dormir sobre el mismo evento que activa la señal. Con time.sleep,
+            # un SIGTERM que llega en plena espera (hasta 10 min tras una parada
+            # del sistema) no se atiende hasta el final, y Railway lo mata antes.
+            sleep=stop.wait,
         )
     finally:
         # Never leave our handlers installed once the loop ends -- a test

@@ -173,6 +173,74 @@ se ignora, con un aviso en el log, y se usa el valor por defecto.
   `handoff research` no lo comprueban: dos a la vez sobre la misma persona
   pagan el research dos veces.
 
+## Desplegar el worker en Railway
+
+El worker (`handoff worker`) corre como un servicio siempre encendido, sin
+puerto ni web. Railway lee `railway.json` y construye el `Dockerfile` del repo.
+
+### Pasos
+
+1. En Railway: *New Project* → *Deploy from GitHub repo* → este repositorio.
+2. Cargar las variables de la tabla de abajo en el servicio.
+3. Desplegar y revisar los logs: tiene que aparecer una línea `slack: N mensajes
+   nuevos...` por cada lectura.
+4. Comprobar en *Settings* que el servicio tiene **una sola réplica**.
+
+Las migraciones no se aplican al desplegar: se suben con `supabase db push`.
+
+### Variables
+
+| Variable | Obligatoria | Nota |
+|---|---|---|
+| `DATABASE_URL` | Sí | Cadena **Session pooler** de Supabase Cloud (*Connect* en el panel). La conexión directa no funciona en redes solo IPv4. |
+| `OPENAI_API_KEY` | Sí | Clave de producción, no la de desarrollo. |
+| `SLACK_USER_TOKEN` | Sí | Token `xoxp` de solo lectura. Sin él, el worker explica qué falta y sale. |
+| `SLACK_CHANNEL_IDS` | Sí | IDs de canal separados por comas. |
+| `BRAVE_SEARCH_API_KEY` | Sí, salvo que se despliegue SearXNG | `SEARXNG_URL` apunta por defecto a `127.0.0.1`, que en Railway no existe: sin Brave no hay búsqueda. |
+| `HANDOFF_ALERT_WEBHOOK_URL` | Recomendada | Sin ella los avisos solo quedan en los logs. |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | No | Sin ellas no hay trazas; el gasto se registra igual. |
+| `SLACK_POLL_SECONDS`, `SLACK_LOOKBACK_HOURS` | No | 3600 y 1 por defecto. |
+| `OPENAI_MODEL`, `PRICE_*`, `HTTP_TIMEOUT_SECONDS` | No | Tienen valores por defecto (ver `.env.example`). |
+
+### Por qué `railway.json` está así
+
+- **`numReplicas: 1`.** La cola reclama por reloj las tareas de más de 30 minutos
+  y no distingue un worker muerto de uno lento: con dos réplicas, una
+  investigación lenta puede pagarse dos veces.
+- **`overlapSeconds: 0`.** Es el tiempo que el despliegue viejo convive con el
+  nuevo *antes* de recibir la señal de parada. Durante ese solape los dos cogen
+  tareas, que es el mismo riesgo que tener dos réplicas.
+- **`drainingSeconds: 300`.** Margen entre el SIGTERM y el SIGKILL. Aquí sí
+  pueden convivir dos: el viejo, al recibir la señal, deja de coger tareas y
+  solo termina la que tiene entre manos. Si una investigación dura más, la tarea
+  se recupera sola a los 30 minutos. Con la base caída, el apagado puede tardar
+  hasta 30 segundos más: la espera de una conexión no se entera de la señal.
+  Comprobado en local, con el contenedor sin red: mientras el worker está en una
+  de sus esperas, `docker stop` sale limpio (código 0) en menos de un segundo.
+- **Sin `startCommand`.** Arranca el `CMD` del `Dockerfile`, en forma exec, para
+  que Python sea el PID 1 y reciba la señal de parada. Un shell delante se la
+  tragaría.
+- **`watchPatterns`.** Solo redespliega si cambia el código, las dependencias o
+  la propia configuración. Cada redespliegue corta una investigación en curso,
+  así que un cambio en `docs/` no debe provocar uno.
+- **`sleepApplication: false`.** El worker no recibe tráfico; Railway no debe
+  dormirlo por inactividad.
+
+### Probar la imagen en local
+
+```bash
+docker build -t handoff-worker:local .
+docker run --rm --env-file .env handoff-worker:local handoff cola
+```
+
+Con `--env-file .env`, `DATABASE_URL` apunta a `127.0.0.1`, que dentro del
+contenedor es el propio contenedor: para llegar a la base local hay que
+cambiarlo por `host.docker.internal`.
+
+El primer build tarda unos minutos: `python-jobspy` fija `numpy==1.26.3`, que
+no tiene wheel para Python 3.13 y se compila. Los siguientes reutilizan esa capa
+mientras no cambie `uv.lock`.
+
 ## Invariantes del proyecto
 
 Romper cualquiera de estas es un bug, no una preferencia:
