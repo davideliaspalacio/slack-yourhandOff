@@ -26,7 +26,7 @@ class Settings:
     searxng_url: str
     langfuse_public_key: str | None
     langfuse_secret_key: str | None
-    langfuse_host: str
+    langfuse_base_url: str
     price_input_per_m: float
     price_cached_input_per_m: float
     price_output_per_m: float
@@ -55,7 +55,12 @@ def load_settings() -> Settings:
         searxng_url=os.environ.get("SEARXNG_URL", "http://127.0.0.1:8080"),
         langfuse_public_key=os.environ.get("LANGFUSE_PUBLIC_KEY") or None,
         langfuse_secret_key=os.environ.get("LANGFUSE_SECRET_KEY") or None,
-        langfuse_host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+        # LANGFUSE_BASE_URL es el nombre del SDK 4 y el que muestra el panel de
+        # Langfuse; LANGFUSE_HOST, el antiguo, sigue valiendo si es el único.
+        # Una variable vacía cuenta como ausente.
+        langfuse_base_url=os.environ.get("LANGFUSE_BASE_URL")
+        or os.environ.get("LANGFUSE_HOST")
+        or "https://cloud.langfuse.com",
         price_input_per_m=float(os.environ.get("PRICE_INPUT_PER_M", "2.00")),
         price_cached_input_per_m=float(os.environ.get("PRICE_CACHED_INPUT_PER_M", "0.50")),
         price_output_per_m=float(os.environ.get("PRICE_OUTPUT_PER_M", "8.00")),

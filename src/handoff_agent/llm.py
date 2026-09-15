@@ -68,8 +68,16 @@ def complete(
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
+    # La traza se abre antes de llamar: Langfuse mide la latencia por su duración.
+    generation = tracing.start_generation(
+        stage=stage, model=settings.openai_model, prompt=prompt, prospect_id=prospect_id
+    )
     started = time.perf_counter()
-    response = _client().chat.completions.create(**kwargs)
+    try:
+        response = _client().chat.completions.create(**kwargs)
+    except Exception as exc:
+        tracing.finish_generation(generation, error=exc)
+        raise
     latency_ms = int((time.perf_counter() - started) * 1000)
 
     usage = response.usage
@@ -79,14 +87,10 @@ def complete(
     fresh_input = max(usage.prompt_tokens - cached, 0)
     text = response.choices[0].message.content or ""
 
-    trace_id = tracing.trace_llm_call(
-        stage=stage,
-        model=settings.openai_model,
-        prompt=prompt,
+    trace_id = tracing.finish_generation(
+        generation,
         completion=text,
         usage={"input": fresh_input, "cached": cached, "output": usage.completion_tokens},
-        latency_ms=latency_ms,
-        prospect_id=prospect_id,
     )
 
     try:

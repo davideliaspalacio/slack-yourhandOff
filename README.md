@@ -45,6 +45,7 @@ que las herramientas que no tocan un LLM funcionan mientras se conecta lo demás
 | `SEARXNG_SECRET` | Levantar SearXNG | `openssl rand -hex 32` |
 | `OPENAI_API_KEY` | Cualquier herramienta con LLM | platform.openai.com |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Trazas (opcional) | cloud.langfuse.com |
+| `LANGFUSE_BASE_URL` | Región del proyecto de Langfuse (opcional) | `https://cloud.langfuse.com` (Europa, por defecto) o `https://us.cloud.langfuse.com` (EE. UU.) |
 
 Sin claves de Langfuse el trazado es un no-op silencioso: el ledger de costes
 vive en Supabase y no depende de ningún tercero.
@@ -199,6 +200,7 @@ Las migraciones no se aplican al desplegar: se suben con `supabase db push`.
 | `SERPER_API_KEY` | Sí, salvo que se despliegue SearXNG | `SEARXNG_URL` apunta por defecto a `127.0.0.1`, que en Railway no existe: sin Serper no hay búsqueda. |
 | `HANDOFF_ALERT_WEBHOOK_URL` | Recomendada | Sin ella los avisos solo quedan en los logs. |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | No | Sin ellas no hay trazas; el gasto se registra igual. |
+| `LANGFUSE_BASE_URL` | Solo con Langfuse | Tiene que coincidir con la región del proyecto. Por defecto es Europa: un proyecto de EE. UU. necesita `https://us.cloud.langfuse.com` o las trazas no llegan. |
 | `SLACK_POLL_SECONDS`, `SLACK_LOOKBACK_HOURS` | No | 3600 y 1 por defecto. |
 | `OPENAI_MODEL`, `PRICE_*`, `HTTP_TIMEOUT_SECONDS` | No | Tienen valores por defecto (ver `.env.example`). |
 

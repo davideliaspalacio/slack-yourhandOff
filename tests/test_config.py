@@ -121,3 +121,29 @@ def test_price_serper_per_query_defaults_to_0_001(monkeypatch):
     monkeypatch.delenv("PRICE_SERPER_PER_QUERY", raising=False)
     settings = load_settings()
     assert settings.price_serper_per_query == 0.001
+
+
+def test_langfuse_base_url_is_read_from_langfuse_base_url(monkeypatch):
+    """Es el nombre que muestra el panel de Langfuse. Si también está el antiguo
+    LANGFUSE_HOST, manda el nuevo."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://otro.example.com")
+    assert load_settings().langfuse_base_url == "https://us.cloud.langfuse.com"
+
+
+def test_langfuse_base_url_falls_back_to_langfuse_host(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
+    monkeypatch.setenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
+    assert load_settings().langfuse_base_url == "https://us.cloud.langfuse.com"
+
+
+def test_langfuse_base_url_defaults_to_the_eu_cloud(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    assert load_settings().langfuse_base_url == "https://cloud.langfuse.com"

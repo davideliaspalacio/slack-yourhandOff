@@ -30,6 +30,10 @@ ENV_THAT_MUST_NOT_LEAK = [
     "SLACK_USER_TOKEN",
     "SLACK_CHANNEL_IDS",
     "HANDOFF_ALERT_WEBHOOK_URL",
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_BASE_URL",
+    "LANGFUSE_HOST",
 ]
 
 
@@ -54,7 +58,7 @@ def test_environment(monkeypatch, database_url):
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     # Si algún día hay claves reales en .env, load_dotenv las mete en el entorno
-    # y los tests acabarían llamando a Serper, a Slack o al webhook de verdad.
+    # y los tests acabarían llamando a Serper, a Slack, a Langfuse o al webhook de verdad.
     for name in ENV_THAT_MUST_NOT_LEAK:
         monkeypatch.delenv(name, raising=False)
 
