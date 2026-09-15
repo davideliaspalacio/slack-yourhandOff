@@ -107,17 +107,17 @@ def test_alert_webhook_url_parses_value(monkeypatch):
     assert settings.alert_webhook_url == "https://hooks.slack.com/services/test"
 
 
-def test_brave_search_api_key_defaults_to_none(monkeypatch):
+def test_serper_api_key_defaults_to_none(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+    monkeypatch.delenv("SERPER_API_KEY", raising=False)
     settings = load_settings()
-    assert settings.brave_search_api_key is None
+    assert settings.serper_api_key is None
 
 
-def test_price_brave_per_query_defaults_to_0_005(monkeypatch):
+def test_price_serper_per_query_defaults_to_0_001(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    monkeypatch.delenv("PRICE_BRAVE_PER_QUERY", raising=False)
+    monkeypatch.delenv("PRICE_SERPER_PER_QUERY", raising=False)
     settings = load_settings()
-    assert settings.price_brave_per_query == 0.005
+    assert settings.price_serper_per_query == 0.001

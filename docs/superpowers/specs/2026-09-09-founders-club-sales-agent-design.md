@@ -133,7 +133,7 @@ Esa es la fuente real de la inteligencia del sistema: contexto previo, no reglas
 
 | Necesidad | Herramienta | Licencia | Nota |
 |---|---|---|---|
-| Búsqueda web | Brave Search API, SearXNG de respaldo | AGPL (SearXNG) | Brave va primero cuando hay clave y **cuesta ~$0,005 por consulta**, apuntado en `cost_events`. SearXNG es gratis y sin API key, pero los motores que raspa responden con CAPTCHA bajo carga: pasó en el primer lote real (2026-09-10) y por eso dejó de ser el principal en el Plan 2b |
+| Búsqueda web | Serper (resultados de Google), SearXNG de respaldo | AGPL (SearXNG) | Serper va primero cuando hay clave y **cuesta ~$0,001 por consulta**, apuntado en `cost_events`. Sustituyó a Brave Search API el 2026-09-14: cinco veces más barato y mejor para encontrar perfiles públicos de LinkedIn y la web de la empresa. No es una API oficial de Google; si deja de responder, entra SearXNG. SearXNG es gratis y sin API key, pero los motores que raspa responden con CAPTCHA bajo carga: pasó en el primer lote real (2026-09-10) y por eso dejó de ser el principal en el Plan 2b |
 | Lectura de sitios | Crawl4AI | Apache-2.0 | Markdown limpio listo para LLM |
 | Extracción ligera | trafilatura | Apache-2.0 | Para páginas simples, sin navegador |
 | Ofertas de trabajo | JobSpy (speedyapply) | MIT | LinkedIn/Indeed/Glassdoor/Google. **No requiere cuenta de LinkedIn** |

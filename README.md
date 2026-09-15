@@ -14,7 +14,7 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 |---|---|---|
 | 1. Fundación | Supabase, ledger de costes, guardarraíles, toolbox MCP | **Hecho** |
 | 2a. Research worker | recolección, síntesis GPT-4.1, seguimiento, CLI `handoff`, `investigar_persona` | **Hecho** |
-| 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Brave Search por delante de SearXNG | **Hecho** |
+| 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Serper (resultados de Google) por delante de SearXNG | **Hecho** |
 | 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | Pendiente |
 | 4. Panel web | Auth, listado, dossier, descarte, costes | Pendiente |
 
@@ -135,8 +135,8 @@ uv run handoff worker    # vigila y procesa sin parar; Ctrl+C para detener
 | `SLACK_LOOKBACK_HOURS` | Cuánto mira hacia atrás la primera lectura de un canal | por defecto 1 |
 | `SLACK_POLL_SECONDS` | Cada cuánto vuelve a leer `handoff worker` | por defecto 3600 |
 | `HANDOFF_ALERT_WEBHOOK_URL` | Avisos operativos (fallo de auth de Slack, ciclo del worker caído) | un webhook del Slack de Handoff, nunca el del Founders Club |
-| `BRAVE_SEARCH_API_KEY` | Búsqueda web sin CAPTCHA (Brave antes que SearXNG) | api-dashboard.search.brave.com |
-| `PRICE_BRAVE_PER_QUERY` | Contabilizar el coste de Brave en `cost_events` | factura de Brave; por defecto $0,005 |
+| `SERPER_API_KEY` | Búsqueda web con resultados de Google, sin CAPTCHA (Serper antes que SearXNG) | serper.dev → *API Key* |
+| `PRICE_SERPER_PER_QUERY` | Contabilizar el coste de Serper en `cost_events` | factura de Serper; por defecto $0,001 |
 
 Además, en la tabla `config` hay un tope nuevo:
 
@@ -196,7 +196,7 @@ Las migraciones no se aplican al desplegar: se suben con `supabase db push`.
 | `OPENAI_API_KEY` | Sí | Clave de producción, no la de desarrollo. |
 | `SLACK_USER_TOKEN` | Sí | Token `xoxp` de solo lectura. Sin él, el worker explica qué falta y sale. |
 | `SLACK_CHANNEL_IDS` | Sí | IDs de canal separados por comas. |
-| `BRAVE_SEARCH_API_KEY` | Sí, salvo que se despliegue SearXNG | `SEARXNG_URL` apunta por defecto a `127.0.0.1`, que en Railway no existe: sin Brave no hay búsqueda. |
+| `SERPER_API_KEY` | Sí, salvo que se despliegue SearXNG | `SEARXNG_URL` apunta por defecto a `127.0.0.1`, que en Railway no existe: sin Serper no hay búsqueda. |
 | `HANDOFF_ALERT_WEBHOOK_URL` | Recomendada | Sin ella los avisos solo quedan en los logs. |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | No | Sin ellas no hay trazas; el gasto se registra igual. |
 | `SLACK_POLL_SECONDS`, `SLACK_LOOKBACK_HOURS` | No | 3600 y 1 por defecto. |

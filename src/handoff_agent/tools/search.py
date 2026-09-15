@@ -1,13 +1,15 @@
-"""Web search: Brave Search API when configured, self-hosted SearXNG otherwise.
+"""Web search: Serper (Google results) when configured, self-hosted SearXNG otherwise.
 
 SearXNG scrapes other engines' result pages from our own IP. Under load those
 engines answer with CAPTCHA and SearXNG goes quiet: it happened in the first
-real batch (2026-09-10), and from a datacenter IP it happens sooner. Brave's
-official API has no CAPTCHA and a predictable price, so it goes first when a
-key is set, and SearXNG stays as the free fallback.
+real batch (2026-09-10), and from a datacenter IP it happens sooner. Serper
+returns Google's results over an API with no CAPTCHA, which is also what finds
+a person's public LinkedIn snippet and their company's site most reliably. It
+goes first when a key is set, and SearXNG stays as the free fallback.
 
-Brave bills per query, so every successful call writes a cost_events row: no
-paid call may bypass the ledger.
+Serper bills per query, so every successful call writes a cost_events row: no
+paid call may bypass the ledger. The key travels in a header, never in the URL,
+so an error message that quotes the request cannot leak it.
 """
 
 from __future__ import annotations
@@ -19,8 +21,10 @@ import httpx
 from .. import ledger
 from ..config import Settings, load_settings
 
-BRAVE_URL = "https://api.search.brave.com/res/v1/web/search"
-BRAVE_MAX_COUNT = 20
+SERPER_URL = "https://google.serper.dev/search"
+# Hasta 10 resultados una búsqueda es un crédito. No está confirmado que pedir
+# más cueste lo mismo, y el agente nunca pide más de 8.
+SERPER_MAX_NUM = 10
 
 
 class SearchUnavailable(RuntimeError):
@@ -41,23 +45,20 @@ def _describe_engine(entry) -> str:
     return str(entry)
 
 
-def _search_brave(query: str, limit: int, settings: Settings) -> list[SearchResult]:
-    response = httpx.get(
-        BRAVE_URL,
-        params={"q": query, "count": min(limit, BRAVE_MAX_COUNT)},
-        headers={
-            "X-Subscription-Token": settings.brave_search_api_key,
-            "Accept": "application/json",
-        },
+def _search_serper(query: str, limit: int, settings: Settings) -> list[SearchResult]:
+    response = httpx.post(
+        SERPER_URL,
+        json={"q": query, "num": min(limit, SERPER_MAX_NUM)},
+        headers={"X-API-KEY": settings.serper_api_key},
         timeout=settings.http_timeout_seconds,
     )
     response.raise_for_status()
-    items = (response.json().get("web") or {}).get("results") or []
+    items = response.json().get("organic") or []
     return [
         SearchResult(
             title=item.get("title", ""),
-            url=item.get("url", ""),
-            snippet=item.get("description", ""),
+            url=item.get("link", ""),
+            snippet=item.get("snippet", ""),
         )
         for item in items[:limit]
     ]
@@ -102,19 +103,19 @@ def buscar_web(query: str, limit: int = 8, prospect_id: str | None = None) -> li
     """
     settings = load_settings()
     provider = "searxng"
-    brave_failure: str | None = None
+    serper_failure: str | None = None
     results: list[SearchResult] | None = None
 
-    if settings.brave_search_api_key:
+    if settings.serper_api_key:
         try:
-            results = _search_brave(query, limit, settings)
+            results = _search_serper(query, limit, settings)
         except (httpx.HTTPError, ValueError) as exc:
-            brave_failure = f"brave: {exc}"
+            serper_failure = f"serper: {exc}"
         else:
-            provider = "brave"
+            provider = "serper"
             ledger.record_cost_event(
-                source="brave_search",
-                cost_usd=settings.price_brave_per_query,
+                source="serper_search",
+                cost_usd=settings.price_serper_per_query,
                 description=f"búsqueda web: {query[:80]}",
                 prospect_id=prospect_id,
             )
@@ -123,13 +124,13 @@ def buscar_web(query: str, limit: int = 8, prospect_id: str | None = None) -> li
         try:
             results = _search_searxng(query, limit, settings)
         except SearchUnavailable as exc:
-            if brave_failure:
-                raise SearchUnavailable(f"{brave_failure}; {exc}") from exc
+            if serper_failure:
+                raise SearchUnavailable(f"{serper_failure}; {exc}") from exc
             raise
 
     outcome = {"count": len(results)}
-    if brave_failure:
-        outcome["fallo_brave"] = brave_failure
+    if serper_failure:
+        outcome["fallo_serper"] = serper_failure
     ledger.record_action(
         action="buscar_web",
         payload={"query": query, "limit": limit, "proveedor": provider},

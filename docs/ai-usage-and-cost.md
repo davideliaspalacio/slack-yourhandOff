@@ -22,9 +22,9 @@ The agent relies on two paid services:
 | Service | What the agent uses it for | How it charges |
 |---|---|---|
 | **OpenAI (GPT-4.1)** | Reading what was found about a person and writing their dossier | By the amount of text sent and received, measured in tokens |
-| **Brave Search** | Searching the web | Per search, about $0.005 each |
+| **Serper** | Searching the web, using Google's results | Per search, about $0.001 each |
 
-Everything else is free: reading web pages, looking up job postings, and SearXNG, a free search engine that only steps in when Brave is unavailable. None of those generate a cost.
+Everything else is free: reading web pages, looking up job postings, and SearXNG, a free search engine that only steps in when Serper is unavailable. None of those generate a cost.
 
 ---
 
@@ -51,11 +51,11 @@ Everything lives in the project's database (**Supabase**), which is the source o
 | Record | What it holds |
 |---|---|
 | **AI calls** | One entry per OpenAI call: tokens of each type, cost in dollars, how long it took, which person it was for, and which step of the process made it. |
-| **Other costs** | One entry per non-AI cost. Today that's Brave searches; later it will include SMS messages and any other paid service. |
+| **Other costs** | One entry per non-AI cost. Today that's Serper searches; later it will include SMS messages and any other paid service. |
 | **Agent activity** | A log of what the agent did, including the total cost of each research run and whether it hit its limit. |
 | **Settings** | The values of the three brakes, which can be changed without redeploying anything. |
 
-A Brave search is only recorded when Brave actually answers. If it fails and the agent falls back to the free search engine, nothing is charged, so nothing is recorded.
+A Serper search is only recorded when Serper actually answers. If it fails and the agent falls back to the free search engine, nothing is charged, so nothing is recorded.
 
 ---
 
@@ -107,7 +107,7 @@ Measured with real money, researching 6 companies:
 | **Sources invented by the AI** | 0 |
 | **Savings from OpenAI caching** | 72% |
 
-These figures come from before Brave was switched on. With Brave, each research run adds a handful of searches at about half a cent each.
+These figures come from before paid search was switched on. With Serper, each research run adds a handful of searches at about a tenth of a cent each.
 
 ---
 
@@ -122,8 +122,8 @@ These figures come from before Brave was switched on. With Brave, each research 
 
 ## Good to know
 
-- **The per-research budget only counts AI.** Brave searches are recorded and count toward the monthly budget, but not toward the $1 per-person limit.
+- **The per-research budget only counts AI.** Serper searches are recorded and count toward the monthly budget, but not toward the $1 per-person limit.
 - **A search run by hand, outside a research run, bypasses the brakes.** This doesn't happen during normal operation, only if someone uses the search tool directly.
-- **Prices are kept up to date manually.** If OpenAI or Brave change their rates, the prices in the settings need updating to match. They're worth checking against the real invoice each month.
+- **Prices are kept up to date manually.** If OpenAI or Serper change their rates, the prices in the settings need updating to match. They're worth checking against the real invoice each month.
 - **The month runs on UTC time.** In Colombia, the monthly budget resets at 7 p.m. on the last day of the previous month.
 - **Langfuse isn't connected yet.** Spend is fully recorded, but per-call details aren't viewable until it is.

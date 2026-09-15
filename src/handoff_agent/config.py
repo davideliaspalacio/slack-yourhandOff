@@ -31,8 +31,8 @@ class Settings:
     price_cached_input_per_m: float
     price_output_per_m: float
     http_timeout_seconds: float
-    brave_search_api_key: str | None
-    price_brave_per_query: float
+    serper_api_key: str | None
+    price_serper_per_query: float
     slack_user_token: str | None
     slack_channel_ids: tuple[str, ...]
     slack_lookback_hours: float
@@ -60,8 +60,8 @@ def load_settings() -> Settings:
         price_cached_input_per_m=float(os.environ.get("PRICE_CACHED_INPUT_PER_M", "0.50")),
         price_output_per_m=float(os.environ.get("PRICE_OUTPUT_PER_M", "8.00")),
         http_timeout_seconds=float(os.environ.get("HTTP_TIMEOUT_SECONDS", "30")),
-        brave_search_api_key=os.environ.get("BRAVE_SEARCH_API_KEY") or None,
-        price_brave_per_query=float(os.environ.get("PRICE_BRAVE_PER_QUERY", "0.005")),
+        serper_api_key=os.environ.get("SERPER_API_KEY") or None,
+        price_serper_per_query=float(os.environ.get("PRICE_SERPER_PER_QUERY", "0.001")),
         slack_user_token=os.environ.get("SLACK_USER_TOKEN") or None,
         slack_channel_ids=tuple(
             c.strip() for c in os.environ.get("SLACK_CHANNEL_IDS", "").split(",") if c.strip()
