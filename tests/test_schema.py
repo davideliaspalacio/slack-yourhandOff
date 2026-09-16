@@ -51,6 +51,36 @@ def test_delivery_table_exists_with_rls(conn, table):
     assert row[0] is True, f"RLS desactivado en {table}"
 
 
+def test_a_second_slack_card_for_the_same_version_is_refused(conn):
+    with conn.cursor() as cur:
+        cur.execute("insert into prospects (slack_user_id) values ('U1') returning id")
+        prospect_id = cur.fetchone()[0]
+        cur.execute(
+            "insert into deliveries (prospect_id, kind, band, dossier_version) "
+            "values (%s, 'slack', 'alta', 1)",
+            (prospect_id,),
+        )
+    with pytest.raises(psycopg.errors.UniqueViolation), conn.cursor() as cur:
+        cur.execute(
+            "insert into deliveries (prospect_id, kind, band, dossier_version) "
+            "values (%s, 'slack', 'alta', 1)",
+            (prospect_id,),
+        )
+
+
+def test_a_slack_card_without_a_dossier_version_is_refused(conn):
+    """Sin este check, dos tarjetas con dossier_version nulo para la misma
+    persona colarían: el índice único trata cada NULL como distinto."""
+    with conn.cursor() as cur:
+        cur.execute("insert into prospects (slack_user_id) values ('U1') returning id")
+        prospect_id = cur.fetchone()[0]
+    with pytest.raises(psycopg.errors.CheckViolation), conn.cursor() as cur:
+        cur.execute(
+            "insert into deliveries (prospect_id, kind, band) values (%s, 'slack', 'alta')",
+            (prospect_id,),
+        )
+
+
 def test_config_ships_with_kill_switch_off(conn):
     with conn.cursor() as cur:
         cur.execute("select value from config where key = 'kill_switch'")

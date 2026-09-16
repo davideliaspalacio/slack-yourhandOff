@@ -67,7 +67,12 @@ create table deliveries (
     message_ts    text,
     external_id   text,
     detail        jsonb not null default '{}'::jsonb,
-    created_at    timestamptz not null default now()
+    created_at    timestamptz not null default now(),
+    -- Postgres trata cada NULL como distinto a efectos de unicidad: sin este
+    -- check, el índice único de abajo no evita dos tarjetas de Slack con
+    -- dossier_version nulo para la misma persona.
+    constraint deliveries_slack_has_version
+        check (kind <> 'slack' or dossier_version is not null)
 );
 
 create index deliveries_prospect_idx on deliveries (prospect_id, created_at desc);
@@ -108,11 +113,43 @@ def test_value_falls_back_when_the_row_is_missing(conn):
 
 
 def test_value_falls_back_when_the_type_is_wrong(conn, caplog):
-    """psycopg decodifica jsonb a Python: true llegaría como 1 y una cadena
-    reventaría la comparación. Solo vale un valor del tipo del defecto."""
+    """Un valor de tipo distinto al del defecto no vale, sea cual sea ese tipo.
+
+    config es tabla de sesión (no está en TABLES_TO_CLEAN): hay que devolver
+    sms_por_dia a como lo deja la migración o el siguiente test la hereda rota.
+    """
     db.execute("update config set value = '\"tres\"'::jsonb where key = 'sms_por_dia'")
-    assert db_config.value("sms_por_dia", 3) == 3
-    assert "sms_por_dia" in caplog.text
+    try:
+        assert db_config.value("sms_por_dia", 3) == 3
+        assert "sms_por_dia" in caplog.text
+    finally:
+        db.execute("update config set value = '3'::jsonb where key = 'sms_por_dia'")
+
+
+def test_value_reads_a_real_stored_true(conn):
+    db.execute("update config set value = 'true'::jsonb where key = 'kill_switch'")
+    try:
+        assert db_config.value("kill_switch", False) is True
+    finally:
+        db.execute("update config set value = 'false'::jsonb where key = 'kill_switch'")
+
+
+def test_value_reads_a_real_stored_false(conn):
+    # kill_switch ya sale en false de la migración; lo dejamos explícito para
+    # que el test no dependa de ese orden.
+    db.execute("update config set value = 'false'::jsonb where key = 'kill_switch'")
+    assert db_config.value("kill_switch", True) is False
+
+
+def test_value_rejects_a_stored_true_when_the_default_is_an_int(conn, caplog):
+    """bool es subclase de int en Python: sin este caso aparte, un true
+    guardado colaría como 1 para un default entero."""
+    db.execute("update config set value = 'true'::jsonb where key = 'sms_por_dia'")
+    try:
+        assert db_config.value("sms_por_dia", 3) == 3
+        assert "sms_por_dia" in caplog.text
+    finally:
+        db.execute("update config set value = '3'::jsonb where key = 'sms_por_dia'")
 ```
 
 - [ ] **Step 3: Ejecutar y ver fallar**
@@ -133,28 +170,37 @@ el spec y lo que permite parar o aflojar el sistema en caliente.
 from __future__ import annotations
 
 import logging
-from typing import TypeVar
 
 from . import db
 
 logger = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
-def value(key: str, default: T) -> T:
+def value[T](key: str, default: T) -> T:
     row = db.fetch_one("select value from config where key = %s", (key,))
     if row is None:
         return default
     found = row["value"]
-    if isinstance(found, bool) or not isinstance(found, type(default)):
+    # bool es subclase de int en Python: sin este caso aparte, un default
+    # entero aceptaría un true/false guardado como si fuera 1/0, y un default
+    # booleano nunca podría leer un valor real de la tabla (isinstance(found,
+    # bool) siempre lo habría rechazado).
+    if isinstance(default, bool):
+        valid = isinstance(found, bool)
+    else:
+        valid = isinstance(found, type(default)) and not isinstance(found, bool)
+    if not valid:
         logger.warning("config %s: valor inválido %r, se usa %r", key, found, default)
         return default
     return found
 ```
 
+Nota: `def value[T](...)` usa la sintaxis de genéricos de PEP 695 (Python 3.13),
+que no necesita importar `TypeVar`.
+
 - [ ] **Step 5: Añadir la tabla al test de esquema**
 
-En `tests/test_schema.py`, añadir `"deliveries"` a la lista de tablas esperadas y a la comprobación de RLS.
+En `tests/test_schema.py`, añadir `"deliveries"` a la lista de tablas esperadas y a la comprobación de RLS. Añadir también dos pruebas para el dedup: una tarjeta de Slack repetida con la misma `dossier_version` debe chocar con `UniqueViolation`, y una tarjeta de Slack sin `dossier_version` debe chocar con `CheckViolation` (si no, el índice único no lo cubre: Postgres trata cada NULL como distinto). Añadir también `"deliveries"` a `TABLES_TO_CLEAN` en `tests/conftest.py` para que un test que inserte filas no contamine el siguiente.
 
 - [ ] **Step 6: Aplicar y verificar**
 

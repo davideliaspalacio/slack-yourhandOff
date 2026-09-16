@@ -10,7 +10,12 @@ create table deliveries (
     message_ts    text,
     external_id   text,
     detail        jsonb not null default '{}'::jsonb,
-    created_at    timestamptz not null default now()
+    created_at    timestamptz not null default now(),
+    -- Postgres trata cada NULL como distinto a efectos de unicidad: sin este
+    -- check, el índice único de abajo no evita dos tarjetas de Slack con
+    -- dossier_version nulo para la misma persona.
+    constraint deliveries_slack_has_version
+        check (kind <> 'slack' or dossier_version is not null)
 );
 
 create index deliveries_prospect_idx on deliveries (prospect_id, created_at desc);
