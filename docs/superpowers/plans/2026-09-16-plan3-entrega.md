@@ -425,7 +425,7 @@ Expected: FAIL, `AttributeError: 'FoundersClubReader' object has no attribute 'p
         """
         try:
             return self._call("chat_getPermalink", channel=channel, message_ts=ts)["permalink"]
-        except (SlackUnavailable, SlackApiError):
+        except SlackUnavailable:
             logger.warning("sin permalink para %s/%s", channel, ts)
             return None
 ```

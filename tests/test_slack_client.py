@@ -7,17 +7,32 @@ from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
 
 from handoff_agent import slack_client as sc
 
-READ_METHODS = {"auth_test", "conversations_history", "conversations_members", "users_info"}
+READ_METHODS = {
+    "auth_test",
+    "conversations_history",
+    "conversations_members",
+    "users_info",
+    "chat_getPermalink",
+}
 
 
 class FakeWebClient:
     """Doble del WebClient: respuestas en cola y registro de cada llamada."""
 
-    def __init__(self, *, history_pages=(), member_pages=(), users=None, error=None):
+    def __init__(
+        self,
+        *,
+        history_pages=(),
+        member_pages=(),
+        users=None,
+        error=None,
+        permalink="https://handoff.slack.com/archives/C1/p1726000000000100",
+    ):
         self.history_pages = list(history_pages)
         self.member_pages = list(member_pages)
         self.users = users or {}
         self.error = error
+        self.permalink_response = permalink
         self.calls = []
 
     def _record(self, name, kwargs):
@@ -40,6 +55,10 @@ class FakeWebClient:
     def users_info(self, **kwargs):
         self._record("users_info", kwargs)
         return {"ok": True, "user": self.users[kwargs["user"]]}
+
+    def chat_getPermalink(self, **kwargs):
+        self._record("chat_getPermalink", kwargs)
+        return {"ok": True, "permalink": self.permalink_response}
 
 
 def test_the_reader_only_exposes_reads():
@@ -144,6 +163,7 @@ def test_only_read_methods_ever_reach_slack():
     reader.history("C1", oldest="0")
     reader.members("C1")
     reader.user_profile("U1")
+    reader.permalink("C1", "1726000000.000100")
     assert {name for name, _ in fake.calls} <= READ_METHODS
 
 
