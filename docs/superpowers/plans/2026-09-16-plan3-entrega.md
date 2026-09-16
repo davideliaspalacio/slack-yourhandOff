@@ -465,14 +465,24 @@ git commit -m "feat: permalink del mensaje original, degradando a None"
 
 - [ ] **Step 1: Escribir el test**
 
+Todo lo que se interpola en la tarjeta (la cita, y cada campo del dossier) lo
+escribió un tercero o un modelo leyendo páginas de terceros, así que el test
+también cubre lo hostil: secuencias de control de mrkdwn sin escapar,
+señales que intentan romper la sintaxis de enlace, texto sin límite, y los
+casos de dossier incompleto que antes no estaban cubiertos.
+
 ```python
 # tests/test_card.py
 import json
 
 from handoff_agent.delivery import card
 
-PERSON = {"id": "11111111-1111-1111-1111-111111111111", "full_name": "Ada Ruiz",
-          "company_name": "Acme", "slack_user_id": "U1"}
+PERSON = {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "full_name": "Ada Ruiz",
+    "company_name": "Acme",
+    "slack_user_id": "U1",
+}
 DOSSIER = {
     "persona": {"nombre": "Ada Ruiz", "cargo": "CEO"},
     "empresa": {"nombre": "Acme", "empleados_aprox": 60},
@@ -503,7 +513,7 @@ def test_the_card_explains_why_it_matters_with_its_sources():
 
 def test_the_buttons_carry_the_person_and_the_action():
     blocks = card.build(PERSON, DOSSIER, "alta", MESSAGE, "https://slack.com/p1")
-    actions = [b for b in blocks if b["type"] == "actions"][0]["elements"]
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
     assert [e["action_id"] for e in actions[:3]] == ["contactado", "descartar", "investigar_mas"]
     assert all(e["value"] == PERSON["id"] for e in actions[:3])
     link = actions[3]
@@ -512,7 +522,7 @@ def test_the_buttons_carry_the_person_and_the_action():
 
 def test_without_a_permalink_there_is_no_broken_button():
     blocks = card.build(PERSON, DOSSIER, "media", MESSAGE, None)
-    actions = [b for b in blocks if b["type"] == "actions"][0]["elements"]
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
     assert all("url" not in e for e in actions)
 
 
@@ -530,6 +540,128 @@ def test_the_quote_cannot_break_the_card():
     blocks = card.build(PERSON, DOSSIER, "alta", hostile, None)
     assert isinstance(blocks, list)
     assert "injected" in blocks_text(blocks)
+
+
+def _mrkdwn_texts(blocks):
+    """Todos los valores de texto (mrkdwn y plain_text) de la tarjeta, para
+    poder afirmar tanto ausencias como la falta de strings vacíos."""
+    texts = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") in ("mrkdwn", "plain_text") and "text" in node:
+                texts.append(node["text"])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(blocks)
+    return texts
+
+
+def test_a_channel_mention_in_the_quote_is_escaped():
+    """`<!channel>` sin escapar avisaría a todo el canal de Handoff en cuanto
+    se publica la tarjeta: Slack lo interpreta como mención viva."""
+    hostile = {"text": "<!channel> free money, ping <@U123> now", "ts": "1.0"}
+    text = blocks_text(card.build(PERSON, DOSSIER, "alta", hostile, None))
+    assert "<!channel>" not in text
+    assert "<@U123>" not in text
+    assert "&lt;!channel&gt;" in text
+    assert "&lt;@U123&gt;" in text
+
+
+def test_a_hostile_signal_does_not_produce_link_syntax():
+    """`hecho`/`fuente` son salida de un modelo sobre páginas ajenas: un '|'
+    o un '<' ahí no debe poder cerrar el enlace antes de tiempo."""
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "click here|<!channel>", "fuente": "https://evil.example|hack"}
+        ],
+    }
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "<https://evil.example|hack" not in text
+    assert "&lt;!channel&gt;" in text
+    assert "click here" in text
+
+
+def test_an_overlong_resumen_is_trimmed():
+    dossier = {**DOSSIER, "resumen": "x" * (card.RESUMEN_CHARS + 500)}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    context = next(b for b in blocks if b["type"] == "context")
+    assert len(context["elements"][0]["text"]) <= card.RESUMEN_CHARS
+
+
+def test_an_overlong_hecho_is_trimmed():
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "y" * (card.HECHO_CHARS + 500), "fuente": "https://tc.com/a"}
+        ],
+    }
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "y" * (card.HECHO_CHARS + 1) not in text
+
+
+def test_no_block_text_is_ever_the_empty_string():
+    """Slack rechaza cualquier bloque cuyo valor de texto sea la cadena vacía."""
+    for blocks in (
+        card.build(PERSON, DOSSIER, "alta", MESSAGE, "https://slack.com/p1"),
+        card.build(PERSON, {**DOSSIER, "persona": None}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "empresa": None}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "contratacion": None}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "senales_contexto": []}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "resumen": None}, "alta", MESSAGE, None),
+        card.build(
+            {**PERSON, "full_name": None, "company_name": None},
+            {"persona": None, "empresa": None},
+            "alta",
+            None,
+            None,
+        ),
+    ):
+        assert all(text != "" for text in _mrkdwn_texts(blocks))
+
+
+def test_missing_persona_still_falls_back_to_the_person_record():
+    dossier = {**DOSSIER, "persona": None}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "Ada Ruiz" in text
+
+
+def test_missing_empresa_still_falls_back_to_the_person_record():
+    dossier = {**DOSSIER, "empresa": None}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "Acme" in text
+
+
+def test_missing_contratacion_produces_no_vacantes_line():
+    dossier = {**DOSSIER, "contratacion": None}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "vacantes abiertas" not in text
+
+
+def test_empty_senales_contexto_produces_no_signal_bullets():
+    dossier = {**DOSSIER, "senales_contexto": []}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "tc.com" not in text
+
+
+def test_resumen_null_produces_no_context_block():
+    dossier = {**DOSSIER, "resumen": None}
+    blocks = card.build(PERSON, dossier, "alta", MESSAGE, None)
+    assert all(b["type"] != "context" for b in blocks)
+
+
+def test_person_without_full_name_or_company_name_still_gets_a_headline():
+    person = {**PERSON, "full_name": None, "company_name": None}
+    dossier = {"persona": None, "empresa": None}
+    blocks = card.build(person, dossier, "alta", None, None)
+    header = next(b for b in blocks if b["type"] == "section")
+    assert header["text"]["text"].strip() != ""
+    assert "U1" in header["text"]["text"]
 ```
 
 - [ ] **Step 2: Ejecutar y ver fallar**
@@ -539,6 +671,16 @@ Expected: FAIL, `ModuleNotFoundError`
 
 - [ ] **Step 3: Implementar**
 
+Nota de seguridad: todo lo que se interpola aquí (la cita, y cada campo del
+dossier) lo escribió un tercero o un modelo leyendo páginas de terceros, así
+que pasa siempre por `_escape_mrkdwn` antes de entrar en un bloque `mrkdwn` —
+sin eso, un mensaje o un `hecho` con `<!channel>` avisaría a todo el canal de
+Handoff en cuanto se publica la tarjeta. Las señales solo se enlazan cuando
+`fuente` es una URL http(s) plausible sin `|`, `<` ni `>`; si no, se muestran
+como texto escapado sin enlace, porque un enlace roto nunca debe llegar a la
+tarjeta. `hecho` y `resumen` se recortan (`HECHO_CHARS`, `RESUMEN_CHARS`) para
+que ningún bloque se acerque al límite de 3000 caracteres de Slack.
+
 ```python
 # src/handoff_agent/delivery/card.py
 """La tarjeta de Slack: el producto que ve Anthony.
@@ -547,18 +689,55 @@ Todo el sistema existe para producir un clic en "Ver mensaje original", así que
 la tarjeta cita textualmente, explica por qué importa con fuentes, y propone un
 ángulo. El texto ajeno se cita como bloque de cita y se recorta: no puede
 romper el formato ni alargar la tarjeta sin fin.
+
+Todo lo que se interpola aquí (la cita, y cada campo del dossier) lo escribió
+un tercero o un modelo leyendo páginas de terceros: nunca se confía en su
+contenido, solo se valida su presencia. Por eso pasa siempre por
+`_escape_mrkdwn` antes de entrar en un bloque `mrkdwn`.
 """
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 QUOTE_CHARS = 300
+HECHO_CHARS = 240
+RESUMEN_CHARS = 500
 MAX_SIGNALS = 3
 EMOJI = {"alta": "🔥", "media": "👀", "baja": "📋"}
 
 
+def _escape_mrkdwn(text: str | None) -> str:
+    """Neutraliza los caracteres de control de mrkdwn de Slack.
+
+    Slack interpreta `<!channel>`, `<!here>`, `<@U123>` y `<#C123>` como
+    menciones o enlaces vivos sin importar lo que los rodee, y el ampersand
+    forma parte de esa sintaxis de escape. Sin este paso, un mensaje o un
+    campo del dossier que contenga `<!channel>` termina avisando a todo el
+    canal de Handoff en cuanto se publica la tarjeta. Hay que escapar `&`
+    antes que `<` y `>`, si no el escape de estos últimos se duplicaría.
+    """
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _is_safe_link(url: str | None) -> bool:
+    """Solo se enlaza si la URL es plausible y no puede romper `<url|texto>`.
+
+    `fuente` es salida de un modelo leyendo páginas ajenas: basta un '|', un
+    '<' o un '>' dentro para cerrar el enlace antes de tiempo y colar el
+    resto como mrkdwn libre (incluida una mención). Ante la duda, no se
+    enlaza: un enlace roto nunca debe llegar a la tarjeta.
+    """
+    if not url or any(ch in url for ch in "|<>"):
+        return False
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
 def _quote(text: str) -> str:
     clean = " ".join((text or "").split())[:QUOTE_CHARS]
-    return "\n".join(f"> {line}" for line in clean.splitlines() or [""])
+    escaped = _escape_mrkdwn(clean)
+    return "\n".join(f"> {line}" for line in escaped.splitlines() or [""])
 
 
 def _headline(person: dict, dossier: dict, band: str) -> str:
@@ -568,9 +747,9 @@ def _headline(person: dict, dossier: dict, band: str) -> str:
     role = persona.get("cargo")
     company = empresa.get("nombre") or person.get("company_name")
     size = empresa.get("empleados_aprox")
-    bits = [b for b in (role, company) if b]
+    bits = [_escape_mrkdwn(b) for b in (role, company) if b]
     tail = f" (~{size} personas)" if size else ""
-    return f"*{name}*" + (f" — {', '.join(bits)}{tail}" if bits else "")
+    return f"*{_escape_mrkdwn(name)}*" + (f" — {', '.join(bits)}{tail}" if bits else "")
 
 
 def build(
@@ -582,50 +761,82 @@ def build(
 ) -> list[dict]:
     fit = dossier.get("encaje_handoff") or {}
     hiring = dossier.get("contratacion") or {}
+    header = (
+        f"{EMOJI.get(band, '')} *SEÑAL {band.upper()}* · encaje {fit.get('puntuacion')}/3\n"
+        + _headline(person, dossier, band)
+    )
     blocks: list[dict] = [
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"{EMOJI.get(band, '')} *SEÑAL {band.upper()}* · encaje {fit.get('puntuacion')}/3\n"
-                + _headline(person, dossier, band),
-            },
-        }
+        {"type": "section", "text": {"type": "mrkdwn", "text": header}},
     ]
 
     if message and (message.get("text") or "").strip():
         blocks.append(
-            {"type": "section", "text": {"type": "mrkdwn", "text": "Dijo:\n" + _quote(message["text"])}}
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "Dijo:\n" + _quote(message["text"])},
+            }
         )
 
     reasons = []
     if fit.get("razon"):
-        reasons.append(f"· {fit['razon']}")
+        reasons.append(f"· {_escape_mrkdwn(fit['razon'])}")
     for signal in (dossier.get("senales_contexto") or [])[:MAX_SIGNALS]:
-        reasons.append(f"· <{signal.get('fuente')}|{signal.get('hecho')}>")
+        hecho = _escape_mrkdwn((signal.get("hecho") or "")[:HECHO_CHARS])
+        fuente = signal.get("fuente")
+        if not hecho:
+            continue
+        if _is_safe_link(fuente):
+            reasons.append(f"· <{_escape_mrkdwn(fuente)}|{hecho}>")
+        else:
+            reasons.append(f"· {hecho}")
     if hiring.get("vacantes_abiertas"):
-        roles = ", ".join(hiring.get("roles_deslocalizables") or [])
-        reasons.append(f"· {hiring['vacantes_abiertas']} vacantes abiertas" + (f": {roles}" if roles else ""))
+        roles = ", ".join(_escape_mrkdwn(r) for r in (hiring.get("roles_deslocalizables") or []))
+        reasons.append(
+            f"· {hiring['vacantes_abiertas']} vacantes abiertas" + (f": {roles}" if roles else "")
+        )
     if reasons:
         blocks.append(
-            {"type": "section", "text": {"type": "mrkdwn", "text": "*Por qué importa*\n" + "\n".join(reasons)}}
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "*Por qué importa*\n" + "\n".join(reasons)},
+            }
         )
 
-    if dossier.get("resumen"):
-        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": dossier["resumen"]}]})
+    resumen = dossier.get("resumen")
+    if resumen:
+        trimmed = _escape_mrkdwn(resumen[:RESUMEN_CHARS])
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": trimmed}]})
 
     elements = [
-        {"type": "button", "action_id": "contactado", "text": {"type": "plain_text", "text": "Contactado"},
-         "value": person["id"], "style": "primary"},
-        {"type": "button", "action_id": "descartar", "text": {"type": "plain_text", "text": "Descartar"},
-         "value": person["id"], "style": "danger"},
-        {"type": "button", "action_id": "investigar_mas", "text": {"type": "plain_text", "text": "Investigar más"},
-         "value": person["id"]},
+        {
+            "type": "button",
+            "action_id": "contactado",
+            "text": {"type": "plain_text", "text": "Contactado"},
+            "value": person["id"],
+            "style": "primary",
+        },
+        {
+            "type": "button",
+            "action_id": "descartar",
+            "text": {"type": "plain_text", "text": "Descartar"},
+            "value": person["id"],
+            "style": "danger",
+        },
+        {
+            "type": "button",
+            "action_id": "investigar_mas",
+            "text": {"type": "plain_text", "text": "Investigar más"},
+            "value": person["id"],
+        },
     ]
     if permalink:
         elements.append(
-            {"type": "button", "action_id": "ver_original",
-             "text": {"type": "plain_text", "text": "Ver mensaje original"}, "url": permalink}
+            {
+                "type": "button",
+                "action_id": "ver_original",
+                "text": {"type": "plain_text", "text": "Ver mensaje original"},
+                "url": permalink,
+            }
         )
     blocks.append({"type": "actions", "elements": elements})
     return blocks

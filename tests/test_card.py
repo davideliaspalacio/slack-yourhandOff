@@ -65,3 +65,125 @@ def test_the_quote_cannot_break_the_card():
     blocks = card.build(PERSON, DOSSIER, "alta", hostile, None)
     assert isinstance(blocks, list)
     assert "injected" in blocks_text(blocks)
+
+
+def _mrkdwn_texts(blocks):
+    """Todos los valores de texto (mrkdwn y plain_text) de la tarjeta, para
+    poder afirmar tanto ausencias como la falta de strings vacíos."""
+    texts = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") in ("mrkdwn", "plain_text") and "text" in node:
+                texts.append(node["text"])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(blocks)
+    return texts
+
+
+def test_a_channel_mention_in_the_quote_is_escaped():
+    """`<!channel>` sin escapar avisaría a todo el canal de Handoff en cuanto
+    se publica la tarjeta: Slack lo interpreta como mención viva."""
+    hostile = {"text": "<!channel> free money, ping <@U123> now", "ts": "1.0"}
+    text = blocks_text(card.build(PERSON, DOSSIER, "alta", hostile, None))
+    assert "<!channel>" not in text
+    assert "<@U123>" not in text
+    assert "&lt;!channel&gt;" in text
+    assert "&lt;@U123&gt;" in text
+
+
+def test_a_hostile_signal_does_not_produce_link_syntax():
+    """`hecho`/`fuente` son salida de un modelo sobre páginas ajenas: un '|'
+    o un '<' ahí no debe poder cerrar el enlace antes de tiempo."""
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "click here|<!channel>", "fuente": "https://evil.example|hack"}
+        ],
+    }
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "<https://evil.example|hack" not in text
+    assert "&lt;!channel&gt;" in text
+    assert "click here" in text
+
+
+def test_an_overlong_resumen_is_trimmed():
+    dossier = {**DOSSIER, "resumen": "x" * (card.RESUMEN_CHARS + 500)}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    context = next(b for b in blocks if b["type"] == "context")
+    assert len(context["elements"][0]["text"]) <= card.RESUMEN_CHARS
+
+
+def test_an_overlong_hecho_is_trimmed():
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "y" * (card.HECHO_CHARS + 500), "fuente": "https://tc.com/a"}
+        ],
+    }
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "y" * (card.HECHO_CHARS + 1) not in text
+
+
+def test_no_block_text_is_ever_the_empty_string():
+    """Slack rechaza cualquier bloque cuyo valor de texto sea la cadena vacía."""
+    for blocks in (
+        card.build(PERSON, DOSSIER, "alta", MESSAGE, "https://slack.com/p1"),
+        card.build(PERSON, {**DOSSIER, "persona": None}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "empresa": None}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "contratacion": None}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "senales_contexto": []}, "alta", MESSAGE, None),
+        card.build(PERSON, {**DOSSIER, "resumen": None}, "alta", MESSAGE, None),
+        card.build(
+            {**PERSON, "full_name": None, "company_name": None},
+            {"persona": None, "empresa": None},
+            "alta",
+            None,
+            None,
+        ),
+    ):
+        assert all(text != "" for text in _mrkdwn_texts(blocks))
+
+
+def test_missing_persona_still_falls_back_to_the_person_record():
+    dossier = {**DOSSIER, "persona": None}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "Ada Ruiz" in text
+
+
+def test_missing_empresa_still_falls_back_to_the_person_record():
+    dossier = {**DOSSIER, "empresa": None}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "Acme" in text
+
+
+def test_missing_contratacion_produces_no_vacantes_line():
+    dossier = {**DOSSIER, "contratacion": None}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "vacantes abiertas" not in text
+
+
+def test_empty_senales_contexto_produces_no_signal_bullets():
+    dossier = {**DOSSIER, "senales_contexto": []}
+    text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert "tc.com" not in text
+
+
+def test_resumen_null_produces_no_context_block():
+    dossier = {**DOSSIER, "resumen": None}
+    blocks = card.build(PERSON, dossier, "alta", MESSAGE, None)
+    assert all(b["type"] != "context" for b in blocks)
+
+
+def test_person_without_full_name_or_company_name_still_gets_a_headline():
+    person = {**PERSON, "full_name": None, "company_name": None}
+    dossier = {"persona": None, "empresa": None}
+    blocks = card.build(person, dossier, "alta", None, None)
+    header = next(b for b in blocks if b["type"] == "section")
+    assert header["text"]["text"].strip() != ""
+    assert "U1" in header["text"]["text"]
