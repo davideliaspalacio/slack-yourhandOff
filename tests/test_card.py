@@ -130,6 +130,83 @@ def test_an_overlong_hecho_is_trimmed():
     assert "y" * (card.HECHO_CHARS + 1) not in text
 
 
+def _porque_importa_text(blocks):
+    section = next(
+        b for b in blocks if b["type"] == "section" and "Por qué importa" in b["text"]["text"]
+    )
+    return section["text"]["text"]
+
+
+def test_a_resumen_of_characters_that_expand_when_escaped_stays_under_the_context_cap():
+    """`_escape_mrkdwn` puede quintuplicar la longitud ('&' -> '&amp;'): recortar
+    el crudo y escapar después no ata nada. El tope tiene que aplicarse al
+    texto escapado, que es el que de verdad llega a Slack."""
+    dossier = {**DOSSIER, "resumen": "&" * 1000}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    context = next(b for b in blocks if b["type"] == "context")
+    text = context["elements"][0]["text"]
+    assert len(text) <= card.RESUMEN_CHARS
+    assert len(text) <= 2000  # tope real de Slack para un bloque context
+    assert not text.endswith("&am") and not text.endswith("&amp")
+
+
+def test_hechos_of_characters_that_expand_when_escaped_keep_the_section_under_the_cap():
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "&" * 240, "fuente": None},
+            {"hecho": "&" * 240, "fuente": None},
+            {"hecho": "&" * 240, "fuente": None},
+        ],
+    }
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    text = _porque_importa_text(blocks)
+    assert len(text) <= 3000  # tope real de Slack para un bloque section
+
+
+def test_a_long_razon_stays_under_the_section_cap():
+    dossier = {**DOSSIER, "encaje_handoff": {"puntuacion": 3, "razon": "&" * 5000}}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    text = _porque_importa_text(blocks)
+    assert len(text) <= 3000
+
+
+def test_a_long_fuente_stays_under_the_section_cap():
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "Levantó Series A", "fuente": "https://tc.com/" + "a" * 5000}
+        ],
+    }
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    text = _porque_importa_text(blocks)
+    assert len(text) <= 3000
+
+
+def test_a_fully_hostile_card_stays_under_every_slack_block_limit():
+    """Cabecera, cita, razón, tres señales, la línea de contratación y el
+    resumen, todos largos y con caracteres que se expanden al escaparse: la
+    tarjeta entera debe seguir cabiendo en los topes de Slack por bloque."""
+    hostile_message = {"text": "&" * 2000, "ts": "1.0"}
+    hostile_dossier = {
+        **DOSSIER,
+        "encaje_handoff": {"puntuacion": 3, "razon": "&" * 5000},
+        "senales_contexto": [
+            {"hecho": "<" * 1000, "fuente": "https://tc.com/" + "a" * 5000},
+            {"hecho": ">" * 1000, "fuente": "https://tc.com/" + "b" * 5000},
+            {"hecho": "&" * 1000, "fuente": "https://tc.com/" + "c" * 5000},
+        ],
+        "resumen": "&" * 5000,
+    }
+    blocks = card.build(PERSON, hostile_dossier, "alta", hostile_message, "https://slack.com/p1")
+    for block in blocks:
+        if block["type"] == "section":
+            assert len(block["text"]["text"]) <= 3000
+        elif block["type"] == "context":
+            for element in block["elements"]:
+                assert len(element["text"]) <= 2000
+
+
 def test_no_block_text_is_ever_the_empty_string():
     """Slack rechaza cualquier bloque cuyo valor de texto sea la cadena vacía."""
     for blocks in (

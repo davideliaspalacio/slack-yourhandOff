@@ -605,6 +605,83 @@ def test_an_overlong_hecho_is_trimmed():
     assert "y" * (card.HECHO_CHARS + 1) not in text
 
 
+def _porque_importa_text(blocks):
+    section = next(
+        b for b in blocks if b["type"] == "section" and "Por qué importa" in b["text"]["text"]
+    )
+    return section["text"]["text"]
+
+
+def test_a_resumen_of_characters_that_expand_when_escaped_stays_under_the_context_cap():
+    """`_escape_mrkdwn` puede quintuplicar la longitud ('&' -> '&amp;'): recortar
+    el crudo y escapar después no ata nada. El tope tiene que aplicarse al
+    texto escapado, que es el que de verdad llega a Slack."""
+    dossier = {**DOSSIER, "resumen": "&" * 1000}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    context = next(b for b in blocks if b["type"] == "context")
+    text = context["elements"][0]["text"]
+    assert len(text) <= card.RESUMEN_CHARS
+    assert len(text) <= 2000  # tope real de Slack para un bloque context
+    assert not text.endswith("&am") and not text.endswith("&amp")
+
+
+def test_hechos_of_characters_that_expand_when_escaped_keep_the_section_under_the_cap():
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "&" * 240, "fuente": None},
+            {"hecho": "&" * 240, "fuente": None},
+            {"hecho": "&" * 240, "fuente": None},
+        ],
+    }
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    text = _porque_importa_text(blocks)
+    assert len(text) <= 3000  # tope real de Slack para un bloque section
+
+
+def test_a_long_razon_stays_under_the_section_cap():
+    dossier = {**DOSSIER, "encaje_handoff": {"puntuacion": 3, "razon": "&" * 5000}}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    text = _porque_importa_text(blocks)
+    assert len(text) <= 3000
+
+
+def test_a_long_fuente_stays_under_the_section_cap():
+    dossier = {
+        **DOSSIER,
+        "senales_contexto": [
+            {"hecho": "Levantó Series A", "fuente": "https://tc.com/" + "a" * 5000}
+        ],
+    }
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    text = _porque_importa_text(blocks)
+    assert len(text) <= 3000
+
+
+def test_a_fully_hostile_card_stays_under_every_slack_block_limit():
+    """Cabecera, cita, razón, tres señales, la línea de contratación y el
+    resumen, todos largos y con caracteres que se expanden al escaparse: la
+    tarjeta entera debe seguir cabiendo en los topes de Slack por bloque."""
+    hostile_message = {"text": "&" * 2000, "ts": "1.0"}
+    hostile_dossier = {
+        **DOSSIER,
+        "encaje_handoff": {"puntuacion": 3, "razon": "&" * 5000},
+        "senales_contexto": [
+            {"hecho": "<" * 1000, "fuente": "https://tc.com/" + "a" * 5000},
+            {"hecho": ">" * 1000, "fuente": "https://tc.com/" + "b" * 5000},
+            {"hecho": "&" * 1000, "fuente": "https://tc.com/" + "c" * 5000},
+        ],
+        "resumen": "&" * 5000,
+    }
+    blocks = card.build(PERSON, hostile_dossier, "alta", hostile_message, "https://slack.com/p1")
+    for block in blocks:
+        if block["type"] == "section":
+            assert len(block["text"]["text"]) <= 3000
+        elif block["type"] == "context":
+            for element in block["elements"]:
+                assert len(element["text"]) <= 2000
+
+
 def test_no_block_text_is_ever_the_empty_string():
     """Slack rechaza cualquier bloque cuyo valor de texto sea la cadena vacía."""
     for blocks in (
@@ -678,8 +755,19 @@ sin eso, un mensaje o un `hecho` con `<!channel>` avisaría a todo el canal de
 Handoff en cuanto se publica la tarjeta. Las señales solo se enlazan cuando
 `fuente` es una URL http(s) plausible sin `|`, `<` ni `>`; si no, se muestran
 como texto escapado sin enlace, porque un enlace roto nunca debe llegar a la
-tarjeta. `hecho` y `resumen` se recortan (`HECHO_CHARS`, `RESUMEN_CHARS`) para
-que ningún bloque se acerque al límite de 3000 caracteres de Slack.
+tarjeta. `hecho`, `resumen`, `razon` y `fuente` se recortan (`HECHO_CHARS`,
+`RESUMEN_CHARS`, `RAZON_CHARS`, `FUENTE_CHARS`) para que ningún bloque se
+acerque a los límites de Slack (3000 caracteres por `section`, 2000 por
+`context`).
+
+Nota de una segunda ronda de revisión: recortar el texto crudo y escapar
+después no ata nada, porque `_escape_mrkdwn` puede multiplicar la longitud
+hasta por 5 (`&` -> `&amp;`) — un `resumen` de 1000 `&` pasaba de 500 a 2500
+caracteres, por encima del tope de 2000 de un bloque `context`. Por eso el
+orden es siempre escapar primero y recortar después (`_escape_and_cap`), con
+cuidado de no partir una entidad de escape a la mitad (`_trim_escaped`). Y
+`razon` y `fuente` no tenían tope ninguno: un `razon` o un `fuente` largos por
+sí solos bastaban para tirar la sección por encima de 3000 caracteres.
 
 ```python
 # src/handoff_agent/delivery/card.py
@@ -702,9 +790,34 @@ from urllib.parse import urlparse
 
 QUOTE_CHARS = 300
 HECHO_CHARS = 240
-RESUMEN_CHARS = 500
+RAZON_CHARS = 400
+FUENTE_CHARS = 200
+ROLES_CHARS = 200
+RESUMEN_CHARS = 1900
 MAX_SIGNALS = 3
 EMOJI = {"alta": "🔥", "media": "👀", "baja": "📋"}
+
+# Los topes de arriba se aplican al texto YA escapado (ver _escape_and_cap):
+# `_escape_mrkdwn` puede multiplicar la longitud hasta por 5 ('&' -> '&amp;'),
+# así que recortar el texto crudo y escapar después, como se hacía antes, no
+# garantiza nada — un `resumen` de 1000 '&' pasaba de 500 a 2500 caracteres.
+#
+# Aritmética del peor caso para la sección "*Por qué importa*" (tope de Slack:
+# 3000 caracteres por bloque `section`):
+#   prefijo "*Por qué importa*\n"                        18
+#   razón:            "· " + RAZON_CHARS                  2 + 400 =  402
+#   3 señales:        "· <" + FUENTE_CHARS + "|"
+#                      + HECHO_CHARS + ">"     3 × (5 + 200 + 240) = 1335
+#   contratación:     "· " + nº vacantes (≤6 dígitos en la
+#                      práctica) + " vacantes abiertas: " + ROLES_CHARS
+#                                              2 + 6 + 20 + 200 =  228
+#   4 saltos de línea entre 5 líneas                                4
+#                                                          --------------
+#                                                          total  1987
+# 1987 < 3000 con margen de sobra para el nº de vacantes real.
+#
+# Aritmética del peor caso para el bloque `context` del resumen (tope de
+# Slack: 2000 caracteres por bloque `context`): RESUMEN_CHARS = 1900 < 2000.
 
 
 def _escape_mrkdwn(text: str | None) -> str:
@@ -718,6 +831,29 @@ def _escape_mrkdwn(text: str | None) -> str:
     antes que `<` y `>`, si no el escape de estos últimos se duplicaría.
     """
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _trim_escaped(escaped: str, limit: int) -> str:
+    """Recorta texto ya escapado sin partir una entidad (`&amp;`, `&lt;`...).
+
+    Si el corte cae a mitad de una entidad se retrocede hasta antes del '&'
+    correspondiente: dejar un '&am' colgando reintroduciría un '&' suelto en
+    el mrkdwn final, justo lo que `_escape_mrkdwn` existe para evitar.
+    """
+    if len(escaped) <= limit:
+        return escaped
+    cut = escaped[:limit]
+    amp = cut.rfind("&")
+    if amp != -1 and ";" not in cut[amp:]:
+        cut = cut[:amp]
+    return cut
+
+
+def _escape_and_cap(text: str | None, limit: int) -> str:
+    """Escapa primero y recorta después, para que el tope se aplique al texto
+    que de verdad llega a Slack y no al crudo (ver la nota junto a las
+    constantes de arriba)."""
+    return _trim_escaped(_escape_mrkdwn(text), limit)
 
 
 def _is_safe_link(url: str | None) -> bool:
@@ -779,18 +915,21 @@ def build(
 
     reasons = []
     if fit.get("razon"):
-        reasons.append(f"· {_escape_mrkdwn(fit['razon'])}")
+        reasons.append(f"· {_escape_and_cap(fit['razon'], RAZON_CHARS)}")
     for signal in (dossier.get("senales_contexto") or [])[:MAX_SIGNALS]:
-        hecho = _escape_mrkdwn((signal.get("hecho") or "")[:HECHO_CHARS])
+        hecho = _escape_and_cap(signal.get("hecho"), HECHO_CHARS)
         fuente = signal.get("fuente")
         if not hecho:
             continue
         if _is_safe_link(fuente):
-            reasons.append(f"· <{_escape_mrkdwn(fuente)}|{hecho}>")
+            reasons.append(f"· <{_escape_and_cap(fuente, FUENTE_CHARS)}|{hecho}>")
         else:
             reasons.append(f"· {hecho}")
     if hiring.get("vacantes_abiertas"):
-        roles = ", ".join(_escape_mrkdwn(r) for r in (hiring.get("roles_deslocalizables") or []))
+        roles_joined = ", ".join(
+            _escape_mrkdwn(r) for r in (hiring.get("roles_deslocalizables") or [])
+        )
+        roles = _trim_escaped(roles_joined, ROLES_CHARS)
         reasons.append(
             f"· {hiring['vacantes_abiertas']} vacantes abiertas" + (f": {roles}" if roles else "")
         )
@@ -804,7 +943,7 @@ def build(
 
     resumen = dossier.get("resumen")
     if resumen:
-        trimmed = _escape_mrkdwn(resumen[:RESUMEN_CHARS])
+        trimmed = _escape_and_cap(resumen, RESUMEN_CHARS)
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": trimmed}]})
 
     elements = [
