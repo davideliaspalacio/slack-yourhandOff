@@ -2,7 +2,9 @@
 
 El Plan 3 no construye scoring del mensaje: `encaje_handoff.puntuacion` (0 a 3)
 ya la produce la síntesis, validada, y con su razón escrita. Los cortes viven
-en config para poder endurecerlos en caliente si el ruido molesta.
+en config para poder endurecerlos en caliente si el ruido molesta. Las bandas
+son una escalera: un score entra en la banda más alta que alcanza, o ninguna.
+Para silenciar una puntuación entera, sube banda_baja_min por encima de ella.
 """
 
 from __future__ import annotations
@@ -16,22 +18,10 @@ def band_for(dossier: dict) -> str | None:
     if type(score) is not int:
         return None
 
-    alta_min = db_config.value("banda_alta_min", 3)
-    media_min = db_config.value("banda_media_min", 2)
-    baja_min = db_config.value("banda_baja_min", 1)
-
-    # Si el umbral media sube demasiado (>= alta), dejamos de entregar media y
-    # baja: solo alertas alta o nada.
-    if media_min >= alta_min:
-        if score >= alta_min:
-            return "alta"
-        else:
-            return None
-
-    if score >= alta_min:
+    if score >= db_config.value("banda_alta_min", 3):
         return "alta"
-    if score >= media_min:
+    if score >= db_config.value("banda_media_min", 2):
         return "media"
-    if score >= baja_min:
+    if score >= db_config.value("banda_baja_min", 1):
         return "baja"
     return None

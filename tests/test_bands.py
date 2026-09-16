@@ -16,12 +16,23 @@ def test_band_comes_from_the_dossier_score(conn, score, expected):
     assert bands.band_for(dossier(score)) == expected
 
 
-def test_thresholds_can_be_moved_without_a_redeploy(conn):
-    """El modo de fallo real es el ruido: el umbral tiene que poder subirse en
-    caliente, sin tocar el código."""
+def test_raising_alta_min_drops_the_score_to_lower_bands(conn):
+    """Cambiar alta_min no elimina la puntuación, la baja de escalera."""
+    db.execute("update config set value = '4'::jsonb where key = 'banda_alta_min'")
+    try:
+        assert bands.band_for(dossier(3)) == "media"
+    finally:
+        db.execute("update config set value = '3'::jsonb where key = 'banda_alta_min'")
+
+
+def test_raising_media_min_makes_mid_scores_fall_to_baja(conn):
+    """Cambiar media_min no elimina, solo mueve entre bandas."""
     db.execute("update config set value = '3'::jsonb where key = 'banda_media_min'")
-    assert bands.band_for(dossier(2)) is None
-    assert bands.band_for(dossier(3)) == "alta"
+    try:
+        assert bands.band_for(dossier(2)) == "baja"
+        assert bands.band_for(dossier(3)) == "alta"
+    finally:
+        db.execute("update config set value = '2'::jsonb where key = 'banda_media_min'")
 
 
 def test_a_dossier_without_a_usable_score_is_not_delivered(conn):
