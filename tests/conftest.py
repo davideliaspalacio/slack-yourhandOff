@@ -18,6 +18,7 @@ TABLES_TO_CLEAN = [
     "research_jobs",
     "slack_messages",
     "member_snapshots",
+    "deliveries",
     "agent_actions",
     "llm_calls",
     "cost_events",
