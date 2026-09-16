@@ -2,6 +2,7 @@ import psycopg
 import pytest
 
 LEDGER_TABLES = ["dossiers", "llm_calls", "cost_events", "agent_actions", "config"]
+DELIVERY_TABLES = ["deliveries"]
 
 
 def test_prospects_table_exists_with_expected_columns(conn):
@@ -34,6 +35,15 @@ def test_rls_is_enabled_on_prospects(conn):
 
 @pytest.mark.parametrize("table", LEDGER_TABLES)
 def test_ledger_table_exists_with_rls(conn, table):
+    with conn.cursor() as cur:
+        cur.execute("select relrowsecurity from pg_class where relname = %s", (table,))
+        row = cur.fetchone()
+    assert row is not None, f"la tabla {table} no existe"
+    assert row[0] is True, f"RLS desactivado en {table}"
+
+
+@pytest.mark.parametrize("table", DELIVERY_TABLES)
+def test_delivery_table_exists_with_rls(conn, table):
     with conn.cursor() as cur:
         cur.execute("select relrowsecurity from pg_class where relname = %s", (table,))
         row = cur.fetchone()
