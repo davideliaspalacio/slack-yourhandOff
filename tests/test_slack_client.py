@@ -45,7 +45,7 @@ class FakeWebClient:
 def test_the_reader_only_exposes_reads():
     """El agente nunca escribe en el Founders Club: la superficie queda fijada."""
     public = {name for name in dir(sc.FoundersClubReader) if not name.startswith("_")}
-    assert public == {"owner_id", "history", "members", "user_profile"}
+    assert public == {"owner_id", "history", "members", "user_profile", "permalink"}
 
 
 def test_history_follows_cursors_across_pages():
@@ -145,3 +145,31 @@ def test_only_read_methods_ever_reach_slack():
     reader.members("C1")
     reader.user_profile("U1")
     assert {name for name, _ in fake.calls} <= READ_METHODS
+
+
+def test_permalink_asks_slack_for_the_link(monkeypatch):
+    calls = []
+
+    class FakeWeb:
+        def chat_getPermalink(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "ok": True,
+                "permalink": "https://handoff.slack.com/archives/C1/p1726000000000100",
+            }
+
+    reader = sc.FoundersClubReader(token="xoxp-test", client=FakeWeb())
+    assert reader.permalink("C1", "1726000000.000100").endswith("p1726000000000100")
+    assert calls[0] == {"channel": "C1", "message_ts": "1726000000.000100"}
+
+
+def test_permalink_returns_none_when_slack_says_no(monkeypatch):
+    """Una tarjeta sin enlace sigue siendo útil; una excepción aquí tumbaría
+    la entrega entera."""
+
+    class FakeWeb:
+        def chat_getPermalink(self, **kwargs):
+            raise sc.SlackApiError("message_not_found", response={"error": "message_not_found"})
+
+    reader = sc.FoundersClubReader(token="xoxp-test", client=FakeWeb())
+    assert reader.permalink("C1", "1.0") is None

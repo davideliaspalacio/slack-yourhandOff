@@ -36,6 +36,9 @@ class FakeReader:
             raise self.auth_error
         return self.profiles[user_id]
 
+    def permalink(self, channel: str, ts: str) -> str | None:
+        return f"https://fake.slack.com/archives/{channel}/p{ts.replace('.', '')}"
+
     # --- ayudas para los tests ---
     def post(self, channel: str, user: str, text: str, ts: str, **extra) -> None:
         self.messages.setdefault(channel, []).append(

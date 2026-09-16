@@ -9,12 +9,15 @@ posts goes to Handoff's own Slack, through a different credential.
 from __future__ import annotations
 
 import http.client
+import logging
 from dataclasses import dataclass
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from slack_sdk.http_retry import default_retry_handlers
 from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
+
+logger = logging.getLogger(__name__)
 
 # No se arreglan reintentando: hace falta una persona (token nuevo o más scopes).
 AUTH_ERRORS = frozenset(
@@ -122,3 +125,16 @@ class FoundersClubReader:
             is_bot=bool(user.get("is_bot")),
             deleted=bool(user.get("deleted")),
         )
+
+    def permalink(self, channel: str, ts: str) -> str | None:
+        """Enlace al mensaje real. Es de lectura, como el resto de la clase.
+
+        Todo el sistema existe para producir el clic en este enlace, pero si
+        Slack no lo da (mensaje borrado, canal archivado) la tarjeta se manda
+        igual: vale más una tarjeta sin enlace que ninguna tarjeta.
+        """
+        try:
+            return self._call("chat_getPermalink", channel=channel, message_ts=ts)["permalink"]
+        except (SlackUnavailable, SlackApiError):
+            logger.warning("sin permalink para %s/%s", channel, ts)
+            return None
