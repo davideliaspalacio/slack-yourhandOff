@@ -262,6 +262,38 @@ configuración (`railway.digest.json` en vez de `railway.json`).
    reintento ciego (`digest.send_daily` ya se protege de esto por su cuenta,
    pero tampoco hace falta que Railway lo intente).
 
+### Tercer servicio: el receptor de los botones
+
+Los botones de la tarjeta ("Contactado", "Descartar", "Investigar más")
+mandan un `block_actions` a `POST /slack/acciones`. Es un tercer servicio de
+Railway (`handoff web`, FastAPI servido con Uvicorn) sobre el mismo
+repositorio, con su propia configuración (`railway.web.json`).
+
+1. En el mismo proyecto de Railway: *New* → *GitHub Repo* → el mismo
+   repositorio.
+2. En *Settings* → *Config-as-code*, apuntar el servicio a
+   `railway.web.json`.
+3. En *Settings* → *Networking*, pulsar **Generate Domain** para obtener un
+   dominio público -- este servicio, a diferencia del worker y del digest, sí
+   recibe tráfico de fuera.
+4. En la app de Slack: *Interactivity & Shortcuts* → **Request URL**:
+   `https://<dominio>/slack/acciones`.
+5. Cargar las variables de la tabla de abajo.
+
+### Variables
+
+| Variable | Obligatoria | Nota |
+|---|---|---|
+| `DATABASE_URL` | Sí | La misma que el worker. |
+| `HANDOFF_SLACK_BOT_TOKEN` | Sí | El mismo token de bot que usa `slack_writer` para publicar y repintar la tarjeta. |
+| `HANDOFF_SLACK_CHANNEL_ID` | Sí | El canal de Handoff; cualquier `channel.id` que llegue distinto se rechaza (200, sin tocar la base). |
+| `SLACK_SIGNING_SECRET` | Sí | En la app de Slack: *Settings* → *Basic Information* → **Signing Secret**. Sin ella, el servicio rechaza toda petición con 401 -- falla cerrado. |
+
+`handoff web` lee `$PORT` del entorno en tiempo de ejecución, así que el
+`startCommand` de `railway.web.json` puede ser `"handoff web"` sin shell de
+por medio: Railway no expande `$PORT` en un comando así, pero el proceso
+Python sí lo lee él mismo.
+
 ## Panel web (Plan 4)
 
 Next.js en `panel/`. Lee Supabase directamente con la sesión del usuario: no hay

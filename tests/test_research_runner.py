@@ -61,6 +61,27 @@ def test_a_job_is_researched_with_what_the_profile_tells_us(conn, reader, monkey
     assert job()["outcome"]["estado"] == "investigado"
 
 
+def test_a_manual_job_forces_research_but_a_mensaje_job_does_not(conn, reader, monkeypatch):
+    """Corrección 8: sin `force`, un job manual sobre alguien con dossier
+    vigente termina en "omitido: dossier vigente" y el botón "Investigar más"
+    (o "Volver a investigar" del panel) no hace nada."""
+    seen_force = []
+
+    def research(full_name=None, company=None, domain=None, slack_user_id=None, force=False):
+        seen_force.append(force)
+        return ResearchOutcome("pid", slack_user_id, "investigado", 1, Decimal("0.02"), None)
+
+    monkeypatch.setattr(runner.worker, "research_person", research)
+
+    queue.enqueue("U1", "mensaje")
+    assert runner.run_next_job(reader).status == "hecho"
+
+    queue.enqueue("U1", "manual")
+    assert runner.run_next_job(reader).status == "hecho"
+
+    assert seen_force == [False, True]
+
+
 @pytest.mark.parametrize("flag", ["is_bot", "deleted"])
 def test_bots_and_deleted_users_are_skipped_without_research(conn, reader, monkeypatch, flag):
     reader.add_profile("U2", "Beep", **{flag: True})

@@ -208,6 +208,23 @@ def cmd_digest(args) -> int:
     return 1 if status == "fallido" else 0
 
 
+def cmd_web(args) -> int:
+    """Sirve el receptor de los botones de la tarjeta.
+
+    `uvicorn` se importa aquí, no arriba del módulo: es una dependencia solo
+    de este comando, y el resto de la CLI (research, worker, digest...) no
+    debería fallar si algún día falta. El puerto viene de `$PORT` porque
+    Railway lo asigna en tiempo de ejecución -- un `startCommand` sin shell de
+    por medio (`"handoff web"`, no `uvicorn ... --port $PORT`) no lo expande.
+    """
+    import os
+
+    import uvicorn
+
+    uvicorn.run("handoff_agent.web.app:app", host="::", port=int(os.environ.get("PORT", "8000")))
+    return 0
+
+
 def cmd_costes(args) -> int:
     print(json.dumps(ledger.cost_summary(days=args.dias), indent=2))
     return 0
@@ -331,6 +348,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     digest_cmd = sub.add_parser("digest", help="envía el resumen diario por email (Resend)")
     digest_cmd.set_defaults(func=cmd_digest)
+
+    web_cmd = sub.add_parser("web", help="sirve el receptor de los botones de la tarjeta (FastAPI)")
+    web_cmd.set_defaults(func=cmd_web)
     return parser
 
 

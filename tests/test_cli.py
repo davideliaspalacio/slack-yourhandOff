@@ -372,6 +372,34 @@ def test_digest_exits_one_on_failure(capsys, monkeypatch):
     assert capsys.readouterr().out.strip() == "fallido"
 
 
+def test_cmd_web_serves_uvicorn_with_the_port_from_the_environment(monkeypatch):
+    """Railway no expande `$PORT` en un startCommand sin shell (`"handoff
+    web"`): el puerto tiene que leerse del entorno en tiempo de ejecución."""
+    import uvicorn
+
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setenv("PORT", "4321")
+
+    assert cli.main(["web"]) == 0
+
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args == ("handoff_agent.web.app:app",)
+    assert kwargs == {"host": "::", "port": 4321}
+
+
+def test_cmd_web_defaults_to_port_8000(monkeypatch):
+    import uvicorn
+
+    calls = []
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.delenv("PORT", raising=False)
+
+    assert cli.main(["web"]) == 0
+    assert calls[0][1]["port"] == 8000
+
+
 def test_a_stop_signal_wakes_the_worker_from_its_sleep(monkeypatch):
     """Railway manda SIGTERM y, al poco, SIGKILL. Si el worker está en una de
     sus esperas (30 s entre vueltas, 10 min tras una parada del sistema) con un

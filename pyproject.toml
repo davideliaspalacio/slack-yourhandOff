@@ -13,6 +13,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "slack-sdk>=3.44",
     "twilio>=9.11.1",
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
 ]
 
 [dependency-groups]

@@ -82,7 +82,14 @@ def run_next_job(reader) -> RunResult | None:
     domain = domain_from_email(profile.email)
     try:
         outcome = worker.research_person(
-            profile.real_name or None, company, domain, slack_user_id=uid
+            profile.real_name or None,
+            company,
+            domain,
+            slack_user_id=uid,
+            # Un job manual ("Investigar más" del panel o de la tarjeta) tiene
+            # que forzar aunque el dossier siga vigente -- si no, siempre
+            # termina en "omitido: dossier vigente" y el botón no hace nada.
+            force=(job["reason"] == "manual"),
         )
     except worker.SYSTEM_STOPS:
         queue.release(job)
