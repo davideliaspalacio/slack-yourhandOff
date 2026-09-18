@@ -353,6 +353,25 @@ def test_worker_restores_the_previous_signal_handlers_when_the_loop_raises(monke
     assert signal.getsignal(signal.SIGTERM) == previous_term
 
 
+def test_digest_prints_the_status_and_exits_zero_on_a_quiet_day(capsys, monkeypatch):
+    monkeypatch.setattr(cli.digest, "send_daily", lambda: "nada")
+    assert cli.main(["digest"]) == 0
+    assert capsys.readouterr().out.strip() == "nada"
+
+
+@pytest.mark.parametrize("status", ["enviado", "ya_enviado", "sin_configurar", "detenido"])
+def test_digest_exits_zero_for_every_status_except_fallido(capsys, monkeypatch, status):
+    monkeypatch.setattr(cli.digest, "send_daily", lambda: status)
+    assert cli.main(["digest"]) == 0
+    assert capsys.readouterr().out.strip() == status
+
+
+def test_digest_exits_one_on_failure(capsys, monkeypatch):
+    monkeypatch.setattr(cli.digest, "send_daily", lambda: "fallido")
+    assert cli.main(["digest"]) == 1
+    assert capsys.readouterr().out.strip() == "fallido"
+
+
 def test_a_stop_signal_wakes_the_worker_from_its_sleep(monkeypatch):
     """Railway manda SIGTERM y, al poco, SIGKILL. Si el worker está en una de
     sus esperas (30 s entre vueltas, 10 min tras una parada del sistema) con un

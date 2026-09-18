@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import guards, ledger, ops_alerts, serialize
 from .config import load_settings
+from .delivery import digest
 from .ingest import queue
 from .ingest.loop import run_loop
 from .ingest.resolver import resolve_pending
@@ -199,6 +200,14 @@ def cmd_dossier(args) -> int:
     return 0
 
 
+def cmd_digest(args) -> int:
+    status = digest.send_daily()
+    print(status)
+    # Un día sin nada que contar, o un digest ya enviado por un reintento del
+    # cron, no es un fallo: solo "fallido" tiene que salir en rojo en Railway.
+    return 1 if status == "fallido" else 0
+
+
 def cmd_costes(args) -> int:
     print(json.dumps(ledger.cost_summary(days=args.dias), indent=2))
     return 0
@@ -319,6 +328,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     loop_cmd = sub.add_parser("worker", help="vigila el Slack y procesa la cola sin parar")
     loop_cmd.set_defaults(func=cmd_worker)
+
+    digest_cmd = sub.add_parser("digest", help="envía el resumen diario por email (Resend)")
+    digest_cmd.set_defaults(func=cmd_digest)
     return parser
 
 

@@ -43,6 +43,9 @@ ENV_THAT_MUST_NOT_LEAK = [
     "TWILIO_AUTH_TOKEN",
     "TWILIO_FROM",
     "TWILIO_TO",
+    "RESEND_API_KEY",
+    "DIGEST_FROM",
+    "DIGEST_TO",
 ]
 
 

@@ -46,6 +46,10 @@ class Settings:
     twilio_from: str | None
     twilio_to: str | None
     price_twilio_per_sms: float
+    resend_api_key: str | None
+    digest_from: str | None
+    digest_to: tuple[str, ...]
+    price_resend_per_email: float
 
 
 def _required(name: str) -> str:
@@ -93,4 +97,14 @@ def load_settings() -> Settings:
         # el 2026-09-16. Vive en el entorno como el resto de precios (Serper,
         # tokens de OpenAI): así se puede corregir sin tocar código.
         price_twilio_per_sms=float(os.environ.get("PRICE_TWILIO_PER_SMS", "0.0079")),
+        resend_api_key=os.environ.get("RESEND_API_KEY") or None,
+        digest_from=os.environ.get("DIGEST_FROM") or None,
+        digest_to=tuple(
+            e.strip().lower() for e in os.environ.get("DIGEST_TO", "").split(",") if e.strip()
+        ),
+        # Verificado contra resend.com/pricing el 2026-09-18: el nivel
+        # gratuito de Resend cubre un email diario de sobra, de ahí el 0.0
+        # por defecto -- igual que PRICE_TWILIO_PER_SMS, vive en el entorno
+        # para poder corregirse sin tocar código si algún día cambia.
+        price_resend_per_email=float(os.environ.get("PRICE_RESEND_PER_EMAIL", "0.0")),
     )

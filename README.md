@@ -243,6 +243,25 @@ El primer build tarda unos minutos: `python-jobspy` fija `numpy==1.26.3`, que
 no tiene wheel para Python 3.13 y se compila. Los siguientes reutilizan esa capa
 mientras no cambie `uv.lock`.
 
+### Segundo servicio: el resumen diario
+
+El email diario (`handoff digest`) no comparte servicio con el worker: es un
+segundo servicio de Railway sobre el mismo repositorio, con su propia
+configuración (`railway.digest.json` en vez de `railway.json`).
+
+1. En el mismo proyecto de Railway: *New* → *GitHub Repo* → el mismo
+   repositorio.
+2. En *Settings* → *Config-as-code*, apuntar el servicio a
+   `railway.digest.json`.
+3. Cargar `DATABASE_URL` (la misma que el worker) más `RESEND_API_KEY`,
+   `DIGEST_FROM` y `DIGEST_TO` (ver `.env.example`).
+4. Railway ejecuta `handoff digest` con el cron `0 13 * * *` (9:00 en Nueva
+   York) y sale solo. `restartPolicyType: "NEVER"`: a diferencia del worker,
+   un cron no debe reintentarse solo porque el proceso saliera con código
+   distinto de cero -- un email que ya salió no puede reenviarse por un
+   reintento ciego (`digest.send_daily` ya se protege de esto por su cuenta,
+   pero tampoco hace falta que Railway lo intente).
+
 ## Panel web (Plan 4)
 
 Next.js en `panel/`. Lee Supabase directamente con la sesión del usuario: no hay

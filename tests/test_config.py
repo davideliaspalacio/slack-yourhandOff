@@ -173,3 +173,36 @@ def test_price_twilio_per_sms_reads_the_environment(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PRICE_TWILIO_PER_SMS", "0.02")
     assert load_settings().price_twilio_per_sms == 0.02
+
+
+def test_resend_and_digest_settings_default_to_none_or_empty(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    for name in ("RESEND_API_KEY", "DIGEST_FROM", "DIGEST_TO"):
+        monkeypatch.delenv(name, raising=False)
+    settings = load_settings()
+    assert settings.resend_api_key is None
+    assert settings.digest_from is None
+    assert settings.digest_to == ()
+
+
+def test_digest_to_parsing_strips_lowercases_and_drops_empties(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("DIGEST_TO", " Anthony@Example.com, ,other@example.com ,")
+    settings = load_settings()
+    assert settings.digest_to == ("anthony@example.com", "other@example.com")
+
+
+def test_price_resend_per_email_defaults_to_0(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("PRICE_RESEND_PER_EMAIL", raising=False)
+    assert load_settings().price_resend_per_email == 0.0
+
+
+def test_price_resend_per_email_reads_the_environment(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PRICE_RESEND_PER_EMAIL", "0.001")
+    assert load_settings().price_resend_per_email == 0.001
