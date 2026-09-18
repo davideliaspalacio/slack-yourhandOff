@@ -42,4 +42,8 @@ button { cursor: pointer; } button.primary { background: var(--accent); color: #
 .notice { background: var(--warn); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
 ul.plain { margin: 0; padding-left: 18px; }
 .two { display: grid; gap: 16px; grid-template-columns: 2fr 1fr; }
+/* Sin min-width: 0, una URL larga en las fuentes ensancha la columna y empuja la
+   de acciones fuera de la pantalla. */
+.two > * { min-width: 0; }
+.card a, .card li { overflow-wrap: anywhere; }
 @media (max-width: 800px) { .two { grid-template-columns: 1fr; } main { padding: 16px; } }

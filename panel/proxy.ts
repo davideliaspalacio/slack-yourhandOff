@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { redirectTo } from "./lib/redirect";
 
 // Renueva la sesión en cada petición y manda al login a quien no la tiene.
 // Es una comprobación rápida, no la seguridad: quien decide qué se ve es RLS.
@@ -25,15 +26,13 @@ export async function proxy(request: NextRequest) {
   // a la raíz con ?code=. Se reencamina al callback para no perder el acceso.
   const code = request.nextUrl.searchParams.get("code");
   if (code && !path.startsWith("/auth/callback")) {
-    const callback = new URL("/auth/callback", request.url);
-    callback.searchParams.set("code", code);
-    return NextResponse.redirect(callback);
+    return redirectTo(request, `/auth/callback?code=${encodeURIComponent(code)}`);
   }
 
   const { data } = await supabase.auth.getUser();
   const isPublic = path.startsWith("/login") || path.startsWith("/auth");
   if (!data.user && !isPublic) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    return redirectTo(request, "/login");
   }
   return response;
 }

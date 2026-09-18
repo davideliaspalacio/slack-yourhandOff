@@ -106,7 +106,7 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
             <h2 style={{ marginTop: 0 }}>Acciones</h2>
             <form action={cambiarEstado} className="inline">
               <input type="hidden" name="id" value={p.id} />
-              <select name="estado" defaultValue={ESTADOS_EDITABLES.includes(p.state) ? p.state : ""}>
+              <select key={p.state} name="estado" defaultValue={ESTADOS_EDITABLES.includes(p.state) ? p.state : ""}>
                 {!ESTADOS_EDITABLES.includes(p.state) && <option value="" disabled>{p.state}</option>}
                 {ESTADOS_EDITABLES.map((e) => <option key={e} value={e}>{e}</option>)}
               </select>
