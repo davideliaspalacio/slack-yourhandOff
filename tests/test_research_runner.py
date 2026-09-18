@@ -149,6 +149,37 @@ def test_a_stolen_job_is_reported_as_descartado_not_hecho(conn, reader, monkeypa
     assert row["status"] == "en_curso"  # la tarea del segundo worker sigue intacta
 
 
+def test_a_finished_research_is_delivered(conn, reader, monkeypatch):
+    """Corrección 2: `run_next_job` entrega justo después de un `complete()`
+    con éxito, para un estado y versión entregables."""
+    queue.enqueue("U1", "mensaje")
+    stub_research(monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        runner,
+        "deliver_for",
+        lambda prospect_id, passed_reader: seen.append((prospect_id, passed_reader)),
+    )
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen == [("pid", reader)]
+
+
+def test_delivery_failing_does_not_turn_a_finished_job_into_a_failure(conn, reader, monkeypatch):
+    """La investigación ya está pagada y guardada: un fallo de entrega (un
+    error de base de datos, un bug) nunca debe convertir un `hecho` en un
+    reintento o un fallo."""
+    queue.enqueue("U1", "mensaje")
+    stub_research(monkeypatch)
+
+    def boom(prospect_id, passed_reader):
+        raise RuntimeError("entrega caída")
+
+    monkeypatch.setattr(runner, "deliver_for", boom)
+    result = runner.run_next_job(reader)
+    assert result.status == "hecho"
+    assert job()["status"] == "hecho"
+
+
 def test_a_stolen_job_that_would_have_retried_is_reported_as_descartado(conn, reader, monkeypatch):
     queue.enqueue("U1", "mensaje")
     stub_research(monkeypatch, error=RuntimeError("SearXNG caído"))

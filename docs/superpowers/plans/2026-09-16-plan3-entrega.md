@@ -1327,11 +1327,35 @@ git commit -m "feat: bot de Handoff que publica tarjetas y se niega a tocar el F
 **Files:**
 - Create: `src/handoff_agent/delivery/deliver.py`
 - Modify: `src/handoff_agent/ingest/research_runner.py`
-- Test: `tests/test_deliver.py`
+- Test: `tests/test_deliver.py`, `tests/test_research_runner.py` (añadir)
 
 **Interfaces:**
 - Consumes: `bands.band_for`, `card.build`, `slack_writer.post_card`, `FoundersClubReader.permalink`.
 - Produces: `deliver.deliver_for(prospect_id: str, reader) -> str | None` (la banda entregada, o None).
+
+**Dos correcciones aplicadas durante la implementación (sobre lo escrito más abajo):**
+
+1. **El filtro de `_last_message` de abajo es incorrecto.** Selecciona
+   `status = 'nuevo'`, pero `ingest/resolver.py:55-66` cambia el estado del
+   mensaje de `nuevo` a `pendiente_scoring` (o `archivado`) *antes* de que
+   corra el research. Con ese filtro ninguna tarjeta llevaría nunca la cita,
+   que es la línea más importante de la tarjeta. La implementación real
+   selecciona el mensaje más reciente de la persona cuyo estado no sea
+   `ignorado` (`status <> 'ignorado'`), y `tests/test_deliver.py` incluye un
+   test que prueba que un mensaje en `pendiente_scoring` (el estado real al
+   momento de la entrega) es el que se cita.
+2. **La entrega nunca debe deshacer un research terminado.** En
+   `research_runner.py`, `run_next_job` ya llama a `queue.complete(...)` y
+   devuelve `RunResult("hecho", ...)` antes de intentar la entrega. La
+   llamada a `deliver_for` solo ocurre después de un `complete()` exitoso,
+   solo para outcomes con `status` en `investigado` o `incompleto` y que
+   traen una versión de dossier, y está protegida por un `try/except`
+   propio del runner (además del que ya tiene `deliver_for` para errores de
+   Slack) que registra y traga cualquier excepción: un problema de base de
+   datos o un bug en la entrega no puede convertir una tarea `hecho` en un
+   reintento o un fallo. `tests/test_research_runner.py` incluye un test que
+   hace que la entrega lance una excepción y comprueba que la tarea sigue
+   terminando `hecho`.
 
 - [ ] **Step 1: Escribir el test**
 
@@ -1434,9 +1458,15 @@ NO_ALERT_STATES = ("descartado",)
 
 
 def _last_message(slack_user_id: str) -> dict | None:
+    """El mensaje más reciente de la persona que aún sirve de cita.
+
+    Para cuando esto corre, ingest/resolver.py ya movió el mensaje de
+    'nuevo' a 'pendiente_scoring' (o 'archivado'): filtrar por 'nuevo' nunca
+    encontraría nada que citar. Solo se descarta 'ignorado'.
+    """
     return db.fetch_one(
         "select channel_id, ts, text from slack_messages "
-        "where user_id = %s and status = 'nuevo' order by ts::numeric desc limit 1",
+        "where user_id = %s and status <> 'ignorado' order by ts::numeric desc limit 1",
         (slack_user_id,),
     )
 
@@ -1474,10 +1504,16 @@ def deliver_for(prospect_id: str, reader) -> str | None:
 
     try:
         channel, ts = slack_writer.post_card(blocks, summary)
-    except Exception as exc:  # noqa: BLE001 - el research ya está pagado y guardado
+    except Exception as exc:
+        # logger.exception ya evita que ruff lo marque como "except" ciego, y
+        # el research ya está pagado y guardado: un fallo de Slack no puede
+        # tumbarlo.
         logger.exception("no se pudo publicar la tarjeta")
-        ledger.record_action("entrega_fallida", {"motivo": f"{type(exc).__name__}: {exc}"},
-                             prospect_id=prospect_id)
+        ledger.record_action(
+            "entrega_fallida",
+            {"motivo": f"{type(exc).__name__}: {exc}"},
+            prospect_id=prospect_id,
+        )
         return None
 
     db.execute(
@@ -1488,13 +1524,30 @@ def deliver_for(prospect_id: str, reader) -> str | None:
     return band
 ```
 
-En `research_runner.py`, tras un `complete()` con estado `hecho`, llamar a la entrega:
+En `research_runner.py`, tras un `complete()` exitoso (no antes: la tarea ya
+está `hecho` y pagada), llamar a la entrega solo para los outcomes que
+dejaron dossier, y tragar cualquier excepción propia (además de las que ya
+traga `deliver_for` para Slack) para que un fallo de entrega nunca convierta
+un `hecho` en un reintento o un fallo:
 
 ```python
     # El SMS se engancha aquí en la Task 7; esta tarea solo publica la tarjeta.
-    if outcome.status in ("investigado", "incompleto") and outcome.version:
-        deliver_for(outcome.prospect_id, reader)
+    # La investigación ya quedó pagada y guardada (complete() ya corrió), así
+    # que cualquier fallo de entrega -- Slack caído, un error de base de
+    # datos, un bug -- se registra y se traga: nunca puede convertir un
+    # research terminado en un reintento o un fallo.
+    if outcome.status in DELIVERABLE_STATUSES and outcome.version:
+        try:
+            deliver_for(outcome.prospect_id, reader)
+        except Exception:
+            # logger.exception ya evita que ruff lo marque como "except" ciego.
+            logger.exception("run_next_job: la entrega falló tras completar la tarea %s", job["id"])
+
+    return RunResult("hecho", uid, outcome.status)
 ```
+
+(`DELIVERABLE_STATUSES = ("investigado", "incompleto")`, definida junto a las
+demás constantes del módulo.)
 
 - [ ] **Step 4: Ejecutar y ver pasar**
 
