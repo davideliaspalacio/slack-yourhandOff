@@ -1356,6 +1356,33 @@ git commit -m "feat: bot de Handoff que publica tarjetas y se niega a tocar el F
    reintento o un fallo. `tests/test_research_runner.py` incluye un test que
    hace que la entrega lance una excepción y comprueba que la tarea sigue
    terminando `hecho`.
+3. **Corrección posterior a la revisión (hallazgos 1 y 2):** lo escrito más
+   abajo ni honraba las paradas del sistema ni evitaba una tarjeta duplicada
+   de verdad. Se corrigió así:
+   - `deliver_for` empieza llamando a `guards.check_kill_switch()` y
+     `guards.check_monthly_budget()`. Si cualquiera de las dos salta, se
+     captura ahí mismo (nunca se propaga: el research ya corrió y está
+     pagado), se anota un `agent_actions` con `entrega_detenida` y el motivo,
+     y se devuelve `None` sin tocar Slack ni `deliveries`.
+   - El `select` de `already` (léelo, decide, luego inserta) se reemplaza por
+     una reserva atómica: un `insert into deliveries (...) values (..., null,
+     null) on conflict (prospect_id, dossier_version) where kind = 'slack' do
+     nothing returning id`, contra el mismo índice parcial `deliveries_one_card`
+     (el conflict target repite su predicado para que Postgres pueda
+     inferirlo). Si no se inserta nada, alguien ya entregó o está entregando
+     esa versión y se devuelve `None`. Si el `post_card` falla, se borra la
+     reserva (`delete from deliveries where id = ...`) antes de anotar
+     `entrega_fallida`, para que un intento posterior sí pueda entregar. Si el
+     `post_card` sale bien, el `update` final solo rellena `channel_id` y
+     `message_ts` en la fila ya reservada; si ese `update` falla, la fila
+     reservada se queda sin canal ni ts pero sigue viva (sigue bloqueando una
+     segunda tarjeta), y el fallo se registra con `logger.exception` en vez
+     de tragarse en silencio.
+   `tests/test_deliver.py` cubre las cuatro paradas nuevas: kill switch y tope
+   mensual (nada se publica, nada queda en `deliveries`, un `entrega_detenida`
+   sí), un post fallido que libera la reserva para un segundo intento, y un
+   post exitoso cuyo `update` final falla pero que igual impide una segunda
+   tarjeta.
 
 - [ ] **Step 1: Escribir el test**
 
@@ -1449,8 +1476,7 @@ from __future__ import annotations
 
 import logging
 
-from .. import db, ledger
-from ..tools import prospects
+from .. import db, guards, ledger
 from . import bands, card, slack_writer
 
 logger = logging.getLogger(__name__)
@@ -1461,8 +1487,10 @@ def _last_message(slack_user_id: str) -> dict | None:
     """El mensaje más reciente de la persona que aún sirve de cita.
 
     Para cuando esto corre, ingest/resolver.py ya movió el mensaje de
-    'nuevo' a 'pendiente_scoring' (o 'archivado'): filtrar por 'nuevo' nunca
-    encontraría nada que citar. Solo se descarta 'ignorado'.
+    'nuevo' a 'pendiente_scoring' (o 'archivado'): filtrar por 'nuevo', como
+    hacía una versión anterior de este módulo, nunca encontraría nada que
+    citar. Solo se descarta 'ignorado' (mensajes sin user_id válido, que
+    nunca representaron a esta persona).
     """
     return db.fetch_one(
         "select channel_id, ts, text from slack_messages "
@@ -1472,12 +1500,28 @@ def _last_message(slack_user_id: str) -> dict | None:
 
 
 def deliver_for(prospect_id: str, reader) -> str | None:
+    try:
+        guards.check_kill_switch()
+        guards.check_monthly_budget()
+    except (guards.KillSwitchActive, guards.MonthlyBudgetExceeded) as exc:
+        # Las paradas del sistema cortan la entrega igual que el research,
+        # pero el research ya corrió, está pagado y guardado: la parada no
+        # puede propagarse desde aquí, solo impedir que salga la tarjeta.
+        logger.warning("entrega detenida: %s", exc)
+        ledger.record_action(
+            "entrega_detenida",
+            {"motivo": f"{type(exc).__name__}: {exc}"},
+            prospect_id=prospect_id,
+        )
+        return None
+
     person = db.fetch_one("select * from prospects where id = %s", (prospect_id,))
     if person is None or person["state"] in NO_ALERT_STATES:
         return None
 
     dossier = db.fetch_one(
-        "select version, content from dossiers where prospect_id = %s order by version desc limit 1",
+        "select version, content from dossiers where prospect_id = %s "
+        "order by version desc limit 1",
         (prospect_id,),
     )
     if dossier is None:
@@ -1490,11 +1534,19 @@ def deliver_for(prospect_id: str, reader) -> str | None:
         # Banda baja no interrumpe: la recoge el email diario leyendo dossiers.
         return band
 
-    already = db.fetch_one(
-        "select id from deliveries where prospect_id = %s and dossier_version = %s and kind = 'slack'",
-        (prospect_id, dossier["version"]),
+    # Reserva atómica antes de publicar: el índice único deliveries_one_card
+    # (prospect_id, dossier_version where kind = 'slack') decide quién entrega.
+    # El conflict target repite el predicado del índice parcial para que
+    # Postgres pueda inferirlo. Si no se insertó nada, alguien ya entregó esta
+    # versión o está entregándola ahora mismo: no hay nada que hacer aquí.
+    reservation = db.fetch_one(
+        "insert into deliveries (prospect_id, kind, band, dossier_version, channel_id, "
+        "message_ts) values (%s, 'slack', %s, %s, null, null) "
+        "on conflict (prospect_id, dossier_version) where kind = 'slack' do nothing "
+        "returning id",
+        (prospect_id, band, dossier["version"]),
     )
-    if already:
+    if reservation is None:
         return None
 
     message = _last_message(person["slack_user_id"])
@@ -1507,8 +1559,10 @@ def deliver_for(prospect_id: str, reader) -> str | None:
     except Exception as exc:
         # logger.exception ya evita que ruff lo marque como "except" ciego, y
         # el research ya está pagado y guardado: un fallo de Slack no puede
-        # tumbarlo.
+        # tumbarlo. Se libera la reserva para que un intento posterior sí
+        # pueda entregar esta versión.
         logger.exception("no se pudo publicar la tarjeta")
+        db.execute("delete from deliveries where id = %s", (reservation["id"],))
         ledger.record_action(
             "entrega_fallida",
             {"motivo": f"{type(exc).__name__}: {exc}"},
@@ -1516,13 +1570,29 @@ def deliver_for(prospect_id: str, reader) -> str | None:
         )
         return None
 
-    db.execute(
-        "insert into deliveries (prospect_id, kind, band, dossier_version, channel_id, message_ts) "
-        "values (%s, 'slack', %s, %s, %s, %s)",
-        (prospect_id, band, dossier["version"], channel, ts),
-    )
+    try:
+        db.execute(
+            "update deliveries set channel_id = %s, message_ts = %s where id = %s",
+            (channel, ts, reservation["id"]),
+        )
+    except Exception:
+        # La tarjeta ya salió a Slack: no hay forma de deshacerla ni de
+        # reintentar sin arriesgar un duplicado. La reserva se queda sin
+        # channel_id/message_ts, pero sigue viva y sigue bloqueando una
+        # segunda tarjeta para esta misma versión -- por eso esto se registra
+        # y no se traga en silencio.
+        logger.exception(
+            "la tarjeta se publicó (canal=%s, ts=%s) pero no se pudo anotar la entrega %s",
+            channel,
+            ts,
+            reservation["id"],
+        )
+
     return band
 ```
+
+(La versión de arriba ya incorpora la corrección 3: las paradas del sistema al
+principio, y la reserva atómica en vez del `select`-luego-`insert` original.)
 
 En `research_runner.py`, tras un `complete()` exitoso (no antes: la tarea ya
 está `hecho` y pagada), llamar a la entrega solo para los outcomes que

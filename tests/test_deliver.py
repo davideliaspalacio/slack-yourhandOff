@@ -1,6 +1,6 @@
 import json
 
-from handoff_agent import db
+from handoff_agent import db, ledger
 from handoff_agent.delivery import deliver
 from handoff_agent.tools import prospects
 from tests.slack_fakes import FakeReader
@@ -128,3 +128,140 @@ def test_an_ignored_message_is_never_quoted(conn, monkeypatch):
     assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
     text = json.dumps(posted["blocks"], ensure_ascii=False, default=str)
     assert "esto no debe citarse" not in text
+
+
+def test_a_newer_ignored_message_does_not_shadow_an_older_real_one(conn, monkeypatch):
+    """El orden es por ts, no por status: 'ignorado' se descarta, pero no
+    porque sea más nuevo que la última cita real de verdad."""
+    posted = {}
+
+    def capture(blocks, text):
+        posted["blocks"] = blocks
+        return ("CHANDOFF", "1.1")
+
+    monkeypatch.setattr(deliver.slack_writer, "post_card", capture)
+    person = a_person()
+    store_message("U1", "1700000000.000100", "mensaje real mas viejo", "pendiente_scoring")
+    store_message("U1", "1700000000.000200", "mensaje ignorado mas nuevo", "ignorado")
+
+    assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
+    text = json.dumps(posted["blocks"], ensure_ascii=False, default=str)
+    assert "mensaje real mas viejo" in text
+    assert "mensaje ignorado mas nuevo" not in text
+
+
+def test_an_archived_message_is_still_a_usable_quote(conn, monkeypatch):
+    """Este combo (mensaje 'archivado' + persona que no está 'descartado') no
+    ocurre hoy en la práctica: resolver.py solo marca 'archivado' cuando la
+    persona ya está 'descartado', y ese estado corta la entrega antes de
+    llegar aquí (ver test_a_discarded_person_never_generates_an_alert). Este
+    test documenta el comportamiento de `_last_message` en sí mismo: solo
+    excluye 'ignorado', así que un mensaje 'archivado' sigue sirviendo de cita
+    en la tarjeta si algún día una persona vuelve de 'descartado'."""
+    posted = {}
+
+    def capture(blocks, text):
+        posted["blocks"] = blocks
+        return ("CHANDOFF", "1.1")
+
+    monkeypatch.setattr(deliver.slack_writer, "post_card", capture)
+    person = a_person()
+    store_message("U1", "1700000000.000100", "mensaje archivado", "archivado")
+
+    assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
+    text = json.dumps(posted["blocks"], ensure_ascii=False, default=str)
+    assert "mensaje archivado" in text
+
+
+# -- Hallazgo 1: las paradas del sistema (kill switch, tope mensual) deben
+# cortar la entrega igual que cortan el research, sin perder el research ya
+# hecho y sin propagar la excepción hacia el runner. config no está en
+# TABLES_TO_CLEAN: cada test restaura lo que toca en un finally. --
+
+
+def test_the_kill_switch_stops_delivery_without_losing_the_research(conn, monkeypatch):
+    posted = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: posted.append(1))
+    db.execute("update config set value = 'true'::jsonb where key = 'kill_switch'")
+    try:
+        person = a_person()
+        assert deliver.deliver_for(person["id"], FakeReader()) is None
+    finally:
+        db.execute("update config set value = 'false'::jsonb where key = 'kill_switch'")
+
+    assert posted == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    action = db.fetch_one("select payload from agent_actions where action = 'entrega_detenida'")
+    assert action is not None
+    assert "KillSwitchActive" in action["payload"]["motivo"]
+
+
+def test_the_monthly_cap_stops_delivery_without_losing_the_research(conn, monkeypatch):
+    posted = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: posted.append(1))
+    db.execute("update config set value = '1.0'::jsonb where key = 'monthly_budget_usd'")
+    ledger.record_cost_event(source="test", cost_usd=2.00)
+    try:
+        person = a_person()
+        assert deliver.deliver_for(person["id"], FakeReader()) is None
+    finally:
+        db.execute("update config set value = '150'::jsonb where key = 'monthly_budget_usd'")
+
+    assert posted == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    action = db.fetch_one("select payload from agent_actions where action = 'entrega_detenida'")
+    assert action is not None
+    assert "MonthlyBudgetExceeded" in action["payload"]["motivo"]
+
+
+# -- Hallazgo 2: la reserva atómica en `deliveries` es la que decide quién
+# entrega, no el read-then-insert de antes. --
+
+
+def test_a_failed_post_leaves_no_reservation_so_a_later_attempt_can_deliver(conn, monkeypatch):
+    def boom(blocks, text):
+        raise RuntimeError("slack caído")
+
+    monkeypatch.setattr(deliver.slack_writer, "post_card", boom)
+    person = a_person()
+    assert deliver.deliver_for(person["id"], FakeReader()) is None
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
+    assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 1
+
+
+def test_a_successful_post_whose_update_fails_still_prevents_a_second_post(
+    conn, monkeypatch, caplog
+):
+    """Si el post a Slack sale bien pero el update que anota canal/ts falla
+    (una base de datos que da un blip justo ahí), la reserva sigue viva: no
+    puede publicarse una segunda tarjeta para la misma versión, y el fallo se
+    registra en el log en vez de tragarse en silencio."""
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
+    person = a_person()
+
+    real_execute = deliver.db.execute
+
+    def flaky_execute(sql, params=()):
+        if sql.strip().startswith("update deliveries"):
+            raise RuntimeError("db caída justo aquí")
+        return real_execute(sql, params)
+
+    monkeypatch.setattr(deliver.db, "execute", flaky_execute)
+
+    with caplog.at_level("ERROR"):
+        assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
+    assert "no se pudo anotar la entrega" in caplog.text
+
+    row = db.fetch_one("select channel_id, message_ts from deliveries")
+    assert (row["channel_id"], row["message_ts"]) == (None, None)
+
+    # Un segundo intento no debe volver a publicar: la reserva sigue viva.
+    monkeypatch.setattr(deliver.db, "execute", real_execute)
+    posted = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: posted.append(1))
+    assert deliver.deliver_for(person["id"], FakeReader()) is None
+    assert posted == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 1
