@@ -38,6 +38,9 @@ class Settings:
     slack_lookback_hours: float
     slack_poll_seconds: int
     alert_webhook_url: str | None
+    handoff_bot_token: str | None
+    handoff_channel_id: str | None
+    slack_signing_secret: str | None
 
 
 def _required(name: str) -> str:
@@ -74,4 +77,7 @@ def load_settings() -> Settings:
         slack_lookback_hours=float(os.environ.get("SLACK_LOOKBACK_HOURS", "1")),
         slack_poll_seconds=int(os.environ.get("SLACK_POLL_SECONDS", "3600")),
         alert_webhook_url=os.environ.get("HANDOFF_ALERT_WEBHOOK_URL") or None,
+        handoff_bot_token=os.environ.get("HANDOFF_SLACK_BOT_TOKEN") or None,
+        handoff_channel_id=os.environ.get("HANDOFF_SLACK_CHANNEL_ID") or None,
+        slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET") or None,
     )
