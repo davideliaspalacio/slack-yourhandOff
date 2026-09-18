@@ -16,7 +16,7 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 | 2a. Research worker | recolección, síntesis GPT-4.1, seguimiento, CLI `handoff`, `investigar_persona` | **Hecho** |
 | 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Serper (resultados de Google) por delante de SearXNG | **Hecho** |
 | 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | Pendiente |
-| 4. Panel web | Auth, listado, dossier, descarte, costes | Pendiente |
+| 4. Panel web | Login, listado, ficha con dossier, costes, ajustes y las tres acciones | **Hecho**, en la rama `feat/panel` |
 
 ## Arrancar en local
 
@@ -242,6 +242,33 @@ cambiarlo por `host.docker.internal`.
 El primer build tarda unos minutos: `python-jobspy` fija `numpy==1.26.3`, que
 no tiene wheel para Python 3.13 y se compila. Los siguientes reutilizan esa capa
 mientras no cambie `uv.lock`.
+
+## Panel web (Plan 4)
+
+Next.js en `panel/`. Lee Supabase directamente con la sesión del usuario: no hay
+API propia, y quien decide qué se ve y qué se puede cambiar son las políticas
+RLS de `supabase/migrations/0006_panel.sql`.
+
+```bash
+cd panel && npm install
+npm run dev          # http://localhost:3000
+```
+
+Necesita `panel/.env.local` con `NEXT_PUBLIC_SUPABASE_URL` y
+`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (la clave pública, nunca la de servicio).
+
+**Quién entra.** Supabase deja registrarse a cualquiera, así que iniciar sesión
+no basta: solo ven datos los correos de la tabla `panel_users`. No están en el
+repositorio porque es público; se añaden a mano:
+
+```sql
+insert into panel_users (email) values ('nombre@yourhandoff.com');
+```
+
+**Qué puede hacer.** Leer personas, dossiers, mensajes, entregas y costes, y
+tres acciones: cambiar el estado de una persona, volver a investigarla y ajustar
+umbrales. No puede borrar, ni escribir dossiers, ni tocar el apagado de
+emergencia o los topes de dinero. Todo eso lo comprueba `tests/test_panel_rls.py`.
 
 ## Invariantes del proyecto
 
