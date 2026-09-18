@@ -16,6 +16,7 @@ HTML del correo.
 from __future__ import annotations
 
 import html
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -27,6 +28,7 @@ import httpx
 from .. import db, db_config, guards, ledger
 from ..config import load_settings
 from . import bands
+from .deliver import NO_ALERT_STATES
 
 logger = logging.getLogger(__name__)
 RESEND_URL = "https://api.resend.com/emails"
@@ -86,10 +88,10 @@ def _rows_in_window(start: datetime, end: datetime) -> list[dict]:
             ) as nuevo_miembro
         from dossiers d
         join prospects p on p.id = d.prospect_id
-        where d.created_at >= %s and d.created_at < %s and p.state <> 'descartado'
+        where d.created_at >= %s and d.created_at < %s and p.state <> all(%s)
         order by d.prospect_id, d.version desc
         """,
-        (start, end),
+        (start, end, list(NO_ALERT_STATES)),
     )
 
 
@@ -216,27 +218,37 @@ def send_daily(day: date | None = None, now: datetime | None = None) -> str:
         return "ya_enviado"
 
     data = _collect(day)
-    if not data.low and not data.new_members_count:
+    if not data.low and not data.new_members_count and not data.spend:
+        # Un día con solo bandas alta/media sigue teniendo gasto que contar:
+        # solo se calla cuando no hay nada de las tres cosas.
         logger.info("digest: nada que contar el %s", day.isoformat())
         return "nada"
 
     subject, body = _format(day, data)
+    # La marca se escribe antes de enviar, como la reserva de la tarjeta de
+    # Slack: si la base falla después de que el email ya salió, un reintento
+    # encuentra la marca y no manda un segundo resumen del mismo día.
+    marker = db.fetch_one(
+        "insert into agent_actions (action, payload) values ('digest_enviado', %s) returning id",
+        (json.dumps({"dia": day.isoformat(), "filas": len(data.rows)}),),
+    )
     try:
         _send_email(subject, body)
-    except httpx.HTTPStatusError as exc:
+    except Exception as exc:  # noqa: BLE001 - un fallo de Resend no tumba el cron
         # Nunca str(exc) ni la petición: llevan la cabecera Authorization.
         # Del status sí se guarda algo útil (401 no es lo mismo que 500).
-        status = exc.response.status_code
-        logger.error("no se pudo enviar el resumen diario (%s, %s)", type(exc).__name__, status)
-        ledger.record_action("digest_fallido", {"motivo": type(exc).__name__, "status": status})
-        return "fallido"
-    except Exception as exc:  # noqa: BLE001 - un fallo de Resend no tumba el cron
-        logger.error("no se pudo enviar el resumen diario (%s)", type(exc).__name__)
-        ledger.record_action("digest_fallido", {"motivo": type(exc).__name__})
+        payload = {"motivo": type(exc).__name__}
+        if isinstance(exc, httpx.HTTPStatusError):
+            payload["status"] = exc.response.status_code
+        logger.error("no se pudo enviar el resumen diario (%s)", payload)
+        db.execute("delete from agent_actions where id = %s", (marker["id"],))
+        ledger.record_action("digest_fallido", payload)
         return "fallido"
 
-    ledger.record_cost_event(
-        "resend_email", settings.price_resend_per_email, "Resumen diario", None
-    )
-    ledger.record_action("digest_enviado", {"dia": day.isoformat(), "filas": len(data.rows)})
+    try:
+        ledger.record_cost_event(
+            "resend_email", settings.price_resend_per_email, "Resumen diario", None
+        )
+    except Exception:  # noqa: BLE001 - el email ya salió; no se reporta como fallo
+        logger.error("digest enviado, pero no se pudo anotar su coste en cost_events")
     return "enviado"

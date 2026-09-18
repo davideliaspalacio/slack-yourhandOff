@@ -375,3 +375,50 @@ def test_send_email_raises_on_an_http_error(conn):
     respx.post(digest.RESEND_URL).mock(return_value=httpx.Response(401, json={"message": "no"}))
     with pytest.raises(httpx.HTTPStatusError):
         digest._send_email("Asunto", "<p>cuerpo</p>")
+
+
+def test_a_day_with_only_high_bands_still_reports_its_spend(conn, monkeypatch):
+    bodies = []
+    monkeypatch.setattr(digest, "_send_email", lambda subject, body: bodies.append(body))
+    person = a_person(score=3)
+    _set_created_at(person["id"], IN_WINDOW)
+    db.execute(
+        "insert into llm_calls (stage, model, input_tokens, output_tokens, cost_usd, created_at) "
+        "values ('research_sintesis', 'gpt-4.1', 100, 50, 0.0217, %s)",
+        (IN_WINDOW,),
+    )
+    assert digest.send_daily(TODAY) == "enviado"
+    assert "0.02" in bodies[0]
+
+
+def test_a_retry_after_the_database_fails_post_send_does_not_email_twice(conn, monkeypatch):
+    """El email sale y la base falla al anotar el coste: el reintento del cron
+    encuentra la marca escrita antes del envío y no repite."""
+    calls = sent(monkeypatch)
+    person = a_person(score=1)
+    _set_created_at(person["id"], IN_WINDOW)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("base caída")
+
+    working = digest.ledger.record_cost_event
+    monkeypatch.setattr(digest.ledger, "record_cost_event", broken)
+    assert digest.send_daily(TODAY) == "enviado"
+    # No monkeypatch.undo(): desharía también el DATABASE_URL de conftest.
+    monkeypatch.setattr(digest.ledger, "record_cost_event", working)
+    assert digest.send_daily(TODAY) == "ya_enviado"
+    assert len(calls) == 1
+
+
+def test_a_failed_send_can_be_retried(conn, monkeypatch):
+    def boom(subject, body):
+        raise RuntimeError("resend caído")
+
+    monkeypatch.setattr(digest, "_send_email", boom)
+    person = a_person(score=1)
+    _set_created_at(person["id"], IN_WINDOW)
+    assert digest.send_daily(TODAY) == "fallido"
+
+    calls = sent(monkeypatch)
+    assert digest.send_daily(TODAY) == "enviado"
+    assert len(calls) == 1
