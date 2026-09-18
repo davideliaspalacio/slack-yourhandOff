@@ -1,4 +1,5 @@
 import json
+import re
 
 from handoff_agent.delivery import card
 
@@ -264,3 +265,61 @@ def test_person_without_full_name_or_company_name_still_gets_a_headline():
     header = next(b for b in blocks if b["type"] == "section")
     assert header["text"]["text"].strip() != ""
     assert "U1" in header["text"]["text"]
+
+
+def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
+    """Ataca cada campo de `person`, `dossier` y `message` a la vez: strings
+    hostiles larguísimos en todos los campos de texto, y strings hostiles
+    (con pinta de número, pero no números) en los campos que deberían ser
+    `int`. Una excepción deliberada: una señal lleva una `fuente` que sí es
+    una URL segura, para comprobar que el único `<...|...>` que sobrevive es
+    el de un enlace validado, no cualquier sintaxis de enlace colada por un
+    campo hostil.
+
+    Recorre el payload entero con `_mrkdwn_texts` en vez de indexar bloques
+    concretos, para que un campo nuevo quede cubierto solo con añadirlo a
+    los fixtures de este test."""
+    hostile_text = "<!channel> <@U1> <#C1|x> & " * 400
+    hostile_number = "50<!channel>"
+    unsafe_fuente = "https://evil.example|hack"
+    safe_fuente = "https://safe.example/a"
+
+    person = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "full_name": hostile_text,
+        "company_name": hostile_text,
+        "slack_user_id": hostile_text,
+    }
+    dossier = {
+        "persona": {"nombre": hostile_text, "cargo": hostile_text},
+        "empresa": {"nombre": hostile_text, "empleados_aprox": hostile_number},
+        "contratacion": {
+            "vacantes_abiertas": hostile_number,
+            "roles_deslocalizables": [hostile_text, hostile_text],
+        },
+        "senales_contexto": [
+            {"hecho": hostile_text, "fuente": unsafe_fuente},
+            {"hecho": hostile_text, "fuente": hostile_text},
+            {"hecho": hostile_text, "fuente": safe_fuente},
+        ],
+        "encaje_handoff": {"puntuacion": hostile_number, "razon": hostile_text},
+        "resumen": hostile_text,
+    }
+    message = {"text": hostile_text, "ts": hostile_text}
+
+    blocks = card.build(person, dossier, "alta", message, "https://slack.com/p1")
+
+    for block in blocks:
+        if block["type"] == "section":
+            assert len(block["text"]["text"]) <= 3000
+        elif block["type"] == "context":
+            for element in block["elements"]:
+                assert len(element["text"]) <= 2000
+
+    for text in _mrkdwn_texts(blocks):
+        assert text != ""
+        assert "<!" not in text
+        assert "<@" not in text
+        assert "<#" not in text
+        for url in re.findall(r"<([^<>|]*)\|[^<>]*>", text):
+            assert card._is_safe_link(url), f"link syntax with an unsafe url: {url!r}"
