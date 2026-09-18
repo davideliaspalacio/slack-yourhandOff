@@ -15,7 +15,7 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 | 1. Fundación | Supabase, ledger de costes, guardarraíles, toolbox MCP | **Hecho** |
 | 2a. Research worker | recolección, síntesis GPT-4.1, seguimiento, CLI `handoff`, `investigar_persona` | **Hecho** |
 | 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Serper (resultados de Google) por delante de SearXNG | **Hecho** |
-| 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | Pendiente |
+| 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | **Hecho** |
 | 4. Panel web | Login, listado, ficha con dossier, costes, ajustes y las tres acciones | **Hecho**, en la rama `feat/panel` |
 
 ## Arrancar en local
@@ -294,6 +294,68 @@ repositorio, con su propia configuración (`railway.web.json`).
 por medio: Railway no expande `$PORT` en un comando así, pero el proceso
 Python sí lo lee él mismo.
 
+## Entrega (Plan 3)
+
+Del dossier guardado a un clic de Anthony: scoring por banda, tarjeta de Slack
+con botones, SMS para lo más caliente y un resumen diario de lo que no
+interrumpió. Corre en tres servicios de Railway, cada uno con su propia
+configuración (ver "Desplegar el worker en Railway", arriba, para los pasos y
+las variables completas de cada uno):
+
+| Servicio | Config | Qué hace | Variables clave |
+|---|---|---|---|
+| Worker | `railway.json` | Vigila el Slack del Founders Club, investiga y entrega: publica la tarjeta y, si la banda es alta, el SMS | `HANDOFF_SLACK_BOT_TOKEN`, `HANDOFF_SLACK_CHANNEL_ID`, `TWILIO_*` |
+| Receptor | `railway.web.json` | Recibe los clics de la tarjeta (`POST /slack/acciones`) y cambia el estado de la persona | `HANDOFF_SLACK_CHANNEL_ID`, `SLACK_SIGNING_SECRET` |
+| Resumen diario | `railway.digest.json` | Cron que manda el email de la mañana (señales bajas, miembros nuevos, gasto) | `RESEND_API_KEY`, `DIGEST_FROM`, `DIGEST_TO` |
+
+### La app de Slack de Handoff
+
+Es una app **distinta** de la que lee el Founders Club: esta escribe, aquella
+solo lee, y no comparten token a propósito (ver la Invariante 3, más abajo).
+
+1. En api.slack.com/apps → *Create New App* → *From scratch*, en el workspace
+   de Handoff (nunca en el del Founders Club).
+2. En *OAuth & Permissions* → **Bot Token Scopes**, añadir `chat:write`. Basta
+   con ese: `chat.getPermalink` (el enlace real que lleva el SMS) no pide
+   ningún scope adicional.
+3. *Install to Workspace* y copiar el **Bot User OAuth Token** (`xoxb-…`) a
+   `HANDOFF_SLACK_BOT_TOKEN`.
+4. Crear el canal donde van a caer las tarjetas y `/invite` al bot ahí dentro.
+5. Copiar el ID de ese canal a `HANDOFF_SLACK_CHANNEL_ID`.
+6. En *Settings* → *Basic Information*, copiar el **Signing Secret** a
+   `SLACK_SIGNING_SECRET`.
+7. En *Features* → **Interactivity & Shortcuts**, activarlo y poner como
+   **Request URL** la del receptor: `https://<dominio-de-railway>/slack/acciones`.
+
+### Twilio
+
+`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` y `TWILIO_TO` (ver
+`.env.example`). Mientras falte cualquiera de las cuatro, el SMS simplemente
+no existe: ni se intenta, ni queda un fallo registrado por cada señal alta.
+
+### Resend
+
+`RESEND_API_KEY`, `DIGEST_FROM` (remitente en un **dominio verificado** en
+Resend -- de lo contrario el envío falla) y `DIGEST_TO` (destinatarios
+separados por comas). Igual que con Twilio, sin las tres el resumen diario no
+hace nada, en vez de fallar cada mañana.
+
+### Límites conocidos
+
+- Una entrega cortada por el kill switch o el tope mensual no se reintenta
+  sola: queda anotada en `agent_actions`, pero hace falta un `handoff` manual
+  o una nueva señal para que esa persona vuelva a tener tarjeta.
+- El tope diario del SMS (`sms_por_dia`, 3 por defecto) se cuenta leyendo
+  `deliveries`, sin ningún candado entre procesos -- correcto solo porque el
+  worker corre con una única réplica (ver `railway.json`, arriba).
+- El resumen diario se protege de reenviarse a sí mismo (marca en
+  `agent_actions` antes de mandar el email), pero no de dos ejecuciones
+  simultáneas: dos crons corriendo a la vez podrían mandar el mismo resumen
+  dos veces. El cron de Railway es uno solo, así que no ocurre en la práctica.
+- El receptor confía en la ventana de reintento de 5 minutos de la firma de
+  Slack (`slack_signature.MAX_AGE_SECONDS`): una petición firmada e
+  interceptada dentro de esos 5 minutos podría repetirse.
+
 ## Panel web (Plan 4)
 
 Next.js en `panel/`. Lee Supabase directamente con la sesión del usuario: no hay
@@ -340,7 +402,7 @@ Romper cualquiera de estas es un bug, no una preferencia:
 ## Comandos
 
 ```bash
-uv run pytest                                   # 428 tests
+uv run pytest                                   # 633 tests
 supabase db reset                               # rehace el esquema desde cero
 docker compose -f docker-compose.searxng.yml logs -f
 ```
@@ -364,5 +426,6 @@ update config set value = 'true'::jsonb where key = 'kill_switch';
 - **Lock por persona en la CLI manual**: `handoff research`/`research-batch` no
   pasan por la cola, así que su propio candado sigue pendiente (ver "Límites
   conocidos" de la ingesta, arriba).
-- **Respuestas en hilos, scoring y permalinks**: fuera de este plan, quedan
-  para el Plan 3.
+- **Respuestas en hilos**: `conversations.replies` sigue sin leerse (ver
+  "Límites conocidos" de la ingesta, arriba); scoring y permalinks ya se
+  resolvieron en el Plan 3 (ver "Entrega (Plan 3)", arriba).
