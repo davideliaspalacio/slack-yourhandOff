@@ -50,3 +50,25 @@ def test_without_a_bot_token_it_refuses_instead_of_guessing(bot, monkeypatch):
 def test_updating_replaces_the_card_in_place(bot):
     slack_writer.update_card("CHANDOFF", "1.0", [{"type": "divider"}], "actualizada")
     assert bot.updated[0]["ts"] == "1.0"
+
+
+def test_updating_refuses_to_write_in_a_founders_club_channel(bot, monkeypatch):
+    """La invariante del proyecto también protege actualización: un canal
+    vigilado no puede ser actualizado, sea cual sea su fuente."""
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "CLOBBERED,C999")
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.update_card("CLOBBERED", "1.0", [{"type": "divider"}], "test")
+    assert bot.updated == []
+
+
+def test_update_normalises_the_channel_by_stripping_and_case(bot, monkeypatch):
+    """El canal puede llegar con espacios o en minúsculas de una fuente ajena,
+    y la comparación debe seguir siendo segura. Se escapullen dos canales
+    vigilados: uno con espacios, otro en minúsculas."""
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "CLOBBERED,c999")
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.update_card("  CLOBBERED  ", "1.0", [{"type": "divider"}], "test")
+    assert bot.updated == []
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.update_card("clobbered", "1.0", [{"type": "divider"}], "test")
+    assert bot.updated == []

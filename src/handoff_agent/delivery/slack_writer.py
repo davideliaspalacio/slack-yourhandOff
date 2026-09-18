@@ -10,14 +10,11 @@ de Handoff — nunca se reutiliza ni se cae de vuelta al token de lectura.
 
 from __future__ import annotations
 
-import logging
 from functools import lru_cache
 
 from slack_sdk import WebClient
 
 from ..config import Settings, load_settings
-
-logger = logging.getLogger(__name__)
 
 
 class SlackWriteRefused(RuntimeError):
@@ -40,10 +37,13 @@ def _client() -> WebClient:
 def _guard_target_channel(channel: str | None, settings: Settings) -> str:
     if not channel:
         raise SlackWriteRefused("falta el canal de destino")
-    if channel in settings.slack_channel_ids:
-        raise SlackWriteRefused(
-            f"{channel} es un canal vigilado del Founders Club: no se escribe allí"
-        )
+    # Normalizar: espacios en blanco y comparación insensible a mayúsculas
+    channel_normalized = channel.strip().upper()
+    for watched_id in settings.slack_channel_ids:
+        if channel_normalized == watched_id.upper():
+            raise SlackWriteRefused(
+                f"{channel} es un canal vigilado del Founders Club: no se escribe allí"
+            )
     return channel
 
 

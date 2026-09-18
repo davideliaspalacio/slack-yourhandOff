@@ -1184,6 +1184,28 @@ def test_without_a_bot_token_it_refuses_instead_of_guessing(bot, monkeypatch):
 def test_updating_replaces_the_card_in_place(bot):
     slack_writer.update_card("CHANDOFF", "1.0", [{"type": "divider"}], "actualizada")
     assert bot.updated[0]["ts"] == "1.0"
+
+
+def test_updating_refuses_to_write_in_a_founders_club_channel(bot, monkeypatch):
+    """La invariante del proyecto también protege actualización: un canal
+    vigilado no puede ser actualizado, sea cual sea su fuente."""
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "CLOBBERED,C999")
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.update_card("CLOBBERED", "1.0", [{"type": "divider"}], "test")
+    assert bot.updated == []
+
+
+def test_update_normalises_the_channel_by_stripping_and_case(bot, monkeypatch):
+    """El canal puede llegar con espacios o en minúsculas de una fuente ajena,
+    y la comparación debe seguir siendo segura. Se escapullen dos canales
+    vigilados: uno con espacios, otro en minúsculas."""
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "CLOBBERED,c999")
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.update_card("  CLOBBERED  ", "1.0", [{"type": "divider"}], "test")
+    assert bot.updated == []
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.update_card("clobbered", "1.0", [{"type": "divider"}], "test")
+    assert bot.updated == []
 ```
 
 - [ ] **Step 2: Ejecutar y ver fallar**
@@ -1197,53 +1219,77 @@ Expected: FAIL, `ModuleNotFoundError`
 # src/handoff_agent/delivery/slack_writer.py
 """El único sitio del código que escribe en Slack, y solo en el de Handoff.
 
-El lector del Founders Club y este escritor son clases distintas con tokens
-distintos a propósito: así "el agente nunca escribe en el Founders Club" es
-algo que impone el código, no una intención. Antes de publicar se comprueba
-que el canal de destino no sea uno de los vigilados.
+El lector del Founders Club y este escritor son clases/módulos distintos con
+tokens distintos a propósito: así "el agente nunca escribe en el Founders
+Club" es algo que impone el código, no una intención. Antes de publicar o
+actualizar una tarjeta se comprueba que el canal de destino no sea uno de los
+vigilados (`Settings.slack_channel_ids`) y que exista un token de bot propio
+de Handoff — nunca se reutiliza ni se cae de vuelta al token de lectura.
 """
 
 from __future__ import annotations
 
-import logging
 from functools import lru_cache
 
 from slack_sdk import WebClient
 
-from ..config import load_settings
-
-logger = logging.getLogger(__name__)
+from ..config import Settings, load_settings
 
 
 class SlackWriteRefused(RuntimeError):
     """Falta el token del bot, falta el canal, o el destino es un canal vigilado."""
 
 
+def _require_bot_token(settings: Settings) -> str:
+    if not settings.handoff_bot_token:
+        raise SlackWriteRefused("falta HANDOFF_SLACK_BOT_TOKEN")
+    return settings.handoff_bot_token
+
+
 @lru_cache(maxsize=1)
 def _client() -> WebClient:
     settings = load_settings()
-    if not settings.handoff_bot_token:
-        raise SlackWriteRefused("falta HANDOFF_SLACK_BOT_TOKEN")
-    return WebClient(token=settings.handoff_bot_token, timeout=settings.http_timeout_seconds)
+    token = _require_bot_token(settings)
+    return WebClient(token=token, timeout=settings.http_timeout_seconds)
 
 
-def _target_channel() -> str:
-    settings = load_settings()
-    channel = settings.handoff_channel_id
+def _guard_target_channel(channel: str | None, settings: Settings) -> str:
     if not channel:
-        raise SlackWriteRefused("falta HANDOFF_SLACK_CHANNEL_ID")
-    if channel in settings.slack_channel_ids:
-        raise SlackWriteRefused(f"{channel} es un canal vigilado del Founders Club: no se escribe allí")
+        raise SlackWriteRefused("falta el canal de destino")
+    # Normalizar: espacios en blanco y comparación insensible a mayúsculas
+    channel_normalized = channel.strip().upper()
+    for watched_id in settings.slack_channel_ids:
+        if channel_normalized == watched_id.upper():
+            raise SlackWriteRefused(
+                f"{channel} es un canal vigilado del Founders Club: no se escribe allí"
+            )
     return channel
 
 
 def post_card(blocks: list[dict], text: str) -> tuple[str, str]:
-    channel = _target_channel()
+    """Publica una tarjeta nueva en el canal de Handoff configurado.
+
+    Las comprobaciones de token y canal se hacen aquí, no solo dentro de
+    `_client()`: en los tests `_client` se sustituye por un doble que no las
+    aplicaría, y un token o un canal mal configurados tienen que impedir la
+    publicación pase lo que pase con el cliente real.
+    """
+    settings = load_settings()
+    _require_bot_token(settings)
+    channel = _guard_target_channel(settings.handoff_channel_id, settings)
     response = _client().chat_postMessage(channel=channel, blocks=blocks, text=text)
     return response["channel"], response["ts"]
 
 
 def update_card(channel: str, ts: str, blocks: list[dict], text: str) -> None:
+    """Actualiza en el sitio una tarjeta ya publicada.
+
+    Sujeta a las mismas comprobaciones que `post_card`: un `channel` que
+    apunte al Founders Club, o que llegue vacío, se rechaza igual.
+    """
+    settings = load_settings()
+    _require_bot_token(settings)
+    _guard_target_channel(channel, settings)
     _client().chat_update(channel=channel, ts=ts, blocks=blocks, text=text)
 ```
 
