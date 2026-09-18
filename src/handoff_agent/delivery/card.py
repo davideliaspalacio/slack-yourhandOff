@@ -51,11 +51,11 @@ EMOJI = {"alta": "🔥", "media": "👀", "baja": "📋"}
 # por bloque `section`):
 #   emoji + " *SEÑAL " + banda + "*"    banda es interna (alta/media/baja),
 #                                       longitud fija y acotada             25
-#   "· encaje " + NUM_CHARS + "/3"                  9 + 20 + 2       =   31
+#   "· encaje " + NUM_CHARS + "/3"                  10 + 20 + 2      =   32
 #   salto de línea                                                        1
 #   "*" + NAME_CHARS + "*"                          2 + 160          =  162
 #   " — " + ROLE_CHARS + ", " + COMPANY_CHARS    3 + 160 + 2 + 160   =  325
-#   " (~" + NUM_CHARS + " personas)"                4 + 20 + 10      =   34
+#   " (~" + NUM_CHARS + " personas)"                3 + 20 + 10      =   33
 #                                                                --------------
 #                                                                total    578
 # 578 < 3000 con margen de sobra.

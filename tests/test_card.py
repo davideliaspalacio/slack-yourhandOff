@@ -267,6 +267,27 @@ def test_person_without_full_name_or_company_name_still_gets_a_headline():
     assert "U1" in header["text"]["text"]
 
 
+def _assert_card_under_limits_no_syntax_leak(blocks):
+    """Helper: Assert that a card doesn't exceed Slack limits or leak mrkdwn syntax.
+
+    Extracted from test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit
+    to be reused in multiple test cases that probe different fallback paths."""
+    for block in blocks:
+        if block["type"] == "section":
+            assert len(block["text"]["text"]) <= 3000
+        elif block["type"] == "context":
+            for element in block["elements"]:
+                assert len(element["text"]) <= 2000
+
+    for text in _mrkdwn_texts(blocks):
+        assert text != ""
+        assert "<!" not in text
+        assert "<@" not in text
+        assert "<#" not in text
+        for url in re.findall(r"<([^<>|]*)\|[^<>]*>", text):
+            assert card._is_safe_link(url), f"link syntax with an unsafe url: {url!r}"
+
+
 def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
     """Ataca cada campo de `person`, `dossier` y `message` a la vez: strings
     hostiles larguísimos en todos los campos de texto, y strings hostiles
@@ -308,18 +329,62 @@ def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
     message = {"text": hostile_text, "ts": hostile_text}
 
     blocks = card.build(person, dossier, "alta", message, "https://slack.com/p1")
+    _assert_card_under_limits_no_syntax_leak(blocks)
 
-    for block in blocks:
-        if block["type"] == "section":
-            assert len(block["text"]["text"]) <= 3000
-        elif block["type"] == "context":
-            for element in block["elements"]:
-                assert len(element["text"]) <= 2000
 
-    for text in _mrkdwn_texts(blocks):
-        assert text != ""
-        assert "<!" not in text
-        assert "<@" not in text
-        assert "<#" not in text
-        for url in re.findall(r"<([^<>|]*)\|[^<>]*>", text):
-            assert card._is_safe_link(url), f"link syntax with an unsafe url: {url!r}"
+def test_fallback_to_person_full_name_when_persona_missing_is_escaped():
+    """When persona and empresa are missing, person.full_name and person.company_name
+    are used for the header. They must be escaped and bounded even with hostile payloads."""
+    hostile_text = "<!channel> <@U1> <#C1|x> & " * 400
+
+    person = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "full_name": hostile_text,
+        "company_name": hostile_text,
+        "slack_user_id": "U1",
+    }
+    dossier = {
+        "persona": None,
+        "empresa": None,
+        "contratacion": None,
+        "senales_contexto": [],
+        "encaje_handoff": {"puntuacion": 1, "razon": "test"},
+        "resumen": None,
+    }
+
+    blocks = card.build(person, dossier, "alta", None, None)
+    _assert_card_under_limits_no_syntax_leak(blocks)
+
+    # Prove fallback full_name was rendered by checking for escaped hostile payload.
+    # Use a small distinctive substring that's guaranteed to survive the NAME_CHARS cap.
+    text = blocks_text(blocks)
+    assert "&lt;!channel&gt;" in text, "Fallback full_name not rendered in card"
+
+
+def test_fallback_to_person_slack_user_id_when_full_name_missing_is_escaped():
+    """When full_name and persona are missing, person.slack_user_id is used as the
+    name. It must be escaped and bounded even with hostile payloads."""
+    hostile_text = "<!channel> <@U1> <#C1|x> & " * 400
+
+    person = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "full_name": None,
+        "company_name": hostile_text,
+        "slack_user_id": hostile_text,
+    }
+    dossier = {
+        "persona": None,
+        "empresa": None,
+        "contratacion": None,
+        "senales_contexto": [],
+        "encaje_handoff": {"puntuacion": 1, "razon": "test"},
+        "resumen": None,
+    }
+
+    blocks = card.build(person, dossier, "alta", None, None)
+    _assert_card_under_limits_no_syntax_leak(blocks)
+
+    # Prove fallback slack_user_id was rendered by checking for escaped hostile payload.
+    # Use a small distinctive substring that's guaranteed to survive the NAME_CHARS cap.
+    text = blocks_text(blocks)
+    assert "&lt;!channel&gt;" in text, "Fallback slack_user_id not rendered in card"
