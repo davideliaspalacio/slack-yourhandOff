@@ -16,8 +16,31 @@ from zoneinfo import ZoneInfo
 from .. import db, db_config, guards, ledger
 from ..config import load_settings
 from . import slack_writer
+from .deliver import NO_ALERT_STATES
 
 logger = logging.getLogger(__name__)
+
+# Un SMS de 160 caracteres GSM es un segmento; con tildes (UCS-2) son 70. El
+# precio del ledger es por segmento, así que nombre y empresa -- texto de un
+# perfil ajeno -- se recortan para no partir el mensaje ni el coste.
+NAME_CHARS = 40
+COMPANY_CHARS = 30
+
+
+def _configured(settings) -> bool:
+    return all(
+        (
+            settings.twilio_account_sid,
+            settings.twilio_auth_token,
+            settings.twilio_from,
+            settings.twilio_to,
+        )
+    )
+
+
+def _short(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def _send(to: str, body: str) -> str:
@@ -81,6 +104,19 @@ def maybe_send(prospect_id: str, band: str, now: datetime | None = None) -> bool
     if band != "alta":
         return False
 
+    settings = load_settings()
+    if not _configured(settings):
+        # Mientras no haya número de Twilio, el SMS simplemente no existe: ni
+        # intento, ni fallo registrado por cada señal alta.
+        logger.info("sms sin configurar (faltan variables TWILIO_*), se omite")
+        return False
+
+    person = db.fetch_one("select * from prospects where id = %s", (prospect_id,))
+    if person is None or person["state"] in NO_ALERT_STATES:
+        # deliver_for ya filtra, pero la regla vive también aquí: una persona
+        # descartada no recibe SMS venga de donde venga la llamada.
+        return False
+
     now = now or datetime.now(tz=ZoneInfo("UTC"))
     if not _within_hours(now):
         logger.info("sms fuera de horario, se omite")
@@ -89,16 +125,14 @@ def maybe_send(prospect_id: str, band: str, now: datetime | None = None) -> bool
         logger.info("sms: tope diario alcanzado")
         return False
 
-    person = db.fetch_one("select * from prospects where id = %s", (prospect_id,))
     link = _card_link(prospect_id)
 
-    body = f"Señal alta: {person['full_name'] or person['slack_user_id']}"
+    body = f"Señal alta: {_short(person['full_name'] or person['slack_user_id'], NAME_CHARS)}"
     if person["company_name"]:
-        body += f" ({person['company_name']})"
+        body += f" ({_short(person['company_name'], COMPANY_CHARS)})"
     if link:
         body += f" {link}"
 
-    settings = load_settings()
     try:
         sid = _send(settings.twilio_to, body)
     except Exception as exc:  # noqa: BLE001 - un SMS caído no tumba el pipeline

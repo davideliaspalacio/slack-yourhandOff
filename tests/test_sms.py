@@ -1,6 +1,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from handoff_agent import db, ledger
 from handoff_agent.delivery import slack_writer, sms
 from tests.test_deliver import a_person
@@ -8,6 +10,16 @@ from tests.test_deliver import a_person
 NY = ZoneInfo("America/New_York")
 MIDDAY = datetime(2026, 9, 16, 12, 0, tzinfo=NY)
 NIGHT = datetime(2026, 9, 16, 23, 30, tzinfo=NY)
+
+
+@pytest.fixture(autouse=True)
+def twilio_configured(monkeypatch):
+    """conftest borra las TWILIO_*; aquí se ponen valores falsos para que
+    maybe_send llegue a _send, que cada test sustituye."""
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACtest")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "not-a-real-token")
+    monkeypatch.setenv("TWILIO_FROM", "+15550000000")
+    monkeypatch.setenv("TWILIO_TO", "+15551111111")
 
 
 def sent(monkeypatch):
@@ -53,13 +65,84 @@ def test_nothing_is_sent_at_night(conn, monkeypatch):
     assert calls == []
 
 
-def test_the_daily_cap_holds(conn, monkeypatch):
-    calls = sent(monkeypatch)
+def four_people() -> list[str]:
+    """a_person() siempre usa U1; se renombra antes de crear la siguiente
+    para que sean cuatro personas distintas."""
+    ids = []
     for i in range(4):
         person = a_person()
-        db.execute("update prospects set slack_user_id = %s where id = %s", (f"U{i}", person["id"]))
-        sms.maybe_send(person["id"], "alta", now=MIDDAY)
+        db.execute(
+            "update prospects set slack_user_id = %s where id = %s", (f"U-{i}", person["id"])
+        )
+        ids.append(person["id"])
+    return ids
+
+
+def test_the_daily_cap_holds_across_different_people(conn, monkeypatch):
+    calls = sent(monkeypatch)
+    ids = four_people()
+    assert len(set(ids)) == 4
+    results = [sms.maybe_send(pid, "alta", now=MIDDAY) for pid in ids]
+    assert results == [True, True, True, False]
     assert len(calls) == 3
+
+
+def test_the_daily_cap_resets_at_new_york_midnight_not_utc(conn, monkeypatch):
+    """20:30 en Nueva York ya es el día siguiente en UTC. Los tres SMS de esa
+    tarde siguen contando para ese día; a las 07:00 del día siguiente hay cupo."""
+    calls = sent(monkeypatch)
+    ids = four_people()
+    evening = datetime(2026, 9, 16, 20, 30, tzinfo=NY)
+    for pid in ids[:3]:
+        db.execute(
+            "insert into deliveries (prospect_id, kind, band, created_at) "
+            "values (%s, 'sms', 'alta', %s)",
+            (pid, evening),
+        )
+    assert sms.maybe_send(ids[3], "alta", now=datetime(2026, 9, 16, 20, 45, tzinfo=NY)) is False
+    assert sms.maybe_send(ids[3], "alta", now=datetime(2026, 9, 17, 7, 0, tzinfo=NY)) is True
+    assert len(calls) == 1
+
+
+def test_quiet_hours_edges(conn, monkeypatch):
+    calls = sent(monkeypatch)
+    person = a_person()
+    assert (
+        sms.maybe_send(person["id"], "alta", now=datetime(2026, 9, 16, 21, 0, tzinfo=NY)) is False
+    )
+    assert (
+        sms.maybe_send(person["id"], "alta", now=datetime(2026, 9, 16, 6, 59, tzinfo=NY)) is False
+    )
+    assert sms.maybe_send(person["id"], "alta", now=datetime(2026, 9, 16, 7, 0, tzinfo=NY)) is True
+    assert len(calls) == 1
+
+
+def test_nothing_is_sent_while_twilio_is_not_configured(conn, monkeypatch):
+    calls = sent(monkeypatch)
+    monkeypatch.delenv("TWILIO_TO")
+    person = a_person()
+    assert sms.maybe_send(person["id"], "alta", now=MIDDAY) is False
+    assert calls == []
+    # No es un fallo: no queda sms_fallido por cada señal alta.
+    assert db.fetch_one("select count(*) as n from agent_actions")["n"] == 0
+
+
+def test_a_discarded_person_never_gets_an_sms(conn, monkeypatch):
+    calls = sent(monkeypatch)
+    person = a_person(state="descartado")
+    assert sms.maybe_send(person["id"], "alta", now=MIDDAY) is False
+    assert calls == []
+
+
+def test_a_long_third_party_name_is_trimmed(conn, monkeypatch):
+    calls = sent(monkeypatch)
+    person = a_person()
+    db.execute(
+        "update prospects set full_name = %s, company_name = %s where id = %s",
+        ("N" * 500, "C" * 500, person["id"]),
+    )
+    assert sms.maybe_send(person["id"], "alta", now=MIDDAY) is True
+    assert len(calls[0][1]) < 100
 
 
 def test_every_sms_lands_in_the_cost_ledger(conn, monkeypatch):
