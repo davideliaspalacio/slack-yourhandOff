@@ -15,8 +15,8 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 | 1. Fundación | Supabase, ledger de costes, guardarraíles, toolbox MCP | **Hecho** |
 | 2a. Research worker | recolección, síntesis GPT-4.1, seguimiento, CLI `handoff`, `investigar_persona` | **Hecho** |
 | 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Serper (resultados de Google) por delante de SearXNG | **Hecho** |
-| 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | **Hecho** |
-| 4. Panel web | Login, listado, ficha con dossier, costes, ajustes y las tres acciones | **Hecho**, en la rama `feat/panel` |
+| 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | **Código hecho**; falta conectar la app de Slack, Twilio y Resend |
+| 4. Panel web | Login, listado, ficha con dossier, costes, ajustes y las tres acciones | **Hecho** en local; falta desplegarlo en Vercel |
 
 ## Arrancar en local
 
