@@ -1383,6 +1383,24 @@ git commit -m "feat: bot de Handoff que publica tarjetas y se niega a tocar el F
    sí), un post fallido que libera la reserva para un segundo intento, y un
    post exitoso cuyo `update` final falla pero que igual impide una segunda
    tarjeta.
+4. **Corrección posterior: el delete de la reserva fallida no puede escapar.**
+   Cuando el `post_card` falla, el código intenta liberar la reserva con
+   `delete from deliveries where id = ...`. Si ese delete también falla (un
+   blip de base de datos justo en el manejador), la excepción escapaba de
+   `deliver_for`, nunca se registraba `entrega_fallida`, y la reserva quedaba
+   atascada para siempre. La solución:
+   - El delete se envuelve en su propio `try/except`: su fallo nunca puede
+     propagarse.
+   - `entrega_fallida` SIEMPRE se registra después de un `post_card` fallido,
+     haya o no fallado el delete.
+   - Si el delete falla, además se registra un `entrega_reserva_atascada` con
+     el id de la entrega, la versión del dossier, el motivo del fallo del
+     delete, y se registra con `logger.exception` para que sea visible y pueda
+     limpiarse a mano.
+   - `deliver_for` devuelve `None` en ambos casos.
+   `tests/test_deliver.py` incluye un test que inyecta ambos fallos (post Y
+   delete) e verifica que no escapa ninguna excepción, se registran los dos
+   `agent_actions`, y la reserva sigue viva en la tabla.
 
 - [ ] **Step 1: Escribir el test**
 

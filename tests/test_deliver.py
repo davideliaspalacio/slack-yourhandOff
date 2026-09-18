@@ -265,3 +265,51 @@ def test_a_successful_post_whose_update_fails_still_prevents_a_second_post(
     assert deliver.deliver_for(person["id"], FakeReader()) is None
     assert posted == []
     assert db.fetch_one("select count(*) as n from deliveries")["n"] == 1
+
+
+def test_post_fails_and_delete_fails_records_both_actions_and_reservation_survives(
+    conn, monkeypatch, caplog
+):
+    """Cuando el post a Slack falla Y el delete de la reserva también falla
+    (un blip de base de datos justo en el manejador), la entrega no puede
+    propagarse como excepción. Se registran tanto entrega_fallida como
+    entrega_reserva_atascada, la reserva sigue viva (nunca se borró), y se
+    registra en el log."""
+
+    def post_fails(blocks, text):
+        raise RuntimeError("slack caído")
+
+    monkeypatch.setattr(deliver.slack_writer, "post_card", post_fails)
+    person = a_person()
+
+    real_execute = deliver.db.execute
+
+    def flaky_execute(sql, params=()):
+        if sql.strip().startswith("delete from deliveries"):
+            raise RuntimeError("db caída en el delete")
+        return real_execute(sql, params)
+
+    monkeypatch.setattr(deliver.db, "execute", flaky_execute)
+
+    with caplog.at_level("ERROR"):
+        assert deliver.deliver_for(person["id"], FakeReader()) is None
+
+    # No exception escaped
+    assert "db caída en el delete" not in caplog.text or "exception" in caplog.text.lower()
+
+    # Both actions recorded
+    entrega_fallida = db.fetch_one(
+        "select action from agent_actions where action = 'entrega_fallida'"
+    )
+    assert entrega_fallida is not None
+
+    entrega_atascada = db.fetch_one(
+        "select action, payload from agent_actions where action = 'entrega_reserva_atascada'"
+    )
+    assert entrega_atascada is not None
+
+    # Reservation still alive
+    reservation = db.fetch_one(
+        "select count(*) as n from deliveries where prospect_id = %s", (person["id"],)
+    )
+    assert reservation["n"] == 1

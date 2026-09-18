@@ -95,7 +95,25 @@ def deliver_for(prospect_id: str, reader) -> str | None:
         # tumbarlo. Se libera la reserva para que un intento posterior sí
         # pueda entregar esta versión.
         logger.exception("no se pudo publicar la tarjeta")
-        db.execute("delete from deliveries where id = %s", (reservation["id"],))
+
+        # Intenta liberar la reserva. Si el delete también falla (blip de
+        # base de datos), eso nunca puede propagarse: la entrega ya falló,
+        # y la reserva se queda atascada. Se registra para limpiar a mano.
+        try:
+            db.execute("delete from deliveries where id = %s", (reservation["id"],))
+        except Exception as delete_exc:
+            logger.exception("no se pudo liberar la reserva de entrega %s", reservation["id"])
+            ledger.record_action(
+                "entrega_reserva_atascada",
+                {
+                    "motivo": f"{type(delete_exc).__name__}: {delete_exc}",
+                    "delivery_id": str(reservation["id"]),
+                    "dossier_version": dossier["version"],
+                },
+                prospect_id=prospect_id,
+            )
+
+        # Siempre registra el fallo de publicación, haya o no fallado el delete.
         ledger.record_action(
             "entrega_fallida",
             {"motivo": f"{type(exc).__name__}: {exc}"},
