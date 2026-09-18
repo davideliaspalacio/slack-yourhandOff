@@ -180,6 +180,48 @@ def test_delivery_failing_does_not_turn_a_finished_job_into_a_failure(conn, read
     assert job()["status"] == "hecho"
 
 
+def test_a_high_band_delivery_triggers_an_sms(conn, reader, monkeypatch):
+    """Task 7: el SMS solo se dispara cuando `deliver_for` de verdad publicó
+    la tarjeta y la banda resultante es 'alta'."""
+    queue.enqueue("U1", "mensaje")
+    stub_research(monkeypatch)
+    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: "alta")
+    seen = []
+    monkeypatch.setattr(
+        runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
+    )
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen == [("pid", "alta")]
+
+
+def test_a_media_or_baja_delivery_never_triggers_an_sms(conn, reader, monkeypatch):
+    queue.enqueue("U1", "mensaje")
+    stub_research(monkeypatch)
+    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: "media")
+    seen = []
+    monkeypatch.setattr(
+        runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
+    )
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen == []
+
+
+def test_an_sms_failure_does_not_turn_a_finished_job_into_a_failure(conn, reader, monkeypatch):
+    """Corrección 4: el SMS corre dentro de la misma protección que la
+    tarjeta -- un problema de Twilio nunca puede tumbar un `hecho`."""
+    queue.enqueue("U1", "mensaje")
+    stub_research(monkeypatch)
+    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: "alta")
+
+    def boom(prospect_id, band):
+        raise RuntimeError("twilio caído")
+
+    monkeypatch.setattr(runner.sms, "maybe_send", boom)
+    result = runner.run_next_job(reader)
+    assert result.status == "hecho"
+    assert job()["status"] == "hecho"
+
+
 def test_a_stolen_job_that_would_have_retried_is_reported_as_descartado(conn, reader, monkeypatch):
     queue.enqueue("U1", "mensaje")
     stub_research(monkeypatch, error=RuntimeError("SearXNG caído"))

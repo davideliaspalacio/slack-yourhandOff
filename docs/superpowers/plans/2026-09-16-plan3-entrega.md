@@ -1840,6 +1840,54 @@ git add src/handoff_agent/delivery/sms.py src/handoff_agent/config.py pyproject.
 git commit -m "feat: SMS de banda alta con tope diario y horario"
 ```
 
+**Correcciones aplicadas durante la implementación** (el código de arriba es el
+punto de partida del plan; esto es lo que cambió y por qué):
+
+1. **El enlace del SMS es un permalink real, no una URL armada a mano.**
+   `https://app.slack.com/client/{channel}/{ts}` no abre la tarjeta. Se añadió
+   `slack_writer.card_permalink(channel, ts) -> str | None`, que llama a
+   `chat.getPermalink` con el cliente de bot de Handoff. Es una lectura: no
+   pasa por `_guard_target_channel` (no puede escribir en ningún sitio), pero
+   sigue exigiendo `HANDOFF_SLACK_BOT_TOKEN` como el resto del módulo y se
+   niega (`SlackWriteRefused`) si falta. Cualquier otro fallo de la llamada
+   (canal borrado, ts inválido, Slack caído) se traga y devuelve `None`.
+   `sms.maybe_send` pide el permalink solo si ya existe una tarjeta de Slack
+   entregada para esa persona, y trata tanto el `None` como un
+   `SlackWriteRefused` de la misma forma: el SMS sale sin enlace.
+
+2. **El precio vive en `Settings`, no en una constante del módulo.** Se quitó
+   `PRICE_PER_SMS = Decimal("0.0079")` de `sms.py` y se añadió
+   `price_twilio_per_sms: float` a `Settings` (default `0.0079`, variable
+   `PRICE_TWILIO_PER_SMS`), documentada en `.env.example` junto al resto de
+   precios (`PRICE_SERPER_PER_QUERY`, `PRICE_INPUT_PER_M`...).
+
+3. **Las paradas del sistema cortan el SMS igual que cortan el research y la
+   tarjeta.** `maybe_send` comprueba `guards.check_kill_switch()` y
+   `guards.check_monthly_budget()` como lo primero que hace, antes de mirar
+   siquiera la banda; si cualquiera de las dos salta, no se envía nada, se
+   registra una fila `agent_actions` con acción `sms_detenido` (mismo patrón
+   que `entrega_detenida` en `deliver.py`) y devuelve `False` sin propagar la
+   excepción.
+
+4. **Wiring en `research_runner.py`.** El plan original solo mencionaba "el
+   SMS se engancha aquí en la Task 7" sin código. Quedó así: dentro del mismo
+   `try/except` que ya protegía `deliver_for` (para que un problema de
+   Twilio nunca pueda convertir un `hecho` en un reintento o un fallo), se
+   captura la banda que devuelve `deliver_for` y solo si es `"alta"` se llama
+   a `sms.maybe_send(prospect_id, band)`.
+
+Además, sin corrección de fondo pero necesario para que lo de arriba
+funcionara: `twilio` no estaba instalado (`uv add twilio`, actualiza
+`pyproject.toml` y `uv.lock`), se importa perezosamente dentro de `_send`
+igual que en el plan; las filas `deliveries` de tipo `sms` pueden llevar
+`dossier_version` nulo (solo las de `slack` lo exigen, por el check existente
+`deliveries_slack_has_version`); `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+`TWILIO_FROM` y `TWILIO_TO` se añadieron a `ENV_THAT_MUST_NOT_LEAK` en
+`tests/conftest.py`; y un fallo de Twilio nunca registra `str(exc)` ni la
+petición completa (solo `type(exc).__name__`, tanto en el log como en el
+ledger) porque no hay forma de garantizar que el mensaje de error de Twilio
+nunca incluya el número de destino o el cuerpo enviado.
+
 ---
 
 ### Task 8: Email diario de resumen

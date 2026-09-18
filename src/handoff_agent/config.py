@@ -41,6 +41,11 @@ class Settings:
     handoff_bot_token: str | None
     handoff_channel_id: str | None
     slack_signing_secret: str | None
+    twilio_account_sid: str | None
+    twilio_auth_token: str | None
+    twilio_from: str | None
+    twilio_to: str | None
+    price_twilio_per_sms: float
 
 
 def _required(name: str) -> str:
@@ -80,4 +85,12 @@ def load_settings() -> Settings:
         handoff_bot_token=os.environ.get("HANDOFF_SLACK_BOT_TOKEN") or None,
         handoff_channel_id=os.environ.get("HANDOFF_SLACK_CHANNEL_ID") or None,
         slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET") or None,
+        twilio_account_sid=os.environ.get("TWILIO_ACCOUNT_SID") or None,
+        twilio_auth_token=os.environ.get("TWILIO_AUTH_TOKEN") or None,
+        twilio_from=os.environ.get("TWILIO_FROM") or None,
+        twilio_to=os.environ.get("TWILIO_TO") or None,
+        # Verificado contra twilio.com/en-us/sms/pricing (SMS saliente en EE. UU.)
+        # el 2026-09-16. Vive en el entorno como el resto de precios (Serper,
+        # tokens de OpenAI): así se puede corregir sin tocar código.
+        price_twilio_per_sms=float(os.environ.get("PRICE_TWILIO_PER_SMS", "0.0079")),
     )

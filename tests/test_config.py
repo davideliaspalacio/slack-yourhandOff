@@ -147,3 +147,29 @@ def test_langfuse_base_url_defaults_to_the_eu_cloud(monkeypatch):
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
     monkeypatch.delenv("LANGFUSE_HOST", raising=False)
     assert load_settings().langfuse_base_url == "https://cloud.langfuse.com"
+
+
+def test_twilio_credentials_default_to_none(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    for name in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM", "TWILIO_TO"):
+        monkeypatch.delenv(name, raising=False)
+    settings = load_settings()
+    assert settings.twilio_account_sid is None
+    assert settings.twilio_auth_token is None
+    assert settings.twilio_from is None
+    assert settings.twilio_to is None
+
+
+def test_price_twilio_per_sms_defaults_to_0_0079(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("PRICE_TWILIO_PER_SMS", raising=False)
+    assert load_settings().price_twilio_per_sms == 0.0079
+
+
+def test_price_twilio_per_sms_reads_the_environment(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PRICE_TWILIO_PER_SMS", "0.02")
+    assert load_settings().price_twilio_per_sms == 0.02

@@ -12,6 +12,7 @@ dependencies = [
     "langfuse>=2.57",
     "python-dotenv>=1.0",
     "slack-sdk>=3.44",
+    "twilio>=9.11.1",
 ]
 
 [dependency-groups]

@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from ..delivery import sms
 from ..delivery.deliver import deliver_for
 from ..research import worker
 from ..slack_client import SlackAuthFailed, SlackUnavailable
@@ -106,14 +107,17 @@ def run_next_job(reader) -> RunResult | None:
     ):
         return _discarded(job, "completar", uid, outcome.status)
 
-    # El SMS se engancha aquí en la Task 7; esta tarea solo publica la tarjeta.
     # La investigación ya quedó pagada y guardada (complete() ya corrió), así
-    # que cualquier fallo de entrega -- Slack caído, un error de base de
-    # datos, un bug -- se registra y se traga: nunca puede convertir un
-    # research terminado en un reintento o un fallo.
+    # que cualquier fallo de entrega -- Slack caído, Twilio caído, un error de
+    # base de datos, un bug -- se registra y se traga: nunca puede convertir
+    # un research terminado en un reintento o un fallo. El SMS de la Task 7
+    # corre dentro de la misma protección, justo después de la tarjeta, y
+    # solo cuando la tarjeta de verdad salió con banda alta.
     if outcome.status in DELIVERABLE_STATUSES and outcome.version:
         try:
-            deliver_for(outcome.prospect_id, reader)
+            band = deliver_for(outcome.prospect_id, reader)
+            if band == "alta":
+                sms.maybe_send(outcome.prospect_id, band)
         except Exception:
             # logger.exception ya evita que ruff lo marque como "except" ciego.
             logger.exception("run_next_job: la entrega falló tras completar la tarea %s", job["id"])

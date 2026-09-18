@@ -10,11 +10,14 @@ de Handoff — nunca se reutiliza ni se cae de vuelta al token de lectura.
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 
 from slack_sdk import WebClient
 
 from ..config import Settings, load_settings
+
+logger = logging.getLogger(__name__)
 
 
 class SlackWriteRefused(RuntimeError):
@@ -60,6 +63,27 @@ def post_card(blocks: list[dict], text: str) -> tuple[str, str]:
     channel = _guard_target_channel(settings.handoff_channel_id, settings)
     response = _client().chat_postMessage(channel=channel, blocks=blocks, text=text)
     return response["channel"], response["ts"]
+
+
+def card_permalink(channel: str, ts: str) -> str | None:
+    """El enlace real de una tarjeta ya publicada -- lo que de verdad la abre.
+
+    A diferencia de `post_card`/`update_card`, esto es una lectura: no puede
+    escribir en el Founders Club, así que no pasa por `_guard_target_channel`.
+    Sigue exigiendo el token de bot propio de Handoff, igual que el resto del
+    módulo -- nunca se cae al token de lectura del Founders Club. Cualquier
+    fallo de la llamada (canal borrado, ts inválido, Slack caído) se traga y
+    devuelve None: quien la use (el SMS de la Task 7) tiene que poder salir
+    sin enlace antes que no salir en absoluto.
+    """
+    settings = load_settings()
+    _require_bot_token(settings)
+    try:
+        response = _client().chat_getPermalink(channel=channel, message_ts=ts)
+        return response["permalink"]
+    except Exception:
+        logger.exception("no se pudo obtener el permalink de %s/%s", channel, ts)
+        return None
 
 
 def update_card(channel: str, ts: str, blocks: list[dict], text: str) -> None:

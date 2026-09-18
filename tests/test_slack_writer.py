@@ -6,6 +6,8 @@ from handoff_agent.delivery import slack_writer
 class FakeBot:
     def __init__(self):
         self.posted, self.updated = [], []
+        self.permalink = "https://acme.slack.com/archives/CHANDOFF/p1726000001000200"
+        self.permalink_error: Exception | None = None
 
     def chat_postMessage(self, **kwargs):
         self.posted.append(kwargs)
@@ -14,6 +16,11 @@ class FakeBot:
     def chat_update(self, **kwargs):
         self.updated.append(kwargs)
         return {"ok": True}
+
+    def chat_getPermalink(self, **kwargs):
+        if self.permalink_error:
+            raise self.permalink_error
+        return {"ok": True, "permalink": self.permalink}
 
 
 @pytest.fixture
@@ -72,3 +79,35 @@ def test_update_normalises_the_channel_by_stripping_and_case(bot, monkeypatch):
     with pytest.raises(slack_writer.SlackWriteRefused):
         slack_writer.update_card("clobbered", "1.0", [{"type": "divider"}], "test")
     assert bot.updated == []
+
+
+# -- Corrección 1 de la Task 7: el enlace que lleva el SMS tiene que ser el
+# permalink real de Slack (chat.getPermalink), no una URL de app.slack.com
+# armada a mano -- esa no abre la tarjeta. Es una lectura: no aplica el
+# guardarraíl de canal vigilado (nunca escribe nada), pero sigue exigiendo el
+# token de bot propio de Handoff como el resto del módulo. --
+
+
+def test_card_permalink_returns_the_real_link(bot):
+    link = slack_writer.card_permalink("CHANDOFF", "1726000001.000200")
+    assert link == bot.permalink
+
+
+def test_card_permalink_is_not_guarded_by_the_watched_channel_list(bot, monkeypatch):
+    """A diferencia de post_card/update_card, pedir el permalink es una
+    lectura: no puede escribir en el Founders Club, así que el canal vigilado
+    no tiene por qué bloquearla."""
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "CHANDOFF,C999")
+    link = slack_writer.card_permalink("CHANDOFF", "1726000001.000200")
+    assert link == bot.permalink
+
+
+def test_card_permalink_returns_none_on_any_failure(bot):
+    bot.permalink_error = RuntimeError("slack caído")
+    assert slack_writer.card_permalink("CHANDOFF", "1726000001.000200") is None
+
+
+def test_card_permalink_refuses_without_a_bot_token(bot, monkeypatch):
+    monkeypatch.delenv("HANDOFF_SLACK_BOT_TOKEN")
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.card_permalink("CHANDOFF", "1726000001.000200")
