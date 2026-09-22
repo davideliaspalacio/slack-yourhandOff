@@ -413,6 +413,10 @@ base `handoff_test` desde las migraciones, conectándose como administrador por
 `TEST_ADMIN_DATABASE_URL` (por defecto el Postgres local de Supabase en el
 puerto 54332).
 
+Para probar los flujos completos a mano (mensaje entrante, botones de la
+tarjeta, SMS, resumen diario) sin depender del Slack del Founders Club, ver
+[`docs/pruebas-manuales.md`](docs/pruebas-manuales.md) y `scripts/simular.py`.
+
 Parar todo el gasto sin redeploy:
 
 ```sql
