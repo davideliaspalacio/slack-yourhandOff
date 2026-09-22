@@ -3,12 +3,12 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Founders Club — Panel",
-  description: "Personas investigadas, dossiers y costes del agente del Founders Club.",
+  description: "Researched people, dossiers, and costs for the Founders Club agent.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es">
+    <html lang="en">
       <body>{children}</body>
     </html>
   );

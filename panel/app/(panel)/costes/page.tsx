@@ -31,30 +31,30 @@ export default async function Costes() {
 
   return (
     <>
-      <h1>Costes</h1>
+      <h1>Costs</h1>
       <div className="grid">
         <div className="card stat"><div className="n">{usd(mes, 2)}</div>
-          <div className="l">Este mes, de un tope de {usd(limite, 0)} ({((mes / limite) * 100).toFixed(1)}%)</div></div>
-        <div className="card stat"><div className="n">{usd(total, 2)}</div><div className="l">Total histórico</div></div>
+          <div className="l">This month, out of a cap of {usd(limite, 0)} ({((mes / limite) * 100).toFixed(1)}%)</div></div>
+        <div className="card stat"><div className="n">{usd(total, 2)}</div><div className="l">All-time total</div></div>
         <div className="card stat"><div className="n">{nDossiers ? usd(total / nDossiers) : "—"}</div>
-          <div className="l">Coste medio por dossier ({nDossiers} dossiers)</div></div>
-        <div className="card stat"><div className="n">{serper}</div><div className="l">Búsquedas en Serper</div></div>
+          <div className="l">Average cost per dossier ({nDossiers} dossiers)</div></div>
+        <div className="card stat"><div className="n">{serper}</div><div className="l">Serper searches</div></div>
       </div>
 
-      <h2>Por día</h2>
+      <h2>By day</h2>
       <table>
-        <thead><tr><th>Día</th><th>Gasto</th><th>Llamadas y eventos</th></tr></thead>
+        <thead><tr><th>Day</th><th>Spend</th><th>Calls and events</th></tr></thead>
         <tbody>
           {(diario.data ?? []).map((d) => (
             <tr key={d.dia}><td>{d.dia}</td><td>{usd(d.usd)}</td><td>{d.llamadas}</td></tr>
           ))}
-          {!(diario.data ?? []).length && <tr><td colSpan={3} className="muted">Sin gasto registrado.</td></tr>}
+          {!(diario.data ?? []).length && <tr><td colSpan={3} className="muted">No spending recorded.</td></tr>}
         </tbody>
       </table>
 
-      <h2>Por persona</h2>
+      <h2>By person</h2>
       <table>
-        <thead><tr><th>Persona</th><th>Gasto</th></tr></thead>
+        <thead><tr><th>Person</th><th>Spend</th></tr></thead>
         <tbody>
           {ranking.map(([id, coste]) => (
             <tr key={id}><td><Link href={`/personas/${id}`}>{nombres.get(id) ?? id}</Link></td><td>{usd(coste)}</td></tr>

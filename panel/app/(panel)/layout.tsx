@@ -15,18 +15,18 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     <>
       <nav>
         <span className="brand">Founders Club</span>
-        <Link href="/personas">Personas</Link>
-        <Link href="/costes">Costes</Link>
-        <Link href="/ajustes">Ajustes</Link>
+        <Link href="/personas">People</Link>
+        <Link href="/costes">Costs</Link>
+        <Link href="/ajustes">Settings</Link>
         <span className="muted">{user.email}</span>
-        <form action={salir}><button type="submit">Salir</button></form>
+        <form action={salir}><button type="submit">Sign out</button></form>
       </nav>
       <main>
         {allowed ? children : (
           <div className="card">
-            <h1>Sin acceso</h1>
-            <p>Tu cuenta ({user.email}) no está autorizada para ver este panel.
-              Pídele a David que la añada.</p>
+            <h1>No access</h1>
+            <p>Your account ({user.email}) isn&apos;t authorized to view this panel.
+              Ask David to add it.</p>
           </div>
         )}
       </main>

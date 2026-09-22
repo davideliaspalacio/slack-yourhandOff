@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { ESTADOS, fecha } from "@/lib/format";
+import { ESTADOS, estadoLabel, fecha } from "@/lib/format";
 
 type Fila = {
   id: string; full_name: string | null; company_name: string | null; slack_user_id: string;
@@ -32,23 +32,23 @@ export default async function Personas(props: PageProps<"/personas">) {
 
   return (
     <>
-      <h1>Personas <span className="muted">({filas.length})</span></h1>
+      <h1>People <span className="muted">({filas.length})</span></h1>
       <div className="filters">
-        <a href={link({ estado: undefined })} className={!estado ? "on" : ""}>Todos</a>
+        <a href={link({ estado: undefined })} className={!estado ? "on" : ""}>All</a>
         {ESTADOS.map((e) => (
-          <a key={e} href={link({ estado: e })} className={estado === e ? "on" : ""}>{e}</a>
+          <a key={e} href={link({ estado: e })} className={estado === e ? "on" : ""}>{estadoLabel(e)}</a>
         ))}
       </div>
       <div className="filters">
-        <a href={link({ encaje: undefined })} className={!encaje ? "on" : ""}>Cualquier encaje</a>
+        <a href={link({ encaje: undefined })} className={!encaje ? "on" : ""}>Any fit</a>
         {["3", "2", "1"].map((n) => (
-          <a key={n} href={link({ encaje: n })} className={encaje === n ? "on" : ""}>Encaje ≥ {n}</a>
+          <a key={n} href={link({ encaje: n })} className={encaje === n ? "on" : ""}>Fit ≥ {n}</a>
         ))}
       </div>
-      {error && <p className="notice">No se pudieron cargar las personas: {error.message}</p>}
+      {error && <p className="notice">Couldn&apos;t load people: {error.message}</p>}
       <table>
         <thead>
-          <tr><th>Persona</th><th>Empresa</th><th>Estado</th><th>Encaje</th><th>Último cambio</th></tr>
+          <tr><th>Person</th><th>Company</th><th>Status</th><th>Fit</th><th>Last updated</th></tr>
         </thead>
         <tbody>
           {filas.map((p) => {
@@ -57,14 +57,14 @@ export default async function Personas(props: PageProps<"/personas">) {
               <tr key={p.id}>
                 <td><Link href={`/personas/${p.id}`}>{p.full_name ?? p.slack_user_id}</Link></td>
                 <td>{p.company_name ?? <span className="muted">—</span>}</td>
-                <td><span className={`pill ${p.state}`}>{p.state}</span></td>
-                <td className={fit ? `fit-${fit}` : "muted"}>{fit ? `${fit}/3` : "sin dossier"}</td>
+                <td><span className={`pill ${p.state}`}>{estadoLabel(p.state)}</span></td>
+                <td className={fit ? `fit-${fit}` : "muted"}>{fit ? `${fit}/3` : "no dossier"}</td>
                 <td className="muted">{fecha(p.updated_at)}</td>
               </tr>
             );
           })}
           {filas.length === 0 && (
-            <tr><td colSpan={5} className="muted">Nadie con estos filtros.</td></tr>
+            <tr><td colSpan={5} className="muted">No one matches these filters.</td></tr>
           )}
         </tbody>
       </table>

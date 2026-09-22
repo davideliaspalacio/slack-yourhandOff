@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { ESTADOS_EDITABLES, fecha, usd } from "@/lib/format";
+import { ESTADOS_EDITABLES, accionLabel, bandLabel, estadoLabel, fecha, jobStatusLabel, reasonLabel, usd } from "@/lib/format";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
 
 type Senal = { hecho?: string; fuente?: string };
@@ -79,7 +79,7 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
 
   return (
     <>
-      <p><Link href="/personas">← Personas</Link></p>
+      <p><Link href="/personas">← People</Link></p>
       <h1>{p.full_name ?? p.slack_user_id}
         {d.persona?.cargo && <span className="muted"> — {d.persona.cargo}</span>}</h1>
 
@@ -88,39 +88,39 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
           {dossier.data ? (
             <>
               <p className={`fit-${d.encaje_handoff?.puntuacion}`}>
-                Encaje {d.encaje_handoff?.puntuacion ?? "?"}/3</p>
+                Fit {d.encaje_handoff?.puntuacion ?? "?"}/3</p>
               <p>{d.encaje_handoff?.razon}</p>
-              <h2>Resumen</h2>
+              <h2>Summary</h2>
               <p>{d.resumen}</p>
-              <h2>Empresa</h2>
+              <h2>Company</h2>
               <p>
                 <b>{d.empresa?.nombre ?? p.company_name ?? "—"}</b>
                 {d.empresa?.dominio && <> · {d.empresa.dominio}</>}
                 {d.empresa?.sector && <> · {d.empresa.sector}</>}
-                {d.empresa?.empleados_aprox && <> · ~{d.empresa.empleados_aprox} personas</>}
+                {d.empresa?.empleados_aprox && <> · ~{d.empresa.empleados_aprox} people</>}
                 {d.empresa?.ubicacion && <> · {d.empresa.ubicacion}</>}
               </p>
               {d.empresa?.descripcion && <p className="muted">{d.empresa.descripcion}</p>}
-              <h2>Contratación</h2>
+              <h2>Hiring</h2>
               <p>
                 {d.contratacion?.vacantes_abiertas != null
-                  ? `${d.contratacion.vacantes_abiertas} vacantes abiertas` : "Vacantes: sin datos"}
+                  ? `${d.contratacion.vacantes_abiertas} open roles` : "Openings: no data"}
                 {d.contratacion?.roles_deslocalizables?.length
-                  ? ` · cubribles desde LATAM: ${d.contratacion.roles_deslocalizables.join(", ")}` : ""}
+                  ? ` · coverable from LATAM: ${d.contratacion.roles_deslocalizables.join(", ")}` : ""}
               </p>
-              <h2>Señales</h2>
+              <h2>Context signals</h2>
               {d.senales_contexto?.length ? (
                 <ul className="plain">
                   {d.senales_contexto.map((s, i) => (
                     <li key={i}>{s.hecho} {s.fuente && <a href={s.fuente} target="_blank" rel="noreferrer">↗</a>}</li>
                   ))}
                 </ul>
-              ) : <p className="muted">Ninguna.</p>}
-              <h2>Huecos</h2>
+              ) : <p className="muted">None.</p>}
+              <h2>Gaps</h2>
               {d.huecos?.length ? (
                 <ul className="plain">{d.huecos.map((h, i) => <li key={i} className="muted">{h}</li>)}</ul>
-              ) : <p className="muted">Ninguno.</p>}
-              <h2>Fuentes ({fuentes.length})</h2>
+              ) : <p className="muted">None.</p>}
+              <h2>Sources ({fuentes.length})</h2>
               <ul className="plain">
                 {fuentes.map((f, i) => {
                   const url = typeof f === "string" ? f : f.url;
@@ -130,46 +130,46 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
               </ul>
               <p className="muted">Dossier v{dossier.data.version} · {fecha(dossier.data.created_at)}</p>
             </>
-          ) : <p className="muted">Todavía no hay dossier.</p>}
+          ) : <p className="muted">No dossier yet.</p>}
         </div>
 
         <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
           <div className="card">
-            <h2 style={{ marginTop: 0 }}>Acciones</h2>
+            <h2 style={{ marginTop: 0 }}>Actions</h2>
             <form action={cambiarEstado} className="inline">
               <input type="hidden" name="id" value={p.id} />
               <select key={p.state} name="estado" defaultValue={ESTADOS_EDITABLES.includes(p.state) ? p.state : ""}>
-                {!ESTADOS_EDITABLES.includes(p.state) && <option value="" disabled>{p.state}</option>}
-                {ESTADOS_EDITABLES.map((e) => <option key={e} value={e}>{e}</option>)}
+                {!ESTADOS_EDITABLES.includes(p.state) && <option value="" disabled>{estadoLabel(p.state)}</option>}
+                {ESTADOS_EDITABLES.map((e) => <option key={e} value={e}>{estadoLabel(e)}</option>)}
               </select>
-              <button type="submit">Guardar</button>
+              <button type="submit">Save</button>
             </form>
             <p />
             <form action={volverAInvestigar}>
               <input type="hidden" name="id" value={p.id} />
               <input type="hidden" name="slack_user_id" value={p.slack_user_id} />
               <button type="submit" disabled={abierta}>
-                {abierta ? "Ya está en cola" : "Volver a investigar"}
+                {abierta ? "Already queued" : "Research again"}
               </button>
             </form>
           </div>
           <div className="card">
-            <h2 style={{ marginTop: 0 }}>Gasto en esta persona</h2>
+            <h2 style={{ marginTop: 0 }}>Spend on this person</h2>
             <p className="stat"><span className="n">{usd(gasto)}</span></p>
           </div>
           <div className="card">
-            <h2 style={{ marginTop: 0 }}>Historial</h2>
+            <h2 style={{ marginTop: 0 }}>History</h2>
             <ul className="plain">
               {(entregas.data ?? []).map((e, i) => (
-                <li key={`e${i}`}>Aviso {e.kind} ({e.band}) · <span className="muted">{fecha(e.created_at)}</span></li>
+                <li key={`e${i}`}>Notice {e.kind} ({bandLabel(e.band)}) · <span className="muted">{fecha(e.created_at)}</span></li>
               ))}
               {(cola.data ?? []).map((j, i) => (
-                <li key={`j${i}`}>Research {j.reason}: {j.status}
+                <li key={`j${i}`}>Research {reasonLabel(j.reason)}: {jobStatusLabel(j.status)}
                   {j.last_error && <span className="muted"> — {j.last_error}</span>} ·{" "}
                   <span className="muted">{fecha(j.created_at)}</span></li>
               ))}
               {(acciones.data ?? []).map((a, i) => (
-                <li key={`a${i}`}>{a.action} · <span className="muted">{fecha(a.created_at)}</span></li>
+                <li key={`a${i}`}>{accionLabel(a.action)} · <span className="muted">{fecha(a.created_at)}</span></li>
               ))}
             </ul>
           </div>
@@ -178,36 +178,36 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
 
       {d.datos_proveedor && (
         <div className="card">
-          <h2 style={{ marginTop: 0 }}>Datos de proveedor (sin verificar)</h2>
+          <h2 style={{ marginTop: 0 }}>Provider data (unverified)</h2>
           <p className="muted">
-            Vienen de un proveedor externo, sin fuente citable, y pueden contradecir al resto
-            del dossier (por ejemplo, otra sede o otra cifra de empleados).
+            This comes from an external provider, without a citable source, and can contradict
+            the rest of the dossier (for example, a different headquarters or employee count).
           </p>
           <p>
             {d.datos_proveedor.empleados_linkedin != null && (
-              <>Empleados según LinkedIn: {d.datos_proveedor.empleados_linkedin.toLocaleString("es-CO")}<br /></>
+              <>Employees per LinkedIn: {d.datos_proveedor.empleados_linkedin.toLocaleString("en-US")}<br /></>
             )}
             {d.datos_proveedor.empleados_crm != null
               && d.datos_proveedor.empleados_crm !== d.datos_proveedor.empleados_linkedin && (
-              <>Empleados según el CRM: {d.datos_proveedor.empleados_crm.toLocaleString("es-CO")}<br /></>
+              <>Employees per the CRM: {d.datos_proveedor.empleados_crm.toLocaleString("en-US")}<br /></>
             )}
             {d.datos_proveedor.rango_empleados
               && (d.datos_proveedor.rango_empleados.min != null
                 || d.datos_proveedor.rango_empleados.max != null) && (
-              <>Rango: {d.datos_proveedor.rango_empleados.min ?? "?"}–{d.datos_proveedor.rango_empleados.max ?? "?"}<br /></>
+              <>Range: {d.datos_proveedor.rango_empleados.min ?? "?"}–{d.datos_proveedor.rango_empleados.max ?? "?"}<br /></>
             )}
             {d.datos_proveedor.ingresos_anuales_usd != null && (
-              <>Ingresos anuales: {usd(d.datos_proveedor.ingresos_anuales_usd, 0)}<br /></>
+              <>Annual revenue: {usd(d.datos_proveedor.ingresos_anuales_usd, 0)}<br /></>
             )}
             {d.datos_proveedor.anio_fundacion != null && (
-              <>Fundada en {d.datos_proveedor.anio_fundacion}<br /></>
+              <>Founded in {d.datos_proveedor.anio_fundacion}<br /></>
             )}
             {d.datos_proveedor.sede && (
-              <>Sede (CRM): {[d.datos_proveedor.sede.ciudad, d.datos_proveedor.sede.region, d.datos_proveedor.sede.pais]
+              <>Headquarters (CRM): {[d.datos_proveedor.sede.ciudad, d.datos_proveedor.sede.region, d.datos_proveedor.sede.pais]
                 .filter(Boolean).join(", ")}<br /></>
             )}
             {d.datos_proveedor.ubicacion_linkedin && (
-              <>Ubicación según LinkedIn: {[
+              <>Location per LinkedIn: {[
                 d.datos_proveedor.ubicacion_linkedin.ciudad,
                 d.datos_proveedor.ubicacion_linkedin.region,
                 d.datos_proveedor.ubicacion_linkedin.pais,
@@ -218,23 +218,23 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
                 {d.datos_proveedor.linkedin_url}</a><br /></>
             )}
             {d.datos_proveedor.seguidores_linkedin != null && (
-              <>Seguidores en LinkedIn: {d.datos_proveedor.seguidores_linkedin.toLocaleString("es-CO")}<br /></>
+              <>LinkedIn followers: {d.datos_proveedor.seguidores_linkedin.toLocaleString("en-US")}<br /></>
             )}
             {d.datos_proveedor.antiguedad_media && (
-              <>Antigüedad media del equipo: {d.datos_proveedor.antiguedad_media}<br /></>
+              <>Average team tenure: {d.datos_proveedor.antiguedad_media}<br /></>
             )}
           </p>
           {d.datos_proveedor.empleados_por_area
             && Object.keys(d.datos_proveedor.empleados_por_area).length > 0 && (
             <>
-              <h3>Empleados por área</h3>
+              <h3>Employees by department</h3>
               <table><tbody>
                 {Object.entries(d.datos_proveedor.empleados_por_area)
                   .sort((a, b) => b[1] - a[1])
                   .map(([area, n]) => (
                     <tr key={area}>
                       <td>{area.replace(/_/g, " ")}</td>
-                      <td>{n.toLocaleString("es-CO")}</td>
+                      <td>{n.toLocaleString("en-US")}</td>
                     </tr>
                   ))}
               </tbody></table>
@@ -244,32 +244,32 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
             const serie = crecimientoSerie(d.datos_proveedor.evolucion_mensual);
             return serie ? (
               <p>
-                Plantilla en 12 meses: {serie.antes.empleados.toLocaleString("es")} ({serie.antes.mes})
-                {" → "}{serie.ahora.empleados.toLocaleString("es")} ({serie.ahora.mes}),{" "}
+                Headcount over 12 months: {serie.antes.empleados.toLocaleString("en-US")} ({serie.antes.mes})
+                {" → "}{serie.ahora.empleados.toLocaleString("en-US")} ({serie.ahora.mes}),{" "}
                 {serie.pct >= 0 ? "+" : ""}{serie.pct.toFixed(0)}%
               </p>
             ) : null;
           })()}
           {d.datos_proveedor.crecimiento?.length ? (
             <>
-              <h3>Crecimiento de la plantilla</h3>
+              <h3>Headcount growth</h3>
               <ul className="plain">
                 {d.datos_proveedor.crecimiento.map((c, i) => (
                   <li key={i}>
-                    {c.meses} meses: {c.cambio_neto >= 0 ? "+" : ""}{c.cambio_neto}
-                    {" "}({c.porcentaje.toFixed(2)}% según el proveedor)
+                    {c.meses} months: {c.cambio_neto >= 0 ? "+" : ""}{c.cambio_neto}
+                    {" "}({c.porcentaje.toFixed(2)}% per provider)
                   </li>
                 ))}
               </ul>
             </>
           ) : null}
           {d.datos_proveedor.consultado && (
-            <p className="muted">Consultado el {d.datos_proveedor.consultado}</p>
+            <p className="muted">Retrieved on {d.datos_proveedor.consultado}</p>
           )}
         </div>
       )}
 
-      <h2>Mensajes en el Founders Club</h2>
+      <h2>Messages in the Founders Club</h2>
       {(mensajes.data ?? []).length ? (
         <table><tbody>
           {mensajes.data!.map((m) => (
@@ -278,7 +278,7 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
             </tr>
           ))}
         </tbody></table>
-      ) : <p className="muted">Ninguno leído todavía.</p>}
+      ) : <p className="muted">None read yet.</p>}
     </>
   );
 }

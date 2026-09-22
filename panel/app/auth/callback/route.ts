@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    console.error("auth/callback: no se pudo canjear el código:", error.message);
+    console.error("auth/callback: could not exchange the code:", error.message);
     return redirectTo(request, "/login?error=enlace");
   }
   return redirectTo(request, "/personas");

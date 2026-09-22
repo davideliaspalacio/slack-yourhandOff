@@ -34,16 +34,16 @@ export default function Login() {
       <div className="card">
         <h1>Founders Club — Panel</h1>
         <form onSubmit={signIn} style={{ display: "grid", gap: 12 }}>
-          <label htmlFor="email" className="muted">Correo</label>
+          <label htmlFor="email" className="muted">Email</label>
           <input id="email" type="email" required autoComplete="username" value={email}
-                 onChange={(e) => setEmail(e.target.value)} placeholder="nombre@yourhandoff.com" />
-          <label htmlFor="password" className="muted">Contraseña</label>
+                 onChange={(e) => setEmail(e.target.value)} placeholder="name@yourhandoff.com" />
+          <label htmlFor="password" className="muted">Password</label>
           <input id="password" type="password" required autoComplete="current-password"
                  value={password} onChange={(e) => setPassword(e.target.value)} />
           <button className="primary" type="submit" disabled={state === "sending"}>
-            {state === "sending" ? "Entrando…" : "Entrar"}
+            {state === "sending" ? "Signing in…" : "Sign in"}
           </button>
-          {state === "error" && <p className="muted">Correo o contraseña incorrectos.</p>}
+          {state === "error" && <p className="muted">Incorrect email or password.</p>}
         </form>
       </div>
     </main>
