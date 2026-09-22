@@ -193,3 +193,12 @@ def test_permalink_returns_none_when_slack_says_no(monkeypatch):
 
     reader = sc.FoundersClubReader(token="xoxp-test", client=FakeWeb())
     assert reader.permalink("C1", "1.0") is None
+
+
+def test_an_unknown_user_is_its_own_error_but_still_slack_unavailable():
+    """user_not_found no se arregla reintentando: el runner lo distingue, y
+    quien ya capturaba SlackUnavailable sigue funcionando igual."""
+    fake = FakeWebClient(error=SlackApiError("nope", {"ok": False, "error": "user_not_found"}))
+    with pytest.raises(sc.SlackUserNotFound) as caught:
+        sc.FoundersClubReader(client=fake).user_profile("UGONE")
+    assert isinstance(caught.value, sc.SlackUnavailable)

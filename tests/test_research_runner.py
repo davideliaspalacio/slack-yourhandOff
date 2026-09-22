@@ -302,3 +302,33 @@ def test_a_stolen_job_that_would_have_retried_is_reported_as_descartado(conn, re
     row = db.fetch_one("select status, last_error from research_jobs")
     assert row["status"] == "en_curso"
     assert row["last_error"] is None
+
+
+def test_without_a_slack_profile_it_researches_with_what_is_stored(conn, reader, monkeypatch):
+    """Alguien que se fue del workspace, o creado a mano: users.info responde
+    user_not_found. Reintentar no sirve; se investiga con el nombre, la
+    empresa y la web corregida en el panel que ya están guardados."""
+    prospects.upsert_prospect("UGONE", full_name="Maria Test")
+    db.execute(
+        "update prospects set company_name = 'Dapta', company_domain_override = 'dapta.ai' "
+        "where slack_user_id = 'UGONE'"
+    )
+    queue.enqueue("UGONE", "manual")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen == [
+        {
+            "full_name": "Maria Test",
+            "company": "Dapta",
+            "domain": "dapta.ai",
+            "slack_user_id": "UGONE",
+        }
+    ]
+    assert job()["status"] == "hecho"
+
+
+def test_without_a_slack_profile_or_stored_data_the_job_gives_up(conn, reader, monkeypatch):
+    queue.enqueue("UNOBODY", "manual")
+    stub_research(monkeypatch, error=ValueError("hace falta al menos un nombre o una empresa"))
+    assert runner.run_next_job(reader).status == "fallido"
+    assert job()["status"] == "fallido"

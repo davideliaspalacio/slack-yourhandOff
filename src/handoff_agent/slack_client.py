@@ -42,6 +42,12 @@ class SlackUnavailable(RuntimeError):
     """Slack answered with an error worth retrying later."""
 
 
+class SlackUserNotFound(SlackUnavailable):
+    """users.info no conoce a esa persona: se fue del workspace, o se creó a
+    mano (scripts de prueba, panel). Reintentar no sirve; hereda de
+    SlackUnavailable para que quien ya lo captura siga igual."""
+
+
 @dataclass(frozen=True)
 class UserProfile:
     user_id: str
@@ -74,6 +80,8 @@ class FoundersClubReader:
             error = response.get("error", "") if hasattr(response, "get") else ""
             if error in AUTH_ERRORS:
                 raise SlackAuthFailed(f"Slack rechazó el token: {error}") from exc
+            if error == "user_not_found":
+                raise SlackUserNotFound(f"{method}: {error}") from exc
             raise SlackUnavailable(f"{method}: {error or exc}") from exc
         except (OSError, http.client.HTTPException) as exc:
             # Transport errors (timeout, DNS error, connection reset, remote disconnect)

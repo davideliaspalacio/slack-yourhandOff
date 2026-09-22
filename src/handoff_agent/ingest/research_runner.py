@@ -26,7 +26,7 @@ from .. import db
 from ..delivery import sms
 from ..delivery.deliver import deliver_for
 from ..research import worker
-from ..slack_client import SlackAuthFailed, SlackUnavailable
+from ..slack_client import SlackAuthFailed, SlackUnavailable, SlackUserNotFound
 from . import queue
 from .profile_hints import company_from_title, domain_from_email
 
@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 # Estados de ResearchOutcome que dejaron un dossier entregable. "omitido" (bot,
 # descartado, dossier aún vigente) no trae una versión nueva que anunciar.
 DELIVERABLE_STATUSES = ("investigado", "incompleto")
+
+
+def _stored_person(slack_user_id: str) -> dict | None:
+    return db.fetch_one(
+        "select full_name, company_name from prospects where slack_user_id = %s",
+        (slack_user_id,),
+    )
 
 
 def _domain_override(slack_user_id: str) -> str | None:
@@ -85,20 +92,34 @@ def run_next_job(reader) -> RunResult | None:
     except SlackAuthFailed:
         queue.release(job)
         raise
+    except SlackUserNotFound:
+        # Sin perfil de Slack (se fue del workspace, o la persona se creó a
+        # mano): se investiga con lo que ya hay guardado, en vez de reintentar
+        # algo que nunca va a aparecer. Si no hay nada guardado, research_person
+        # levanta ValueError más abajo y el job se da por perdido.
+        profile = None
     except SlackUnavailable as exc:
         return _retry_or_fail(job, uid, str(exc))
 
-    if profile.is_bot or profile.deleted:
+    if profile is not None and (profile.is_bot or profile.deleted):
         reason = "bot o usuario eliminado"
         if not queue.complete(job, {"estado": "omitido", "motivo": reason}):
             return _discarded(job, "completar", uid, reason)
         return RunResult("omitido", uid, reason)
 
-    company = company_from_title(profile.title)
-    domain = _domain_override(uid) or domain_from_email(profile.email)
+    if profile is not None:
+        full_name = profile.real_name or None
+        company = company_from_title(profile.title)
+        email_domain = domain_from_email(profile.email)
+    else:
+        stored = _stored_person(uid)
+        full_name = stored["full_name"] if stored else None
+        company = stored["company_name"] if stored else None
+        email_domain = None
+    domain = _domain_override(uid) or email_domain
     try:
         outcome = worker.research_person(
-            profile.real_name or None,
+            full_name,
             company,
             domain,
             slack_user_id=uid,

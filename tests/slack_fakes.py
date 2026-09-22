@@ -1,6 +1,6 @@
 """A reader with the same surface as FoundersClubReader, for the ingest tests."""
 
-from handoff_agent.slack_client import SlackUnavailable, UserProfile
+from handoff_agent.slack_client import SlackUnavailable, SlackUserNotFound, UserProfile
 
 
 class FakeReader:
@@ -34,6 +34,9 @@ class FakeReader:
     def user_profile(self, user_id: str) -> UserProfile:
         if self.auth_error:
             raise self.auth_error
+        if user_id not in self.profiles:
+            # Como el Slack real: users.info con un id que no existe.
+            raise SlackUserNotFound("users_info: user_not_found")
         return self.profiles[user_id]
 
     def permalink(self, channel: str, ts: str) -> str | None:
