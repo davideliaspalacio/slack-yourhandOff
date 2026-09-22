@@ -22,11 +22,21 @@ export async function cambiarEstado(formData: FormData) {
 
 export async function volverAInvestigar(formData: FormData) {
   const id = String(formData.get("id"));
-  const slackUserId = String(formData.get("slack_user_id"));
   const supabase = await createClient();
+  // El slack_user_id se lee de la base por el id de la persona, no del
+  // formulario: si viniera del navegador, alguien con acceso podría encolar
+  // research de cualquier id inventado y gastar dinero del presupuesto.
+  const { data: persona } = await supabase
+    .from("prospects")
+    .select("slack_user_id")
+    .eq("id", id)
+    .single();
+  if (!persona) return;
   // La cola solo admite una tarea abierta por persona: un segundo clic choca
   // contra el índice y no encola nada.
-  await supabase.from("research_jobs").insert({ slack_user_id: slackUserId, reason: "manual" });
+  await supabase
+    .from("research_jobs")
+    .insert({ slack_user_id: persona.slack_user_id, reason: "manual" });
   revalidatePath(`/personas/${id}`);
 }
 

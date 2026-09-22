@@ -152,7 +152,6 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
             <p />
             <form action={volverAInvestigar}>
               <input type="hidden" name="id" value={p.id} />
-              <input type="hidden" name="slack_user_id" value={p.slack_user_id} />
               <button type="submit" disabled={abierta}>
                 {abierta ? "Already queued" : "Research again"}
               </button>
