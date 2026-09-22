@@ -37,6 +37,17 @@ def main(argv: list[str]) -> int:
             print(f"Falta {name}.")
             return 1
 
+    # Correr este script es una decisión humana explícita: si la persona estaba
+    # descartada (p. ej. al probar el botón Discard), se reactiva para poder
+    # investigarla y entregarla otra vez.
+    reactivated = db.execute(
+        "update prospects set state = 'nuevo', updated_at = now() "
+        "where slack_user_id = %s and state = 'descartado'",
+        (worker.manual_user_id(full_name, company),),
+    )
+    if reactivated:
+        print("La persona estaba descartada: se reactiva para esta prueba.")
+
     print(f"Investigando a {full_name} ({company})... puede tardar un par de minutos.")
     # force: si ya había un dossier reciente, se investiga igual.
     outcome = worker.research_person(full_name, company, domain, force=True)
