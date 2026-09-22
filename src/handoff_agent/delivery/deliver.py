@@ -60,6 +60,20 @@ def deliver_for(prospect_id: str, reader) -> str | None:
     if person is None or person["state"] in NO_ALERT_STATES:
         return None
 
+    if person["sin_tarjeta"]:
+        # Modo de pruebas (0011): investigar sin publicar. El research y el
+        # dossier ya se guardaron (esto corre después); solo la tarjeta -- y,
+        # por tanto, el SMS que ingest/research_runner.py solo manda cuando
+        # esta función devuelve "alta" -- se queda sin salir. Se corta antes
+        # de la reserva en `deliveries`: no hay tarjeta que reservar.
+        logger.info("entrega omitida (modo de pruebas sin tarjeta): %s", prospect_id)
+        ledger.record_action(
+            "entrega_omitida_prueba",
+            {"motivo": "prospects.sin_tarjeta"},
+            prospect_id=prospect_id,
+        )
+        return None
+
     dossier = db.fetch_one(
         "select version, content from dossiers where prospect_id = %s "
         "order by version desc limit 1",

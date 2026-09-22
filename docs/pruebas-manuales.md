@@ -12,6 +12,14 @@ la cola (unos 2 minutos), no al instante. Un botón **Delete all test data**
 en la misma página llama a `panel_borrar_simulados` y hace lo mismo que la
 sección 9 (`limpiar`).
 
+El formulario trae, justo antes de enviarlo, un checkbox **"Post the card to
+Slack"** marcado por defecto. Desmarcarlo (`p_sin_tarjeta`, migración
+`0011_sin_tarjeta.sql`) deja que el research corra y el dossier se guarde
+igual que siempre -- el panel enseña todo -- pero `delivery/deliver.py`
+corta antes de publicar la tarjeta en el Slack de Handoff, así que tampoco
+sale el SMS. La tabla de personas de prueba marca esas filas como "No card
+(test)" en la columna **Slack card**.
+
 Esta terminal sigue haciendo falta para lo que el panel no puede: los tres
 botones de la tarjeta firmados como Slack (sección 5), el SMS (sección 6), la
 previsualización y el envío del resumen diario (sección 7) y, en general,

@@ -327,6 +327,22 @@ def test_a_media_or_baja_delivery_never_triggers_an_sms(conn, reader, monkeypatc
     assert seen == []
 
 
+def test_a_delivery_with_no_card_never_triggers_an_sms(conn, reader, monkeypatch):
+    """Modo de pruebas (0011): cuando `deliver_for` corta por sin_tarjeta
+    devuelve None -- no 'alta' -- exactamente como cuando lo corta cualquier
+    otra razón (descartado, contactado, kill switch, ...), así que el runner
+    nunca manda el SMS."""
+    queue.enqueue("U1", "mensaje")
+    stub_research(monkeypatch)
+    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: None)
+    seen = []
+    monkeypatch.setattr(
+        runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
+    )
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen == []
+
+
 def test_an_sms_failure_does_not_turn_a_finished_job_into_a_failure(conn, reader, monkeypatch):
     """Corrección 4: el SMS corre dentro de la misma protección que la
     tarjeta -- un problema de Twilio nunca puede tumbar un `hecho`."""

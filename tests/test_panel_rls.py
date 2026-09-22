@@ -368,11 +368,23 @@ def test_authenticated_cannot_write_research_links_directly(people):
 # --- panel_simular_persona / panel_borrar_simulados (modo de pruebas) ------
 
 
-def simular(user, nombre, empresa, web=None, mensaje=None, links=None, notas=None):
+def simular(
+    user, nombre, empresa, web=None, mensaje=None, links=None, notas=None, sin_tarjeta=None
+):
+    # sin_tarjeta=None omite el séptimo argumento (usa el default de la
+    # función, false) en vez de mandar NULL explícito -- así un test que no
+    # menciona sin_tarjeta prueba de verdad el mismo camino que un caller
+    # viejo que nunca supo que ese parámetro existe.
+    if sin_tarjeta is None:
+        return as_user(
+            user,
+            "select panel_simular_persona(%s, %s, %s, %s, %s, %s)",
+            (nombre, empresa, web, mensaje, links, notas),
+        )
     return as_user(
         user,
-        "select panel_simular_persona(%s, %s, %s, %s, %s, %s)",
-        (nombre, empresa, web, mensaje, links, notas),
+        "select panel_simular_persona(%s, %s, %s, %s, %s, %s, %s)",
+        (nombre, empresa, web, mensaje, links, notas, sin_tarjeta),
     )
 
 
@@ -425,6 +437,34 @@ def test_an_allowed_user_can_create_a_test_person(people):
         "pendiente",
         person["slack_user_id"],
     )
+
+
+def test_a_test_person_defaults_to_publishing_a_card(people):
+    """Sin mencionar sin_tarjeta (el camino de un caller que no lo sabe ni
+    lo manda), la función usa su default: publicar la tarjeta como siempre."""
+    simular(ALLOWED, "Ada Ruiz", "Acme")
+    assert simulated()["sin_tarjeta"] is False
+
+
+def test_sin_tarjeta_true_is_stored(people):
+    simular(ALLOWED, "Ada Ruiz", "Acme", sin_tarjeta=True)
+    assert simulated()["sin_tarjeta"] is True
+
+
+def test_sin_tarjeta_false_is_stored_explicitly(people):
+    simular(ALLOWED, "Ada Ruiz", "Acme", sin_tarjeta=False)
+    assert simulated()["sin_tarjeta"] is False
+
+
+def test_a_second_call_updates_sin_tarjeta(people):
+    """El checkbox del panel manda su estado completo en cada envío, así que
+    un segundo envío con el checkbox distinto de verdad cambia la fila --
+    igual que pasa con empresa, web, enlaces y notas."""
+    simular(ALLOWED, "Ada Ruiz", "Acme", sin_tarjeta=True)
+    assert simulated()["sin_tarjeta"] is True
+
+    simular(ALLOWED, "Ada Ruiz", "Acme", sin_tarjeta=False)
+    assert simulated()["sin_tarjeta"] is False
 
 
 def test_a_message_is_optional(people):

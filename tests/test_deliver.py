@@ -72,6 +72,32 @@ def test_a_contacted_person_never_generates_a_card_either(conn, monkeypatch):
     assert posted == []
 
 
+def test_a_test_mode_person_without_a_card_gets_no_delivery(conn, monkeypatch):
+    """Modo de pruebas (0011): sin_tarjeta corta antes de la reserva de
+    deliveries -- sin tarjeta y, por tanto (ver research_runner.py), sin
+    SMS -- pero el research y el dossier ya se guardaron, y el corte queda
+    anotado en el ledger."""
+    posted = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: posted.append(1))
+    person = a_person()
+    db.execute("update prospects set sin_tarjeta = true where id = %s", (person["id"],))
+    assert deliver.deliver_for(person["id"], FakeReader()) is None
+    assert posted == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    action = db.fetch_one(
+        "select payload from agent_actions where action = 'entrega_omitida_prueba'"
+    )
+    assert action is not None
+
+
+def test_sin_tarjeta_false_delivers_exactly_like_before(conn, monkeypatch):
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
+    person = a_person()
+    db.execute("update prospects set sin_tarjeta = false where id = %s", (person["id"],))
+    assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 1
+
+
 def test_score_zero_is_not_delivered(conn, monkeypatch):
     monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
     person = a_person(score=0)

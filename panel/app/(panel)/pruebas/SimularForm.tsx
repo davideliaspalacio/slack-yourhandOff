@@ -57,6 +57,13 @@ export function SimularForm() {
           style={{ width: "100%" }}
         />
       </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <input type="checkbox" name="publicar_tarjeta" defaultChecked disabled={pending} />
+        Post the card to Slack
+      </label>
+      <p className="muted" style={{ margin: 0 }}>
+        Uncheck to research without posting anything in Slack.
+      </p>
       <div>
         <button className="primary" type="submit" disabled={pending}>
           {pending ? "Creating…" : "Create and research"}

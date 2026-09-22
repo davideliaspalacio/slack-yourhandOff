@@ -98,6 +98,8 @@ export async function simularPersona(
     .split("\n")
     .map((link) => link.trim())
     .filter(Boolean);
+  // Un checkbox sin marcar no manda ningún campo: su ausencia es "no publicar".
+  const publicarTarjeta = formData.get("publicar_tarjeta") != null;
   const supabase = await createClient();
   const { data, error } = await supabase.rpc("panel_simular_persona", {
     p_nombre: nombre,
@@ -106,6 +108,7 @@ export async function simularPersona(
     p_mensaje: mensaje,
     p_links: links,
     p_notas: notas,
+    p_sin_tarjeta: !publicarTarjeta,
   });
   if (error) return { error: error.message };
   revalidatePath("/pruebas");

@@ -16,6 +16,7 @@ type Persona = {
   slack_user_id: string;
   state: string;
   created_at: string;
+  sin_tarjeta: boolean;
 };
 type Dossier = { prospect_id: string; version: number; content: Record<string, unknown> };
 type Job = { slack_user_id: string; status: string; attempts: number };
@@ -36,7 +37,7 @@ export default async function Pruebas() {
   const supabase = await createClient();
   const { data: personasData, error } = await supabase
     .from("prospects")
-    .select("id, full_name, company_name, slack_user_id, state, created_at")
+    .select("id, full_name, company_name, slack_user_id, state, created_at, sin_tarjeta")
     .or(PREFIXES)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -144,7 +145,15 @@ export default async function Pruebas() {
                 <td className={fit ? `fit-${fit}` : "muted"}>
                   {dossier ? `v${dossier.version} · fit ${fit ?? "?"}/3` : "No dossier yet"}
                 </td>
-                <td>{entrega ? bandLabel(entrega.band) : <span className="muted">No</span>}</td>
+                <td>
+                  {entrega ? (
+                    bandLabel(entrega.band)
+                  ) : p.sin_tarjeta ? (
+                    <span className="muted">No card (test)</span>
+                  ) : (
+                    <span className="muted">No</span>
+                  )}
+                </td>
                 <td>{usd(gastoPorPersona.get(p.id) ?? 0)}</td>
               </tr>
             );
