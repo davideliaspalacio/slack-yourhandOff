@@ -73,7 +73,7 @@ PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success"
 #
 # Aritmética del peor caso para la cabecera (tope de Slack: 3000 caracteres
 # por bloque `section`), con las etiquetas ya en inglés:
-#   emoji + " *SIGNAL " + band_label + "*"   band_label es "HIGH"/"MEDIUM"/
+#   emoji + " *" + band_label + " SIGNAL*"   band_label es "HIGH"/"MEDIUM"/
 #                                             "LOW", longitud fija y acotada  17
 #   " · fit " + NUM_CHARS + "/3"                     7 + 20 + 2       =   29
 #   salto de línea                                                        1
@@ -302,7 +302,7 @@ def build(
     score = _safe_number(fit.get("puntuacion"), NUM_CHARS)
     score_bit = f" · fit {score}/3" if score else ""
     band_label = BAND_LABELS.get(band, band.upper())
-    header = f"{EMOJI.get(band, '')} *SIGNAL {band_label}*{score_bit}\n" + _headline(
+    header = f"{EMOJI.get(band, '')} *{band_label} SIGNAL*{score_bit}\n" + _headline(
         person, dossier, band
     )
     blocks: list[dict] = [
