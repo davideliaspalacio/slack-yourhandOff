@@ -35,7 +35,7 @@ declare
     v_state         public.prospect_state;
 begin
     if not public.is_panel_user() then
-        raise exception 'no autorizado';
+        raise exception 'not authorized';
     end if;
 
     -- Normaliza: minúsculas, sin espacios sobrantes, sin esquema, sin
@@ -49,14 +49,14 @@ begin
     v_dominio := split_part(v_dominio, ':', 1);
 
     if v_dominio !~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' then
-        raise exception 'dominio inválido: %', p_dominio;
+        raise exception 'invalid domain: %', p_dominio;
     end if;
 
     select slack_user_id, state into v_slack_user_id, v_state
         from public.prospects where id = p_prospect;
 
     if not found then
-        raise exception 'la persona % no existe', p_prospect;
+        raise exception 'person % not found', p_prospect;
     end if;
 
     update public.prospects
