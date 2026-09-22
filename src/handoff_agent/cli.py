@@ -216,12 +216,18 @@ def cmd_web(args) -> int:
     debería fallar si algún día falta. El puerto viene de `$PORT` porque
     Railway lo asigna en tiempo de ejecución -- un `startCommand` sin shell de
     por medio (`"handoff web"`, no `uvicorn ... --port $PORT`) no lo expande.
+
+    Escucha en 0.0.0.0 (IPv4): con "::" asyncio marca el socket como solo
+    IPv6 y el healthcheck de Railway, que entra por IPv4, nunca recibe
+    respuesta.
     """
     import os
 
     import uvicorn
 
-    uvicorn.run("handoff_agent.web.app:app", host="::", port=int(os.environ.get("PORT", "8000")))
+    uvicorn.run(
+        "handoff_agent.web.app:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8000"))
+    )
     return 0
 
 

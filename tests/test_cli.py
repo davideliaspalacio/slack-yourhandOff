@@ -386,7 +386,7 @@ def test_cmd_web_serves_uvicorn_with_the_port_from_the_environment(monkeypatch):
     assert len(calls) == 1
     args, kwargs = calls[0]
     assert args == ("handoff_agent.web.app:app",)
-    assert kwargs == {"host": "::", "port": 4321}
+    assert kwargs == {"host": "0.0.0.0", "port": 4321}
 
 
 def test_cmd_web_defaults_to_port_8000(monkeypatch):
