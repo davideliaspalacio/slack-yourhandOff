@@ -7,6 +7,7 @@ import psycopg
 import pytest
 
 from handoff_agent import db
+from scripts import simular as simular_script
 
 ALLOWED = "ana@example.com"
 STRANGER = "intruso@example.com"
@@ -362,3 +363,177 @@ def test_authenticated_cannot_write_research_links_directly(people):
             "update prospects set research_links = %s where id = %s",
             (["https://acme.com"], pid),
         )
+
+
+# --- panel_simular_persona / panel_borrar_simulados (modo de pruebas) ------
+
+
+def simular(user, nombre, empresa, web=None, mensaje=None, links=None, notas=None):
+    return as_user(
+        user,
+        "select panel_simular_persona(%s, %s, %s, %s, %s, %s)",
+        (nombre, empresa, web, mensaje, links, notas),
+    )
+
+
+def simulated(nombre="Ada Ruiz", empresa="Acme"):
+    return db.fetch_one(
+        "select * from prospects where slack_user_id = %s",
+        (simular_script.fake_user_id(nombre, empresa),),
+    )
+
+
+def test_an_allowed_user_can_create_a_test_person(people):
+    rows = simular(
+        ALLOWED,
+        "Ada Ruiz",
+        "Acme",
+        web="https://www.Acme.com/about",
+        mensaje="hola, buscamos soporte",
+        links=["https://acme.com/news", "https://acme.com/news"],
+        notas="  nota de prueba  ",
+    )
+    person = simulated()
+    assert person is not None
+    assert person["slack_user_id"] == simular_script.fake_user_id("Ada Ruiz", "Acme")
+    assert person["full_name"] == "Ada Ruiz"
+    assert person["company_name"] == "Acme"
+    assert person["state"] == "nuevo"
+    assert person["company_domain_override"] == "acme.com"
+    assert person["research_links"] == ["https://acme.com/news"]
+    assert person["research_notes"] == "nota de prueba"
+    # panel_simular_persona returns the prospect id.
+    assert rows[0]["panel_simular_persona"] == person["id"]
+
+    message = db.fetch_one(
+        "select channel_id, user_id, text, status from slack_messages where user_id = %s",
+        (person["slack_user_id"],),
+    )
+    assert message == {
+        "channel_id": "CSIMULADO",
+        "user_id": person["slack_user_id"],
+        "text": "hola, buscamos soporte",
+        # El mismo estado en el que resolve_pending() (ingest/resolver.py) deja
+        # el mensaje de una persona ya conocida: delivery/deliver.py::_last_message
+        # lo cita, y el resolver nunca lo vuelve a tocar.
+        "status": "pendiente_scoring",
+    }
+
+    job = db.fetch_one("select reason, status, slack_user_id from research_jobs")
+    assert (job["reason"], job["status"], job["slack_user_id"]) == (
+        "manual",
+        "pendiente",
+        person["slack_user_id"],
+    )
+
+
+def test_a_message_is_optional(people):
+    simular(ALLOWED, "Leo Gil", "Beta")
+    assert db.fetch_one("select count(*) as n from slack_messages")["n"] == 0
+    assert simulated("Leo Gil", "Beta") is not None
+
+
+def test_creating_a_test_person_is_idempotent_on_a_second_call(people):
+    before = db.fetch_one("select count(*) as n from prospects")["n"]  # U1, del fixture
+
+    simular(ALLOWED, "Ada Ruiz", "Acme", mensaje="primero")
+    person = simulated()
+
+    simular(ALLOWED, "Ada Ruiz", "Acme", mensaje="segundo")
+
+    assert db.fetch_one("select count(*) as n from prospects")["n"] == before + 1
+    assert simulated()["id"] == person["id"]
+    assert db.fetch_one("select count(*) as n from slack_messages")["n"] == 2
+    # La cola solo admite una tarea abierta por persona: el segundo envío no duplica.
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 1
+
+
+def test_a_name_or_a_company_is_required(people):
+    before = db.fetch_one("select count(*) as n from prospects")["n"]  # U1, del fixture
+    with pytest.raises(psycopg.errors.RaiseException, match="name or company is required"):
+        simular(ALLOWED, "  ", "")
+    assert db.fetch_one("select count(*) as n from prospects")["n"] == before
+
+
+def test_a_discarded_test_person_is_rejected(people):
+    simular(ALLOWED, "Ada Ruiz", "Acme")
+    db.execute(
+        "update prospects set state = 'descartado' where slack_user_id = %s",
+        (simulated()["slack_user_id"],),
+    )
+    with pytest.raises(psycopg.errors.RaiseException, match="person is discarded"):
+        simular(ALLOWED, "Ada Ruiz", "Acme")
+    assert simulated()["state"] == "descartado"
+
+
+def test_the_website_is_normalised_and_validated_like_the_sibling_rpc(people):
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid domain"):
+        simular(ALLOWED, "Ada Ruiz", "Acme", web="not a domain")
+
+
+def test_links_are_validated_like_the_sibling_rpc(people):
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid link"):
+        simular(ALLOWED, "Ada Ruiz", "Acme", links=["ftp://acme.com/x"])
+
+
+def test_too_many_links_are_rejected(people):
+    links = [f"https://acme.com/{i}" for i in range(11)]
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid link"):
+        simular(ALLOWED, "Ada Ruiz", "Acme", links=links)
+
+
+def test_notes_are_validated_like_the_sibling_rpc(people):
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid notes"):
+        simular(ALLOWED, "Ada Ruiz", "Acme", notas="x" * 2001)
+
+
+def test_a_stranger_cannot_create_a_test_person(people):
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        simular(STRANGER, "Ada Ruiz", "Acme")
+    assert simulated() is None
+
+
+def test_an_unauthenticated_request_cannot_create_a_test_person(people):
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        simular(None, "Ada Ruiz", "Acme")
+    assert simulated() is None
+
+
+def borrar(user):
+    return as_user(user, "select panel_borrar_simulados()")
+
+
+def test_deleting_test_data_only_touches_simulated_rows(people):
+    simular(ALLOWED, "Ada Ruiz", "Acme", mensaje="hola")
+    db.execute(
+        "insert into prospects (slack_user_id, full_name, company_name) "
+        "values ('UPRUEBA1', 'Legacy', 'LegacyCo')"
+    )
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text, status) "
+        "values ('CSIMULADO', '2.0', 'UPRUEBA1', 'legacy', 'nuevo')"
+    )
+    # U1 (del fixture `people`) es una persona real: nunca debe tocarse.
+    rows = borrar(ALLOWED)
+    assert rows[0]["panel_borrar_simulados"] == 2
+
+    assert db.fetch_one("select 1 as x from prospects where slack_user_id = 'U1'") == {"x": 1}
+    assert (
+        db.fetch_one("select 1 as x from prospects where slack_user_id like %s", ("USIM%",)) is None
+    )
+    assert db.fetch_one("select 1 as x from prospects where slack_user_id = 'UPRUEBA1'") is None
+    assert db.fetch_one("select count(*) as n from slack_messages")["n"] == 0
+
+
+def test_a_stranger_cannot_delete_test_data(people):
+    simular(ALLOWED, "Ada Ruiz", "Acme")
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        borrar(STRANGER)
+    assert simulated() is not None
+
+
+def test_an_unauthenticated_request_cannot_delete_test_data(people):
+    simular(ALLOWED, "Ada Ruiz", "Acme")
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        borrar(None)
+    assert simulated() is not None

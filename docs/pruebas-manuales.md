@@ -1,5 +1,24 @@
 # Probar los flujos desde la terminal
 
+**Antes de abrir una terminal:** la página **Test mode** del panel (después de
+**Settings**) hace ahora lo mismo que la sección 1/2/3 de aquí abajo -- crear
+una persona, mandar su mensaje y ver research, tarjeta y gasto -- sin
+necesitar la terminal ni ninguna variable de entorno: rellena un formulario y
+llama a `panel_simular_persona` (RLS, `supabase/migrations/0010_modo_pruebas.sql`),
+que dispara el mismo `research_jobs` que drena el worker de Railway en
+producción. El panel nunca ejecuta Python: solo escribe la fila que el worker
+ya sabe recoger, así que investigar tarda lo que tarde el worker en pasar por
+la cola (unos 2 minutos), no al instante. Un botón **Delete all test data**
+en la misma página llama a `panel_borrar_simulados` y hace lo mismo que la
+sección 9 (`limpiar`).
+
+Esta terminal sigue haciendo falta para lo que el panel no puede: los tres
+botones de la tarjeta firmados como Slack (sección 5), el SMS (sección 6), la
+previsualización y el envío del resumen diario (sección 7) y, en general,
+inspeccionar o limpiar cualquier cosa a mano en runs locales.
+
+## Desde la terminal
+
 `scripts/simular.py` ejercita el pipeline entero -- research, tarjeta, botones,
 SMS, resumen diario -- sin depender del Slack del Founders Club: la app
 lectora todavía no está instalada ahí, y crear cuentas de Slack solo para

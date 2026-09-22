@@ -18,6 +18,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         <Link href="/personas">People</Link>
         <Link href="/costes">Costs</Link>
         <Link href="/ajustes">Settings</Link>
+        <Link href="/pruebas">Test mode</Link>
         <span className="muted">{user.email}</span>
         <form action={salir}><button type="submit">Sign out</button></form>
       </nav>

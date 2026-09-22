@@ -77,6 +77,59 @@ export async function ayudarResearch(
   return {};
 }
 
+export type SimularPersonaState = { error?: string; id?: string };
+
+// Modo de pruebas: lo mismo que scripts/simular.py mensaje, pero desde el
+// panel y sin tocar Python. panel_simular_persona (RLS, 0010_modo_pruebas.sql)
+// calcula el slack_user_id falso, guarda la persona y su mensaje (si lo hay,
+// tal como lo dejaría el vigilante de Slack) y encola un research manual. El
+// panel nunca corre el research en sí: eso lo hace el worker de Railway, que
+// ya sabe drenar research_jobs.
+export async function simularPersona(
+  _previo: SimularPersonaState,
+  formData: FormData,
+): Promise<SimularPersonaState> {
+  const nombre = String(formData.get("nombre") ?? "");
+  const empresa = String(formData.get("empresa") ?? "");
+  const web = String(formData.get("web") ?? "");
+  const mensaje = String(formData.get("mensaje") ?? "");
+  const notas = String(formData.get("notas") ?? "");
+  const links = String(formData.get("links") ?? "")
+    .split("\n")
+    .map((link) => link.trim())
+    .filter(Boolean);
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("panel_simular_persona", {
+    p_nombre: nombre,
+    p_empresa: empresa,
+    p_web: web,
+    p_mensaje: mensaje,
+    p_links: links,
+    p_notas: notas,
+  });
+  if (error) return { error: error.message };
+  revalidatePath("/pruebas");
+  return { id: data as string };
+}
+
+export type BorrarSimuladosResult = { borrados: number } | { error: string };
+
+// Borra solo lo que este modo (o scripts/simular.py, o tarjeta_prueba.py) creó
+// -- panel_borrar_simulados nunca toca a nadie más. No es un <form action>
+// normal porque el botón necesita el número de personas borradas para
+// mostrarlo, así que un componente cliente la llama directamente.
+export async function borrarSimulados(): Promise<BorrarSimuladosResult> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("panel_borrar_simulados");
+  if (error) return { error: error.message };
+  revalidatePath("/pruebas");
+  return { borrados: data as number };
+}
+
+export async function refrescarPruebas() {
+  revalidatePath("/pruebas");
+}
+
 export async function guardarUmbral(formData: FormData) {
   const key = String(formData.get("key"));
   const value = Number(formData.get("value"));

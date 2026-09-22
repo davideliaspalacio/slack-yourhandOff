@@ -67,9 +67,16 @@ def fake_user_id(full_name: str, company: str) -> str:
     """Id de Slack determinista para una persona simulada: el mismo nombre y
     empresa siempre caen en el mismo slack_user_id, así repetir el mismo
     `mensaje` reproduce el camino de "ya hay dossier vigente" en vez de crear
-    a alguien nuevo cada vez. El separador nulo evita que ("AB", "C") y
-    ("A", "BC") caigan en el mismo hash."""
-    digest_hex = hashlib.sha1(f"{full_name}\x00{company}".encode()).hexdigest()[:8]
+    a alguien nuevo cada vez. "|" como separador evita que ("AB", "C") y
+    ("A", "BC") caigan en el mismo hash.
+
+    Misma regla, con md5 en vez de sha1, que `panel_simular_persona`
+    (migración 0010_modo_pruebas.sql): un sha1 de verdad no se puede
+    reproducir fielmente en SQL sin la extensión pgcrypto, así que este
+    lado se cambió a la regla SQL-friendly para que la terminal y el panel
+    caigan siempre en el mismo id para la misma persona."""
+    key = f"{full_name.strip().lower()}|{company.strip().lower()}"
+    digest_hex = hashlib.md5(key.encode()).hexdigest()[:8].upper()
     return f"{FAKE_ID_PREFIX}{digest_hex}"
 
 
