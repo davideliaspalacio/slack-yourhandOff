@@ -30,6 +30,10 @@ DEGRADED_KEY = "degradado"
 # clave por su cuenta, se descarta -- son datos de `enrichment.enrich_company`,
 # nunca algo que el modelo deba inventar o repetir.
 PROVEEDOR_KEY = "datos_proveedor"
+# Como DEGRADED_KEY y PROVEEDOR_KEY: solo lo pone el código, a partir de
+# `Gathered.unconfirmed_domain` (ver research/gather.py). Si el modelo
+# devolviera esta clave por su cuenta, se descarta.
+EMPRESA_NO_CONFIRMADA_KEY = "empresa_no_confirmada"
 
 
 @dataclass(frozen=True)
@@ -96,8 +100,16 @@ def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | 
     `"datos_proveedor"` es igual de código-propia: si `gathered.proveedor` trae
     algo, se guarda tal cual (ya normalizado por `enrichment.enrich_company`);
     si el modelo devolviera esa clave por su cuenta, también se descarta.
+
+    `"empresa_no_confirmada"` es igual: si `gathered.unconfirmed_domain` trae
+    algo, se guarda `{"dominio_adivinado": ...}` tal cual; si el modelo
+    devolviera esa clave por su cuenta, también se descarta.
     """
-    content = {k: v for k, v in result.dossier.items() if k not in (DEGRADED_KEY, PROVEEDOR_KEY)}
+    content = {
+        k: v
+        for k, v in result.dossier.items()
+        if k not in (DEGRADED_KEY, PROVEEDOR_KEY, EMPRESA_NO_CONFIRMADA_KEY)
+    }
     degraded = None
     if gathered.search_degraded:
         content[DEGRADED_KEY] = True
@@ -107,6 +119,8 @@ def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | 
         )
     if gathered.proveedor:
         content[PROVEEDOR_KEY] = gathered.proveedor
+    if gathered.unconfirmed_domain:
+        content[EMPRESA_NO_CONFIRMADA_KEY] = {"dominio_adivinado": gathered.unconfirmed_domain}
     version = prospects.save_dossier(pid, content, gathered.source_records())
     if gathered.errors:
         ledger.record_action("research_errores", {"errores": gathered.errors}, prospect_id=pid)

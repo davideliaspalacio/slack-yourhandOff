@@ -1,4 +1,6 @@
+from handoff_agent import db
 from handoff_agent.research import gather as g
+from handoff_agent.tools import prospects
 from handoff_agent.tools.jobs import JobPosting
 from handoff_agent.tools.search import SearchResult, SearchUnavailable
 from handoff_agent.tools.web import PageContent, PageUnavailable
@@ -409,6 +411,199 @@ def test_gather_skips_enrichment_without_a_domain(monkeypatch):
     result = g.gather("pid", "Ada Ruiz", None)
     assert calls == []
     assert result.proveedor is None
+
+
+# --- Feature A: un dominio adivinado se confirma antes de usarse -----------
+
+
+def test_a_guessed_domain_confirmed_by_page_text_runs_no_extra_search(monkeypatch):
+    calls = []
+
+    def search(query, limit=8, prospect_id=None):
+        calls.append(query)
+        return [SearchResult("Acme — Home", "https://acme.com/", "")]
+
+    monkeypatch.setattr(g.search, "buscar_web", search)
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+
+    def leer(url, max_chars=20_000, prospect_id=None):
+        return PageContent(
+            url=url, final_url=url, title="Acme", text="Ada Ruiz is the CEO of Acme."
+        )
+
+    monkeypatch.setattr(g.web, "leer_sitio", leer)
+    result = g.gather("pid", "Ada Ruiz", "Acme")
+    assert result.domain == "acme.com"
+    assert result.unconfirmed_domain is None
+    # La página ya trae el nombre completo, así que no hace falta la búsqueda
+    # de refuerzo ('"Ada Ruiz" site:acme.com'): solo corren las búsquedas que
+    # gather() ya hacía (dominio, linkedin, prensa).
+    assert '"Ada Ruiz" site:acme.com' not in calls
+    assert result.searches_attempted == 3
+
+
+def test_a_guessed_domain_confirmed_by_a_site_search(monkeypatch):
+    def search(query, limit=8, prospect_id=None):
+        if query == '"Ada Ruiz" site:acme.com':
+            return [SearchResult("Ada Ruiz - Acme", "https://acme.com/team/ada", "")]
+        return [SearchResult("Acme — Home", "https://acme.com/", "")]
+
+    monkeypatch.setattr(g.search, "buscar_web", search)
+
+    def leer(url, max_chars=20_000, prospect_id=None):
+        return PageContent(url=url, final_url=url, title="Acme", text="No name mentioned here.")
+
+    monkeypatch.setattr(g.web, "leer_sitio", leer)
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather("pid", "Ada Ruiz", "Acme")
+    assert result.domain == "acme.com"
+    assert result.unconfirmed_domain is None
+    kinds = {e.kind for e in result.evidence}
+    assert {"home", "about", "careers"} <= kinds
+
+
+def test_an_unconfirmed_guessed_domain_is_dropped(monkeypatch):
+    def search(query, limit=8, prospect_id=None):
+        # Solo la búsqueda del dominio trae algo; la de confirmación (y
+        # linkedin/prensa, irrelevantes aquí) no traen nada.
+        if query == "Handoff official website":
+            return [SearchResult("Handoff — Home", "https://handoff.ai/", "")]
+        return []
+
+    monkeypatch.setattr(g.search, "buscar_web", search)
+
+    def leer(url, max_chars=20_000, prospect_id=None):
+        return PageContent(
+            url=url, final_url=url, title="Handoff", text="We build AI agents for enterprises."
+        )
+
+    monkeypatch.setattr(g.web, "leer_sitio", leer)
+    # Sin conexión real a la base en este test (se prueba aparte, en
+    # test_an_unconfirmed_domain_is_recorded_on_the_ledger).
+    monkeypatch.setattr(g.ledger, "record_action", lambda *a, **kw: None)
+
+    enrich_calls = []
+    monkeypatch.setattr(
+        g.enrichment,
+        "enrich_company",
+        lambda domain, prospect_id=None: enrich_calls.append(domain) or {"empleados_linkedin": 1},
+    )
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+
+    result = g.gather("pid", "David Handoff", "Handoff")
+    assert result.domain is None
+    assert result.unconfirmed_domain == "handoff.ai"
+    assert result.evidence == []
+    assert enrich_calls == []
+
+
+def test_an_unconfirmed_domain_is_recorded_on_the_ledger(conn, monkeypatch):
+    def search(query, limit=8, prospect_id=None):
+        if "site:handoff.ai" in query:
+            return []
+        return [SearchResult("Handoff — Home", "https://handoff.ai/", "")]
+
+    monkeypatch.setattr(g.search, "buscar_web", search)
+    monkeypatch.setattr(
+        g.web,
+        "leer_sitio",
+        # Ni el nombre ni el apellido aparecen: la comprobación gratis no
+        # puede confirmar nada, así que cae a la búsqueda de refuerzo.
+        lambda url, max_chars=20_000, prospect_id=None: PageContent(
+            url=url, final_url=url, title="Welcome", text="We are a company. Nothing else here."
+        ),
+    )
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+
+    pid = str(prospects.upsert_prospect("U_CONFIRM")["id"])
+    g.gather(pid, "David Handoff", "Handoff")
+    action = db.fetch_one(
+        "select payload from agent_actions where action = 'empresa_no_confirmada' "
+        "and prospect_id = %s",
+        (pid,),
+    )
+    assert action["payload"] == {"dominio_adivinado": "handoff.ai"}
+
+
+def test_a_guessed_domain_with_no_full_name_cannot_be_confirmed(monkeypatch):
+    monkeypatch.setattr(
+        g.search,
+        "buscar_web",
+        fake_search(default=[SearchResult("Handoff — Home", "https://handoff.ai/", "")]),
+    )
+    monkeypatch.setattr(
+        g.web,
+        "leer_sitio",
+        lambda url, max_chars=20_000, prospect_id=None: PageContent(
+            url=url, final_url=url, title="Handoff", text="anything"
+        ),
+    )
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    monkeypatch.setattr(g.ledger, "record_action", lambda *a, **kw: None)
+    result = g.gather("pid", None, "Handoff")
+    assert result.domain is None
+    assert result.unconfirmed_domain == "handoff.ai"
+
+
+def test_a_given_domain_email_or_override_is_never_verified(monkeypatch):
+    """domain pasado a mano (email/override en el llamante): no se guessed, así
+    que no se intenta ninguna comprobación ni búsqueda de confirmación."""
+    calls = []
+
+    def search(query, limit=8, prospect_id=None):
+        calls.append(query)
+        return []
+
+    monkeypatch.setattr(g.search, "buscar_web", search)
+    monkeypatch.setattr(
+        g.web,
+        "leer_sitio",
+        lambda url, max_chars=20_000, prospect_id=None: PageContent(
+            url=url, final_url=url, title="Acme", text="no name here at all"
+        ),
+    )
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com")
+    assert result.domain == "acme.com"
+    assert result.unconfirmed_domain is None
+    # linkedin y prensa, nada de dominio ni confirmación.
+    assert calls == [
+        'site:linkedin.com/in "Ada Ruiz" "Acme"',
+        '"Acme" funding OR raises OR hiring',
+    ]
+
+
+def test_confirmation_search_outage_leaves_the_domain_unconfirmed(monkeypatch):
+    def search(query, limit=8, prospect_id=None):
+        if query == "Handoff official website":
+            return [SearchResult("Handoff — Home", "https://handoff.ai/", "")]
+        raise SearchUnavailable("motores vetados")
+
+    monkeypatch.setattr(g.search, "buscar_web", search)
+    monkeypatch.setattr(
+        g.web,
+        "leer_sitio",
+        lambda url, max_chars=20_000, prospect_id=None: PageContent(
+            url=url, final_url=url, title="Handoff", text="nothing relevant"
+        ),
+    )
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    monkeypatch.setattr(g.ledger, "record_action", lambda *a, **kw: None)
+    result = g.gather("pid", "David Handoff", "Handoff")
+    assert result.domain is None
+    assert result.unconfirmed_domain == "handoff.ai"
+    assert any("confirmar_dominio" in err for err in result.errors)
+
+
+def test_name_confirms_page_requires_two_tokens():
+    assert g._name_confirms_page("Ada", "Ada is here, Ada works at Acme") is False
+
+
+def test_name_confirms_page_matches_first_and_last_near_each_other():
+    assert g._name_confirms_page("Ada Ruiz", "Meet Ada Ruiz, our CEO") is True
+    assert g._name_confirms_page("Ada Ruiz", "Ada, CEO — no last name mentioned") is False
+    far_apart = "Ruiz " + "filler " * 10 + "and here comes Ada"
+    assert g._name_confirms_page("Ada Ruiz", far_apart) is False
 
 
 def test_tld_name_does_not_match_through_tld_label(monkeypatch):

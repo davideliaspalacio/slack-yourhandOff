@@ -1,9 +1,13 @@
 """Take one job from the queue and research that person.
 
 The Slack profile feeds the research: the real name, a company parsed from the
-title and, best of all, a company domain from a work email. System stops and
-a dead token hand the job back untouched and propagate -- they need a person,
-not a retry.
+title and, best of all, a company domain from a work email. A person can also
+correct the domain by hand from the panel (`prospects.company_domain_override`,
+set through the `panel_corregir_web` RPC): that override outranks the email,
+because someone fixed it on purpose after seeing a wrong guess. Both the
+override and the email are trusted domains -- research/gather.py only ever
+verifies a domain it had to guess itself. System stops and a dead token hand
+the job back untouched and propagate -- they need a person, not a retry.
 
 `queue.complete`/`fail`/`give_up`/`release` are guarded so they only ever
 change the job this worker actually claimed (see queue.py's started_at
@@ -18,6 +22,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from .. import db
 from ..delivery import sms
 from ..delivery.deliver import deliver_for
 from ..research import worker
@@ -30,6 +35,17 @@ logger = logging.getLogger(__name__)
 # Estados de ResearchOutcome que dejaron un dossier entregable. "omitido" (bot,
 # descartado, dossier aún vigente) no trae una versión nueva que anunciar.
 DELIVERABLE_STATUSES = ("investigado", "incompleto")
+
+
+def _domain_override(slack_user_id: str) -> str | None:
+    """Lo que alguien fijó a mano desde el panel (`panel_corregir_web`), si lo
+    hay. Se guarda en `prospects`, así que hace falta que la persona ya
+    exista -- para alguien nuevo aún no hay fila, y por tanto no hay override."""
+    row = db.fetch_one(
+        "select company_domain_override from prospects where slack_user_id = %s",
+        (slack_user_id,),
+    )
+    return row["company_domain_override"] if row else None
 
 
 @dataclass(frozen=True)
@@ -79,7 +95,7 @@ def run_next_job(reader) -> RunResult | None:
         return RunResult("omitido", uid, reason)
 
     company = company_from_title(profile.title)
-    domain = domain_from_email(profile.email)
+    domain = _domain_override(uid) or domain_from_email(profile.email)
     try:
         outcome = worker.research_person(
             profile.real_name or None,

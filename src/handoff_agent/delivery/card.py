@@ -38,6 +38,13 @@ EMOJI = {"alta": "🔥", "media": "👀", "baja": "📋"}
 # bands.py), solo la cabecera de la tarjeta se traduce.
 BAND_LABELS = {"alta": "HIGH", "media": "MEDIUM", "baja": "LOW"}
 
+# `empresa_no_confirmada` (ver research/worker.py, a partir de
+# Gathered.unconfirmed_domain): igual que el resto del dossier, se trata como
+# escrito por un tercero -- nunca se confía en su tipo, solo se valida su
+# presencia. El dominio es corto en la práctica, pero se escapa y se recorta
+# igual que cualquier otro campo de texto.
+UNCONFIRMED_DOMAIN_CHARS = 200
+
 # `datos_proveedor` (ver research/worker.py): datos de un proveedor externo,
 # sin fuente citable. Igual que el resto del dossier, se trata como escrito
 # por un tercero -- nunca se confía en su tipo, solo se valida su presencia.
@@ -290,6 +297,28 @@ def _proveedor_block(dossier: dict) -> dict | None:
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
 
 
+def _unconfirmed_domain_block(dossier: dict) -> dict | None:
+    """Aviso cuando la web se adivinó y no se pudo confirmar (ver
+    research/gather.py `_confirm_domain`): el resto del dossier puede
+    describir la empresa equivocada, y solo el panel puede corregirlo."""
+    info = dossier.get("empresa_no_confirmada")
+    if not isinstance(info, dict):
+        return None
+    domain = info.get("dominio_adivinado")
+    if not isinstance(domain, str) or not domain.strip():
+        return None
+    # Solo el dominio pasa por _escape_and_cap: es el único trozo de este
+    # bloque que no lo escribimos nosotros. El resto del texto es fijo y
+    # corto, así que el bloque entero cabe de sobra en el tope de 2000
+    # caracteres de un bloque `context` sin necesidad de recortarlo también.
+    escaped_domain = _escape_and_cap(domain, UNCONFIRMED_DOMAIN_CHARS)
+    text = (
+        f"⚠️ Company not confirmed (guessed website: {escaped_domain} was discarded). "
+        "Set the right website in the panel and re-research."
+    )
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
+
+
 def build(
     person: dict,
     dossier: dict,
@@ -308,6 +337,10 @@ def build(
     blocks: list[dict] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": header}},
     ]
+
+    unconfirmed_block = _unconfirmed_domain_block(dossier)
+    if unconfirmed_block:
+        blocks.append(unconfirmed_block)
 
     if message and (message.get("text") or "").strip():
         blocks.append(

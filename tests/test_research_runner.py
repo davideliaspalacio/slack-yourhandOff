@@ -7,6 +7,7 @@ from handoff_agent.ingest import queue
 from handoff_agent.ingest import research_runner as runner
 from handoff_agent.research.worker import ResearchOutcome
 from handoff_agent.slack_client import SlackAuthFailed
+from handoff_agent.tools import prospects
 from tests.slack_fakes import FakeReader
 
 
@@ -59,6 +60,39 @@ def test_a_job_is_researched_with_what_the_profile_tells_us(conn, reader, monkey
     ]
     assert job()["status"] == "hecho"
     assert job()["outcome"]["estado"] == "investigado"
+
+
+def test_a_panel_override_beats_the_email_domain(conn, reader, monkeypatch):
+    """`company_domain_override` (puesto a mano desde el panel, ver
+    ingest/research_runner.py `_domain_override`) gana al dominio del correo:
+    alguien ya lo corrigió a propósito tras ver una adivinanza equivocada."""
+    prospects.upsert_prospect("U1", full_name="Ada Ruiz")
+    db.execute(
+        "update prospects set company_domain_override = 'override.example' "
+        "where slack_user_id = 'U1'"
+    )
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["domain"] == "override.example"
+
+
+def test_the_email_domain_is_used_when_there_is_no_override(conn, reader, monkeypatch):
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["domain"] == "acme.com"
+
+
+def test_no_override_and_no_work_email_leaves_the_domain_to_be_guessed(conn, monkeypatch):
+    reader = FakeReader()
+    reader.add_profile("U3", "Bob Nadie", title="CEO @ Nadie", email="bob@gmail.com")
+    queue.enqueue("U3", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    # Sin override y con un correo personal (gmail), domain_from_email
+    # descarta el dominio: research/gather.py es quien adivina, no el runner.
+    assert seen[0]["domain"] is None
 
 
 def test_a_manual_job_forces_research_but_a_mensaje_job_does_not(conn, reader, monkeypatch):

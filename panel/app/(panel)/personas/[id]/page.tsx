@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ESTADOS_EDITABLES, accionLabel, bandLabel, estadoLabel, fecha, jobStatusLabel, reasonLabel, usd } from "@/lib/format";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
+import { CorregirWebForm } from "./CorregirWebForm";
 
 type Senal = { hecho?: string; fuente?: string };
 type Lugar = { ciudad?: string; region?: string; pais?: string };
@@ -46,6 +47,10 @@ type Dossier = {
   huecos?: string[];
   resumen?: string;
   datos_proveedor?: DatosProveedor;
+  // Puesto por research/worker.py cuando la web se adivinó y no se pudo
+  // confirmar (research/gather.py `_confirm_domain`): el modelo nunca escribe
+  // esta clave.
+  empresa_no_confirmada?: { dominio_adivinado?: string };
 };
 // Las 6 filas de la primera prueba guardan URLs sueltas; las demás, objetos.
 type Fuente = string | { url: string; kind?: string; title?: string };
@@ -152,6 +157,21 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
                 {abierta ? "Already queued" : "Research again"}
               </button>
             </form>
+          </div>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>Company website</h2>
+            <p>
+              {p.company_domain_override
+                ? <>{p.company_domain_override} <span className="muted">(set manually)</span></>
+                : p.company_domain ?? <span className="muted">No website on file.</span>}
+            </p>
+            {d.empresa_no_confirmada?.dominio_adivinado && (
+              <p className="notice">
+                Company not confirmed: the guessed website ({d.empresa_no_confirmada.dominio_adivinado}){" "}
+                was discarded. Set the right one below.
+              </p>
+            )}
+            <CorregirWebForm id={p.id} discarded={p.state === "descartado"} />
           </div>
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Spend on this person</h2>

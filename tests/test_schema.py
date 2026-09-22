@@ -11,7 +11,7 @@ def test_prospects_table_exists_with_expected_columns(conn):
             "select column_name from information_schema.columns where table_name = 'prospects'"
         )
         columns = {row[0] for row in cur.fetchall()}
-    assert {"id", "slack_user_id", "state", "company_domain"} <= columns
+    assert {"id", "slack_user_id", "state", "company_domain", "company_domain_override"} <= columns
 
 
 def test_prospect_state_defaults_to_nuevo(conn):

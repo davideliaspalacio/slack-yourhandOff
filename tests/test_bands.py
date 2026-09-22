@@ -99,3 +99,22 @@ def test_a_true_score_is_rejected(conn):
 def test_a_dossier_without_a_usable_score_is_not_delivered(conn):
     assert bands.band_for({}) is None
     assert bands.band_for({"encaje_handoff": {"puntuacion": "alta"}}) is None
+
+
+# --- empresa_no_confirmada baja "alta" a "media": sin SMS con empresa dudosa -
+
+
+def test_an_unconfirmed_company_downgrades_alta_to_media(conn):
+    payload = {**dossier(3), "empresa_no_confirmada": {"dominio_adivinado": "handoff.ai"}}
+    assert bands.band_for(payload) == "media"
+
+
+def test_an_unconfirmed_company_does_not_change_media_or_baja(conn):
+    media = {**dossier(2), "empresa_no_confirmada": {"dominio_adivinado": "handoff.ai"}}
+    baja = {**dossier(1), "empresa_no_confirmada": {"dominio_adivinado": "handoff.ai"}}
+    assert bands.band_for(media) == "media"
+    assert bands.band_for(baja) == "baja"
+
+
+def test_a_confirmed_company_keeps_alta(conn):
+    assert bands.band_for(dossier(3)) == "alta"

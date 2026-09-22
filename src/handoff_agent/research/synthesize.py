@@ -95,6 +95,17 @@ class Synthesis:
 
 
 def _domain_line(gathered: Gathered) -> str:
+    if gathered.unconfirmed_domain:
+        # research/gather.py ya descartó las páginas de este dominio (no están
+        # en la evidencia de abajo) y no llamó al webhook de enriquecimiento
+        # con él: el modelo no puede describir esa empresa como la de esta
+        # persona sin que otra evidencia lo respalde.
+        return (
+            f"Dominio detectado: ninguno (se descartó la web adivinada por búsqueda "
+            f'"{gathered.unconfirmed_domain}" -- no se pudo confirmar que sea la web de '
+            "esta empresa; no la describas como la empresa de esta persona salvo que otra "
+            "evidencia lo respalde, y dilo en huecos)"
+        )
     line = f"Dominio detectado: {gathered.domain or 'ninguno'}"
     if gathered.domain and gathered.domain_guessed:
         line += (

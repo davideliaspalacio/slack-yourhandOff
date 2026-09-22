@@ -598,3 +598,73 @@ def test_store_omits_datos_proveedor_when_there_is_none(conn, pipeline):
         "select content from dossiers where prospect_id = %s", (outcome.prospect_id,)
     )
     assert "datos_proveedor" not in stored["content"]
+
+
+# --- empresa_no_confirmada: código-propio, nunca lo pone el modelo -----------
+
+
+def gather_with_unconfirmed_domain(unconfirmed_domain):
+    def fake(pid, full_name, company, domain=None):
+        return Gathered(
+            None,
+            [Evidence("home", "https://acme.com/", "Acme", "t")],
+            [],
+            [],
+            unconfirmed_domain=unconfirmed_domain,
+        )
+
+    return fake
+
+
+def test_store_writes_the_unconfirmed_domain_marker(conn, pipeline):
+    pipeline.setattr(w, "gather", gather_with_unconfirmed_domain("handoff.ai"))
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    outcome = w.research_person("David", "Handoff")
+    stored = db.fetch_one(
+        "select content from dossiers where prospect_id = %s", (outcome.prospect_id,)
+    )
+    assert stored["content"]["empresa_no_confirmada"] == {"dominio_adivinado": "handoff.ai"}
+
+
+def test_store_drops_a_model_supplied_empresa_no_confirmada(conn, pipeline):
+    pipeline.setattr(w, "gather", gather_with_unconfirmed_domain(None))
+    pipeline.setattr(
+        w,
+        "synthesize",
+        synth_returning(make_dossier(empresa_no_confirmada={"dominio_adivinado": "evil.example"})),
+    )
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    stored = db.fetch_one(
+        "select content from dossiers where prospect_id = %s", (outcome.prospect_id,)
+    )
+    assert "empresa_no_confirmada" not in stored["content"]
+
+
+def test_store_omits_empresa_no_confirmada_when_there_is_none(conn, pipeline):
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    stored = db.fetch_one(
+        "select content from dossiers where prospect_id = %s", (outcome.prospect_id,)
+    )
+    assert "empresa_no_confirmada" not in stored["content"]
+
+
+def test_a_discarded_guess_does_not_overwrite_the_stored_company_domain(conn, pipeline):
+    """`gathered.domain` es None cuando se descarta el dominio adivinado:
+    _set_state usa coalesce, así que no debe borrar un company_domain previo."""
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier(), make_dossier()))
+    first = w.research_person("Ada Ruiz", "Acme")
+    assert (
+        db.fetch_one("select company_domain from prospects where id = %s", (first.prospect_id,))[
+            "company_domain"
+        ]
+        == "acme.com"
+    )
+
+    pipeline.setattr(w, "gather", gather_with_unconfirmed_domain("evil.example"))
+    again = w.research_person("Ada Ruiz", "Acme", force=True)
+    assert again.status == "investigado"
+    person = db.fetch_one(
+        "select company_domain from prospects where id = %s", (first.prospect_id,)
+    )
+    assert person["company_domain"] == "acme.com"

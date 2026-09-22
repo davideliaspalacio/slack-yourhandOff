@@ -13,11 +13,16 @@ import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from .. import ledger
 from ..tools import enrichment, jobs, search, web
 
 PAGE_CHARS = 6_000
 CANDIDATE_PATHS = {"home": "/", "about": "/about", "careers": "/careers"}
 MIN_AFFIX_CHARS = 5  # Shorter names glued to another word match unrelated domains
+# Cuántas palabras de distancia entre nombre y apellido cuentan como "cerca":
+# adyacentes cubre "Ada Ruiz" tal cual, la ventana cubre "Ada Ruiz, CEO de Acme"
+# donde el cargo se cuela en medio.
+NAME_MATCH_WINDOW = 6
 
 # Results that are about the company but are not the company's own site.
 NOT_A_COMPANY_SITE = (
@@ -86,6 +91,11 @@ class Gathered:
     # Dato de proveedor externo (sin verificar), del webhook de enriquecimiento.
     # None si no hay dominio, no hay webhook configurado, o el webhook falló.
     proveedor: dict | None = None
+    # El dominio adivinado que se descartó por no poder confirmarse (ver
+    # `_confirm_domain`): `domain` queda en None y esto guarda cuál era, para
+    # que la síntesis y la tarjeta puedan avisar sin volver a afirmar que es
+    # la empresa de la persona.
+    unconfirmed_domain: str | None = None
 
     @property
     def sources(self) -> set[str]:
@@ -197,6 +207,62 @@ def resolve_domain(company: str, prospect_id: str, tally: SearchTally | None = N
     return None
 
 
+def _name_tokens(full_name: str) -> list[str]:
+    return [t for t in _ascii_words(full_name) if len(t) >= 2]
+
+
+def _name_confirms_page(full_name: str, text: str) -> bool:
+    """Comprobación gratis (sin gastar una búsqueda): la página confirma el
+    dominio si el nombre y el apellido de la persona aparecen a menos de
+    NAME_MATCH_WINDOW palabras uno del otro. Adyacentes cubre el nombre
+    completo tal cual ("Ada Ruiz"); la ventana cubre variantes como "Ada Ruiz,
+    CEO de Acme", donde el cargo se cuela en medio. Con menos de dos tokens en
+    el nombre (uno solo, o ninguno) no hay apellido con el que cruzar, así que
+    esta comprobación no puede confirmar nada -- keep it simple."""
+    tokens = _name_tokens(full_name)
+    if len(tokens) < 2:
+        return False
+    first, last = tokens[0], tokens[-1]
+    words = _ascii_words(text)
+    firsts = [i for i, w in enumerate(words) if w == first]
+    lasts = [i for i, w in enumerate(words) if w == last]
+    return any(abs(i - j) <= NAME_MATCH_WINDOW for i in firsts for j in lasts)
+
+
+def _confirm_domain(
+    full_name: str | None,
+    domain: str,
+    site_evidence: list[Evidence],
+    tally: SearchTally,
+    prospect_id: str,
+    errors: list[str],
+) -> bool:
+    """Un dominio adivinado por búsqueda se usa solo si se puede confirmar que
+    es la web de esta persona: nombres comunes ("Handoff" -> handoff.ai en vez
+    de yourhandoff.com) adivinan mal con frecuencia, y de ahí sale el resto del
+    dossier -- la web, el webhook de enriquecimiento, todo.
+
+    Primero la comprobación gratis, sobre las páginas ya leídas; si no
+    confirma nada, una única búsqueda de refuerzo (`"<nombre>" site:<dominio>`,
+    que ya pasa por el ledger como cualquier otra). Sin nombre completo no hay
+    con qué confirmar, así que no se intenta ninguna de las dos.
+    """
+    if not full_name:
+        return False
+    if any(_name_confirms_page(full_name, f"{e.title}\n{e.text}") for e in site_evidence):
+        return True
+    try:
+        results = tally.run(f'"{full_name}" site:{domain}', limit=8, prospect_id=prospect_id)
+    except search.SearchUnavailable as exc:
+        errors.append(f"confirmar_dominio: {exc}")
+        return False
+    for r in results:
+        host = (urlparse(r.url).hostname or "").removeprefix("www.")
+        if host and (host == domain or host.endswith("." + domain)):
+            return True
+    return False
+
+
 def _search_into(evidence, errors, tally, kind, query, limit, prospect_id) -> None:
     try:
         for r in tally.run(query, limit=limit, prospect_id=prospect_id):
@@ -224,15 +290,33 @@ def gather(
         except search.SearchUnavailable as exc:
             errors.append(f"dominio: {exc}")
 
+    unconfirmed_domain = None
     if domain:
+        site_evidence: list[Evidence] = []
         for kind, path in CANDIDATE_PATHS.items():
             try:
                 page = web.leer_sitio(
                     f"https://{domain}{path}", max_chars=PAGE_CHARS, prospect_id=prospect_id
                 )
-                evidence.append(Evidence(kind, page.final_url, page.title, page.text))
+                site_evidence.append(Evidence(kind, page.final_url, page.title, page.text))
             except web.PageUnavailable as exc:
                 errors.append(f"{kind}: {exc}")
+
+        if domain_guessed and not _confirm_domain(
+            full_name, domain, site_evidence, tally, prospect_id, errors
+        ):
+            # No se pudo confirmar que sea la web de esta persona: se descartan
+            # sus páginas (no alimentan al modelo) y no se llama al webhook de
+            # enriquecimiento con una empresa que puede ser otra.
+            unconfirmed_domain = domain
+            domain = None
+            ledger.record_action(
+                "empresa_no_confirmada",
+                {"dominio_adivinado": unconfirmed_domain},
+                prospect_id=prospect_id,
+            )
+        else:
+            evidence.extend(site_evidence)
 
     if full_name:
         # Fragmentos del buscador, nunca la página: descargar LinkedIn va contra
@@ -267,4 +351,5 @@ def gather(
         searches_answered=tally.answered,
         domain_guessed=domain_guessed,
         proveedor=proveedor,
+        unconfirmed_domain=unconfirmed_domain,
     )

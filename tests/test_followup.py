@@ -107,3 +107,15 @@ def test_run_followup_keeps_no_provider_data_as_none(monkeypatch):
     monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
     start = Gathered("acme.com", [], [], [], proveedor=None)
     assert f.run_followup("pid", start, ["x"]).proveedor is None
+
+
+def test_run_followup_carries_the_unconfirmed_domain(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    start = Gathered(None, [], [], [], unconfirmed_domain="handoff.ai")
+    assert f.run_followup("pid", start, ["x"]).unconfirmed_domain == "handoff.ai"
+
+
+def test_run_followup_keeps_no_unconfirmed_domain_as_none(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    start = Gathered("acme.com", [], [], [], unconfirmed_domain=None)
+    assert f.run_followup("pid", start, ["x"]).unconfirmed_domain is None

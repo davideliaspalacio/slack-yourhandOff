@@ -175,6 +175,17 @@ def test_the_prompt_warns_when_the_domain_was_guessed():
     assert "adivinado" not in s.build_prompt("Ada", "Acme", given)
 
 
+def test_the_prompt_warns_when_the_guessed_domain_was_discarded():
+    unconfirmed = Gathered(domain=None, evidence=[], jobs=[], unconfirmed_domain="handoff.ai")
+    prompt = s.build_prompt("David", "Handoff", unconfirmed)
+    assert "handoff.ai" in prompt
+    assert "no se pudo confirmar" in prompt
+    assert "huecos" in prompt
+    # Un dominio sin confirmar no debe seguir avisando de "adivinado": ese
+    # mensaje es para cuando SÍ hay evidencia de la web, y aquí no la hay.
+    assert "Dominio detectado: ninguno" in prompt
+
+
 def test_provider_data_is_fenced_with_an_instruction_outside_the_fence():
     proveedor = {"empleados_linkedin": 16679, "fuente": "proveedor externo (sin verificar)"}
     with_provider = Gathered(domain="acme.com", evidence=[], jobs=[], proveedor=proveedor)

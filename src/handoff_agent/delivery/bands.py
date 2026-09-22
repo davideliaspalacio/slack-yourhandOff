@@ -19,9 +19,19 @@ def band_for(dossier: dict) -> str | None:
         return None
 
     if score >= db_config.value("banda_alta_min", 3):
-        return "alta"
-    if score >= db_config.value("banda_media_min", 2):
+        band = "alta"
+    elif score >= db_config.value("banda_media_min", 2):
+        band = "media"
+    elif score >= db_config.value("banda_baja_min", 1):
+        band = "baja"
+    else:
+        return None
+
+    # `empresa_no_confirmada` (research/worker.py, a partir de
+    # Gathered.unconfirmed_domain): la web se adivinó y no se pudo confirmar,
+    # así que el dossier puede describir la empresa equivocada. Una "alta" baja
+    # a "media" para no disparar el SMS con esa incertidumbre; el resto de
+    # bandas se queda igual, ya no llevan SMS.
+    if band == "alta" and dossier.get("empresa_no_confirmada"):
         return "media"
-    if score >= db_config.value("banda_baja_min", 1):
-        return "baja"
-    return None
+    return band

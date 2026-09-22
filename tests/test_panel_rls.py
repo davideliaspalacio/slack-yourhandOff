@@ -131,3 +131,73 @@ def test_the_cost_view_respects_the_allowlist(people):
     assert as_user(STRANGER, "select * from panel_costes_diarios") == []
     rows = as_user(ALLOWED, "select usd from panel_costes_diarios")
     assert float(rows[0]["usd"]) == 0.5
+
+
+# --- panel_corregir_web (Plan de verificación de dominio, parte B) ----------
+
+
+def prospect_id():
+    return db.fetch_one("select id from prospects where slack_user_id = 'U1'")["id"]
+
+
+def override_of(pid):
+    return db.fetch_one("select company_domain_override from prospects where id = %s", (pid,))[
+        "company_domain_override"
+    ]
+
+
+def test_an_allowed_user_can_correct_the_website(people):
+    pid = prospect_id()
+    as_user(ALLOWED, "select panel_corregir_web(%s, %s)", (pid, "https://www.Acme.com/about"))
+    assert override_of(pid) == "acme.com"
+    job = db.fetch_one("select reason, status, slack_user_id from research_jobs")
+    assert (job["reason"], job["status"], job["slack_user_id"]) == ("manual", "pendiente", "U1")
+
+
+def test_a_stranger_cannot_correct_the_website(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException):
+        as_user(STRANGER, "select panel_corregir_web(%s, %s)", (pid, "acme.com"))
+    assert override_of(pid) is None
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 0
+
+
+def test_an_unauthenticated_request_cannot_correct_the_website(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException):
+        as_user(None, "select panel_corregir_web(%s, %s)", (pid, "acme.com"))
+    assert override_of(pid) is None
+
+
+def test_an_invalid_domain_is_rejected(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException):
+        as_user(ALLOWED, "select panel_corregir_web(%s, %s)", (pid, "not a domain"))
+    assert override_of(pid) is None
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 0
+
+
+def test_correcting_the_website_of_a_discarded_person_sets_no_job(people):
+    pid = prospect_id()
+    db.execute("update prospects set state = 'descartado' where id = %s", (pid,))
+    as_user(ALLOWED, "select panel_corregir_web(%s, %s)", (pid, "acme.com"))
+    assert override_of(pid) == "acme.com"
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 0
+
+
+def test_authenticated_cannot_write_the_override_column_directly(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(
+            ALLOWED,
+            "update prospects set company_domain_override = 'acme.com' where id = %s",
+            (pid,),
+        )
+
+
+def test_correcting_the_website_with_a_job_already_open_does_not_duplicate(people):
+    pid = prospect_id()
+    db.execute("insert into research_jobs (slack_user_id, reason) values ('U1', 'mensaje')")
+    as_user(ALLOWED, "select panel_corregir_web(%s, %s)", (pid, "acme.com"))
+    assert override_of(pid) == "acme.com"
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 1

@@ -52,4 +52,7 @@ def run_followup(prospect_id: str, gathered: Gathered, queries: list[str]) -> Ga
         # El seguimiento no vuelve a llamar al webhook: ya se pagó y se guardó
         # en la primera pasada.
         proveedor=gathered.proveedor,
+        # Igual que `proveedor`: la confirmación del dominio ya se decidió en
+        # la primera pasada, el seguimiento solo la arrastra.
+        unconfirmed_domain=gathered.unconfirmed_domain,
     )

@@ -199,6 +199,7 @@ def test_a_fully_hostile_card_stays_under_every_slack_block_limit():
             {"hecho": "&" * 1000, "fuente": "https://tc.com/" + "c" * 5000},
         ],
         "resumen": "&" * 5000,
+        "empresa_no_confirmada": {"dominio_adivinado": "<!channel>&" * 200},
     }
     blocks = card.build(PERSON, hostile_dossier, "alta", hostile_message, "https://slack.com/p1")
     for block in blocks:
@@ -326,6 +327,7 @@ def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
         ],
         "encaje_handoff": {"puntuacion": hostile_number, "razon": hostile_text},
         "resumen": hostile_text,
+        "empresa_no_confirmada": {"dominio_adivinado": hostile_text},
     }
     message = {"text": hostile_text, "ts": hostile_text}
 
@@ -557,6 +559,31 @@ def test_the_rendered_card_has_no_leftover_spanish_labels():
     ]
     for leftover in spanish_leftovers:
         assert leftover not in text, f"leftover Spanish label found in the card: {leftover!r}"
+
+
+def test_unconfirmed_domain_warning_is_shown_when_present():
+    dossier = {**DOSSIER, "empresa_no_confirmada": {"dominio_adivinado": "handoff.ai"}}
+    text = blocks_text(card.build(PERSON, dossier, "media", None, None))
+    assert "Company not confirmed" in text
+    assert "handoff.ai" in text
+    assert "Set the right website in the panel and re-research." in text
+
+
+def test_no_unconfirmed_domain_warning_when_absent():
+    text = blocks_text(card.build(PERSON, DOSSIER, "alta", None, None))
+    assert "Company not confirmed" not in text
+
+
+def test_unconfirmed_domain_warning_ignored_when_not_a_dict():
+    dossier = {**DOSSIER, "empresa_no_confirmada": "handoff.ai"}
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "Company not confirmed" not in text
+
+
+def test_unconfirmed_domain_warning_ignored_without_a_usable_domain():
+    dossier = {**DOSSIER, "empresa_no_confirmada": {"dominio_adivinado": ""}}
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "Company not confirmed" not in text
 
 
 def test_a_uuid_id_from_the_database_is_serialisable():
