@@ -218,7 +218,30 @@ def _proveedor_areas(areas: object) -> list[tuple[str, int]]:
     return [(k, safe[k]) for k in selected]
 
 
-def _proveedor_growth(crecimiento: object) -> str | None:
+def _growth_from_series(evolucion: object) -> str | None:
+    """Crecimiento a 12 meses calculado de la evolución mensual: es el dato
+    coherente con el recuento de empleados. El `crecimiento` del proveedor usa
+    otra base y con Stripe daba +0,14 % mientras la serie mostraba +24 %."""
+    if not isinstance(evolucion, list):
+        return None
+    counts = [
+        item.get("empleados")
+        for item in evolucion
+        if isinstance(item, dict) and _proveedor_int(item.get("empleados")) is not None
+    ]
+    if len(counts) <= PROVEEDOR_GROWTH_MONTHS or counts[-PROVEEDOR_GROWTH_MONTHS - 1] <= 0:
+        return None
+    before, now = counts[-PROVEEDOR_GROWTH_MONTHS - 1], counts[-1]
+    value = round((now - before) * 100 / before)
+    sign = "+" if value >= 0 else ""
+    return f"{sign}{value}% en {PROVEEDOR_GROWTH_MONTHS} meses"
+
+
+def _proveedor_growth(proveedor: dict) -> str | None:
+    from_series = _growth_from_series(proveedor.get("evolucion_mensual"))
+    if from_series:
+        return from_series
+    crecimiento = proveedor.get("crecimiento")
     if not isinstance(crecimiento, list):
         return None
     for item in crecimiento:
@@ -227,9 +250,9 @@ def _proveedor_growth(crecimiento: object) -> str | None:
         pct = item.get("porcentaje")
         if isinstance(pct, bool) or not isinstance(pct, (int, float)):
             continue
-        value = round(pct * 100)
-        sign = "+" if value >= 0 else ""
-        return f"{sign}{value}% en {PROVEEDOR_GROWTH_MONTHS} meses"
+        # El proveedor ya lo da en puntos porcentuales (0.1439 = 0,14 %).
+        sign = "+" if pct >= 0 else ""
+        return f"{sign}{pct:.1f}% en {PROVEEDOR_GROWTH_MONTHS} meses"
     return None
 
 
@@ -249,7 +272,7 @@ def _proveedor_block(dossier: dict) -> dict | None:
     if empleados is not None:
         bits.append(f"{_format_int_es(empleados)} empleados")
 
-    growth = _proveedor_growth(proveedor.get("crecimiento"))
+    growth = _proveedor_growth(proveedor)
     if growth:
         bits.append(growth)
 

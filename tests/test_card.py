@@ -334,6 +334,9 @@ def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
 
 PROVEEDOR = {
     "empleados_linkedin": 16679,
+    # 13 meses de serie: de 13.440 a 16.679 es +24 %.
+    "evolucion_mensual": [{"mes": f"m{i}", "empleados": 13440} for i in range(12)]
+    + [{"mes": "m12", "empleados": 16679}],
     "empleados_crm": 8000,
     "crecimiento": [
         {"meses": 6, "cambio_neto": 12, "porcentaje": 0.072},
@@ -355,9 +358,17 @@ def test_the_provider_block_has_the_expected_content():
     context_texts = [b["elements"][0]["text"] for b in blocks if b["type"] == "context"]
     text = next(t for t in context_texts if "Proveedor (sin verificar)" in t)
     assert text == (
-        "Proveedor (sin verificar): 16.679 empleados · +14% en 12 meses · "
+        "Proveedor (sin verificar): 16.679 empleados · +24% en 12 meses · "
         "soporte 334 · operaciones 1.260 · ventas 1.136"
     )
+
+
+def test_without_a_monthly_series_the_provider_growth_is_already_a_percentage():
+    """0.1439 del proveedor es 0,14 %, no 14 %."""
+    proveedor = {k: v for k, v in PROVEEDOR.items() if k != "evolucion_mensual"}
+    blocks = card.build(PERSON, {**DOSSIER, "datos_proveedor": proveedor}, "alta", None, None)
+    assert "+0.1% en 12 meses" in blocks_text(blocks)
+    assert "+14%" not in blocks_text(blocks)
 
 
 def test_no_provider_block_when_the_dossier_has_no_provider_data():

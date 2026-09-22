@@ -13,6 +13,8 @@ type DatosProveedor = {
   empleados_crm?: number;
   rango_empleados?: { min?: number; max?: number };
   empleados_por_area?: Record<string, number>;
+  evolucion_mensual?: { mes: string; empleados: number }[];
+  // porcentaje ya viene en puntos porcentuales (0.14 = 0,14 %).
   crecimiento?: { meses: number; cambio_neto: number; porcentaje: number }[];
   ingresos_anuales_usd?: number;
   anio_fundacion?: number;
@@ -23,6 +25,17 @@ type DatosProveedor = {
   antiguedad_media?: string;
   consultado?: string;
 };
+// Crecimiento a 12 meses calculado de la serie mensual: es el dato coherente
+// con el recuento de empleados; el `crecimiento` del proveedor usa otra base.
+function crecimientoSerie(serie?: { mes: string; empleados: number }[]) {
+  if (!serie || serie.length < 13) return null;
+  const antes = serie[serie.length - 13];
+  const ahora = serie[serie.length - 1];
+  if (!antes.empleados) return null;
+  const pct = ((ahora.empleados - antes.empleados) * 100) / antes.empleados;
+  return { antes, ahora, pct };
+}
+
 type Dossier = {
   persona?: { nombre?: string; cargo?: string; fuente?: string };
   empresa?: { nombre?: string; dominio?: string; sector?: string; empleados_aprox?: number;
@@ -227,6 +240,16 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
               </tbody></table>
             </>
           )}
+          {(() => {
+            const serie = crecimientoSerie(d.datos_proveedor.evolucion_mensual);
+            return serie ? (
+              <p>
+                Plantilla en 12 meses: {serie.antes.empleados.toLocaleString("es")} ({serie.antes.mes})
+                {" → "}{serie.ahora.empleados.toLocaleString("es")} ({serie.ahora.mes}),{" "}
+                {serie.pct >= 0 ? "+" : ""}{serie.pct.toFixed(0)}%
+              </p>
+            ) : null;
+          })()}
           {d.datos_proveedor.crecimiento?.length ? (
             <>
               <h3>Crecimiento de la plantilla</h3>
@@ -234,7 +257,7 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
                 {d.datos_proveedor.crecimiento.map((c, i) => (
                   <li key={i}>
                     {c.meses} meses: {c.cambio_neto >= 0 ? "+" : ""}{c.cambio_neto}
-                    {" "}({(c.porcentaje * 100).toFixed(1)}%)
+                    {" "}({c.porcentaje.toFixed(2)}% según el proveedor)
                   </li>
                 ))}
               </ul>

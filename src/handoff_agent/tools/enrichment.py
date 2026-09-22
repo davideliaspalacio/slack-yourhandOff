@@ -133,6 +133,7 @@ def _crecimiento(crm: dict) -> list[dict] | None:
             continue
         meses = _safe_int(item.get("monthRange"))
         cambio = _safe_int(item.get("netChange"))
+        # growthPercentage ya viene en puntos porcentuales: 0.1439 es 0,14 %.
         porcentaje = _safe_float(item.get("growthPercentage"))
         if meses is None or cambio is None or porcentaje is None:
             continue
