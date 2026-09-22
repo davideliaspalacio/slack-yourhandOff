@@ -201,3 +201,164 @@ def test_correcting_the_website_with_a_job_already_open_does_not_duplicate(peopl
     as_user(ALLOWED, "select panel_corregir_web(%s, %s)", (pid, "acme.com"))
     assert override_of(pid) == "acme.com"
     assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 1
+
+
+# --- panel_ayudar_research (Task 2: help the research from the panel) ------
+
+
+def helped(pid):
+    return db.fetch_one(
+        "select company_name_override, company_domain_override, research_links, "
+        "research_notes from prospects where id = %s",
+        (pid,),
+    )
+
+
+def ayudar(user, pid, empresa=None, dominio=None, links=None, notas=None):
+    return as_user(
+        user,
+        "select panel_ayudar_research(%s, %s, %s, %s, %s)",
+        (pid, empresa, dominio, links, notas),
+    )
+
+
+def test_an_allowed_user_can_help_the_research(people):
+    pid = prospect_id()
+    ayudar(
+        ALLOWED,
+        pid,
+        empresa="  Acme Inc.  ",
+        dominio="https://www.Acme.com/about",
+        links=["  https://acme.com/news  ", "https://acme.com/careers"],
+        notas="  Growing fast, hiring support.  ",
+    )
+    row = helped(pid)
+    assert row["company_name_override"] == "Acme Inc."
+    assert row["company_domain_override"] == "acme.com"
+    assert row["research_links"] == ["https://acme.com/news", "https://acme.com/careers"]
+    assert row["research_notes"] == "Growing fast, hiring support."
+    job = db.fetch_one("select reason, status, slack_user_id from research_jobs")
+    assert (job["reason"], job["status"], job["slack_user_id"]) == ("manual", "pendiente", "U1")
+
+
+def test_duplicate_links_are_deduped_keeping_the_first_order(people):
+    pid = prospect_id()
+    ayudar(ALLOWED, pid, links=["https://acme.com/a", "https://acme.com/b", "https://acme.com/a"])
+    assert helped(pid)["research_links"] == ["https://acme.com/a", "https://acme.com/b"]
+
+
+def test_blank_arguments_clear_the_overrides(people):
+    pid = prospect_id()
+    ayudar(
+        ALLOWED, pid, empresa="Acme", dominio="acme.com", links=["https://acme.com/x"], notas="n"
+    )
+    assert helped(pid)["company_name_override"] == "Acme"
+
+    ayudar(ALLOWED, pid, empresa="  ", dominio=None, links=[], notas="")
+    row = helped(pid)
+    assert row["company_name_override"] is None
+    assert row["company_domain_override"] is None
+    assert row["research_links"] is None
+    assert row["research_notes"] is None
+
+
+def test_more_than_ten_links_is_rejected(people):
+    pid = prospect_id()
+    links = [f"https://acme.com/{i}" for i in range(11)]
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid link"):
+        ayudar(ALLOWED, pid, links=links)
+    assert helped(pid)["research_links"] is None
+
+
+def test_a_non_http_link_is_rejected(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid link"):
+        ayudar(ALLOWED, pid, links=["ftp://acme.com/x"])
+    assert helped(pid)["research_links"] is None
+
+
+def test_a_link_over_500_chars_is_rejected(people):
+    pid = prospect_id()
+    long_link = "https://acme.com/" + "x" * 500
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid link"):
+        ayudar(ALLOWED, pid, links=[long_link])
+    assert helped(pid)["research_links"] is None
+
+
+def test_notes_over_2000_chars_are_rejected(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid notes"):
+        ayudar(ALLOWED, pid, notas="x" * 2001)
+    assert helped(pid)["research_notes"] is None
+
+
+def test_an_invalid_domain_is_rejected_by_ayudar_research(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException, match="invalid domain"):
+        ayudar(ALLOWED, pid, dominio="not a domain")
+    assert helped(pid)["company_domain_override"] is None
+
+
+def test_a_stranger_cannot_help_the_research(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        ayudar(STRANGER, pid, empresa="Acme")
+    assert helped(pid)["company_name_override"] is None
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 0
+
+
+def test_an_unauthenticated_request_cannot_help_the_research(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        ayudar(None, pid, empresa="Acme")
+    assert helped(pid)["company_name_override"] is None
+
+
+def test_helping_a_discarded_person_saves_but_sets_no_job(people):
+    pid = prospect_id()
+    db.execute("update prospects set state = 'descartado' where id = %s", (pid,))
+    ayudar(ALLOWED, pid, empresa="Acme", notas="algo")
+    row = helped(pid)
+    assert row["company_name_override"] == "Acme"
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 0
+
+
+def test_helping_the_research_with_a_job_already_open_does_not_duplicate(people):
+    pid = prospect_id()
+    db.execute("insert into research_jobs (slack_user_id, reason) values ('U1', 'mensaje')")
+    ayudar(ALLOWED, pid, empresa="Acme")
+    assert helped(pid)["company_name_override"] == "Acme"
+    assert db.fetch_one("select count(*) as n from research_jobs")["n"] == 1
+
+
+def test_a_missing_person_is_reported_by_name(people):
+    with pytest.raises(psycopg.errors.RaiseException, match="not found"):
+        ayudar(ALLOWED, "00000000-0000-0000-0000-000000000000", empresa="Acme")
+
+
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("company_name_override", "Acme"),
+        ("company_domain_override", "acme.com"),
+        ("research_notes", "n"),
+    ],
+)
+def test_authenticated_cannot_write_the_new_columns_directly(people, column, value):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(
+            ALLOWED,
+            f"update prospects set {column} = %s where id = %s",
+            (value, pid),
+        )
+
+
+def test_authenticated_cannot_write_research_links_directly(people):
+    pid = prospect_id()
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(
+            ALLOWED,
+            "update prospects set research_links = %s where id = %s",
+            (["https://acme.com"], pid),
+        )

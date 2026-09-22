@@ -60,6 +60,18 @@ def test_a_discarded_person_never_generates_an_alert(conn, monkeypatch):
     assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
 
 
+def test_a_contacted_person_never_generates_a_card_either(conn, monkeypatch):
+    """Task 1: contactado ya cumplió su propósito -- una tarjeta nueva sería
+    ruido -- pero, a diferencia de descartado, esto no dice nada sobre si el
+    research sigue corriendo (eso vive en research/worker.py)."""
+    posted = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: posted.append(1))
+    person = a_person(state="contactado")
+    assert deliver.deliver_for(person["id"], FakeReader()) is None
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    assert posted == []
+
+
 def test_score_zero_is_not_delivered(conn, monkeypatch):
     monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
     person = a_person(score=0)

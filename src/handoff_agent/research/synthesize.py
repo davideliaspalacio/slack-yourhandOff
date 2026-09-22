@@ -20,6 +20,18 @@ MAX_ATTEMPTS = 2
 
 # Instrucción que acompaña el bloque de datos de proveedor (fuera del
 # delimitador, para que el modelo la lea como instrucción y no como dato).
+# Igual que PROVEEDOR_INSTRUCTION: la instrucción va fuera del delimitador
+# para que el modelo la lea como una regla a seguir, no como dato de terceros
+# (las notas de dentro sí son de terceros -- las escribió alguien del equipo,
+# no nosotros -- por eso van dentro de untrusted.fence de todas formas).
+TEAM_NOTES_INSTRUCTION = (
+    "Lo siguiente son notas del equipo de Handoff sobre esta persona o su empresa. "
+    'Pueden orientar "encaje_handoff.razon" y "huecos", pero cada dato que aparezca en '
+    'el dossier sigue necesitando su propia fuente citada en "fuente"/"fuentes": estas '
+    "notas nunca son una fuente, aunque digan algo con lo que la evidencia esté de acuerdo."
+)
+TEAM_LINKEDIN_HEADER = "LinkedIn profiles provided by the team (not fetched):"
+
 PROVEEDOR_INSTRUCTION = (
     "Lo siguiente son datos de un proveedor externo, sin fuente citable y a veces "
     "contradictorios entre sí (por ejemplo, distintas cifras de empleados, o una sede "
@@ -145,6 +157,14 @@ def build_prompt(
         lines.append(
             untrusted.fence(json.dumps(gathered.proveedor, ensure_ascii=False), "proveedor")
         )
+    if gathered.team_notes:
+        lines.append("")
+        lines.append(TEAM_NOTES_INSTRUCTION)
+        lines.append(untrusted.fence(gathered.team_notes, "notas_equipo"))
+    if gathered.team_links:
+        lines.append("")
+        lines.append(TEAM_LINKEDIN_HEADER)
+        lines.extend(f"- {link}" for link in gathered.team_links)
     if problems:
         lines.append("\nTu respuesta anterior se rechazó por estos problemas. Corrígelos:")
         lines.extend(f"- {problem}" for problem in problems)

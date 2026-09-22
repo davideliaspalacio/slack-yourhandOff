@@ -67,12 +67,24 @@ def test_leer_sitio_logs_the_action(conn):
         "10.0.0.5",  # red privada
         "192.168.1.10",  # red privada
         "::1",  # loopback IPv6
+        "fd00::1",  # unique local IPv6 (equivalente a la RFC1918 en IPv6)
     ],
 )
 def test_leer_sitio_refuses_non_public_addresses(conn, monkeypatch, address):
     monkeypatch.setattr(web, "_resolve", lambda host: [address])
     with pytest.raises(web.PageUnavailable, match="non-public"):
         web.leer_sitio("https://interno.ejemplo/")
+
+
+@respx.mock
+def test_leer_sitio_allows_a_public_address(conn, monkeypatch):
+    """Task 2: los enlaces del equipo son texto libre que llega hasta aquí --
+    esta comprobación es la que evita que un enlace apuntando a la red interna
+    se cuele como research_links, y no debe rechazar una IP pública normal."""
+    monkeypatch.setattr(web, "_resolve", lambda host: ["93.184.216.34"])
+    respx.get("https://acme.com/").mock(return_value=httpx.Response(200, html=HTML))
+    page = web.leer_sitio("https://acme.com/")
+    assert page.final_url == "https://acme.com/"
 
 
 @pytest.mark.parametrize(

@@ -104,6 +104,14 @@ def test_a_discarded_person_never_appears(conn):
     assert "Señales de banda baja: 0" in body
 
 
+def test_a_contacted_person_never_appears_either(conn):
+    person = a_person(state="contactado", score=1)
+    _set_created_at(person["id"], IN_WINDOW)
+    _, body = digest.build(TODAY)
+    assert "Ada Ruiz" not in body
+    assert "Señales de banda baja: 0" in body
+
+
 def test_a_new_member_in_high_band_is_counted_but_not_listed(conn):
     """Alta/media con tarjeta ya enviada: cuenta como nuevo miembro, pero no
     se repite con línea propia -- eso sería la misma señal dos veces."""

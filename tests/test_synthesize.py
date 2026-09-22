@@ -217,3 +217,68 @@ def test_the_system_prompt_requires_english_values_with_spanish_keys():
     # Los nombres de campo en español no cambian: el validador los exige tal cual.
     assert '"persona": {"nombre"' in s.SYSTEM_PROMPT
     assert '"encaje_handoff"' in s.SYSTEM_PROMPT
+
+
+# --- Task 2: notas y enlaces que el equipo añade a mano (research_links) ----
+
+
+def test_team_notes_are_fenced_with_an_instruction_outside_the_fence():
+    with_notes = Gathered(
+        domain="acme.com", evidence=[], jobs=[], team_notes="Hiring fast, per the team."
+    )
+    prompt = s.build_prompt("Ada", "Acme", with_notes)
+    assert s.TEAM_NOTES_INSTRUCTION in prompt
+    fenced = untrusted.fence("Hiring fast, per the team.", "notas_equipo")
+    assert fenced in prompt
+    # La instrucción va fuera del delimitador: dentro, el modelo la trataría
+    # como dato de terceros en vez de una regla a seguir.
+    instruction_index = prompt.index(s.TEAM_NOTES_INSTRUCTION)
+    fence_index = prompt.index(fenced)
+    assert instruction_index < fence_index
+    assert not (fence_index < instruction_index < fence_index + len(fenced))
+
+
+def test_no_team_notes_section_when_there_are_no_notes():
+    without_notes = Gathered(domain="acme.com", evidence=[], jobs=[])
+    prompt = s.build_prompt("Ada", "Acme", without_notes)
+    assert "notas_equipo" not in prompt
+    assert s.TEAM_NOTES_INSTRUCTION not in prompt
+
+
+def test_team_linkedin_links_are_listed_as_not_fetched():
+    with_links = Gathered(
+        domain="acme.com",
+        evidence=[],
+        jobs=[],
+        team_links=["https://www.linkedin.com/in/adaruiz"],
+    )
+    prompt = s.build_prompt("Ada", "Acme", with_links)
+    assert "LinkedIn profiles provided by the team (not fetched)" in prompt
+    assert "https://www.linkedin.com/in/adaruiz" in prompt
+
+
+def test_no_linkedin_section_when_there_are_no_team_links():
+    without_links = Gathered(domain="acme.com", evidence=[], jobs=[])
+    prompt = s.build_prompt("Ada", "Acme", without_links)
+    assert "provided by the team" not in prompt
+
+
+def test_a_dossier_citing_team_notes_as_a_source_is_rejected(conn, monkeypatch):
+    """notas_equipo nunca está en las fuentes permitidas (no es una URL que se
+    haya consultado): validate_dossier debe rechazar cualquier cita a ella."""
+    cited_notes = json.dumps(
+        make_dossier(
+            senales_contexto=[
+                {"hecho": "El equipo dice que están creciendo", "fuente": "notas_equipo"}
+            ]
+        )
+    )
+    monkeypatch.setattr(llm, "_client", lambda: ScriptedOpenAI(cited_notes, cited_notes))
+    with pytest.raises(DossierInvalid) as info:
+        s.synthesize(
+            real_pid(),
+            "Ada Ruiz",
+            "Acme",
+            Gathered(domain="acme.com", evidence=[], jobs=[], team_notes="Growing fast."),
+        )
+    assert any("notas_equipo" in p for p in info.value.problems)

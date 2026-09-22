@@ -41,16 +41,66 @@ def test_the_card_explains_why_it_matters_with_its_sources():
 def test_the_buttons_carry_the_person_and_the_action():
     blocks = card.build(PERSON, DOSSIER, "alta", MESSAGE, "https://slack.com/p1")
     actions = next(b for b in blocks if b["type"] == "actions")["elements"]
-    assert [e["action_id"] for e in actions[:3]] == ["contactado", "descartar", "investigar_mas"]
-    assert all(e["value"] == PERSON["id"] for e in actions[:3])
-    link = actions[3]
+    assert [e["action_id"] for e in actions[:2]] == ["contactado", "descartar"]
+    assert all(e["value"] == PERSON["id"] for e in actions[:2])
+    link = actions[2]
     assert link["url"] == "https://slack.com/p1"
+
+
+def test_there_is_no_research_more_button_anymore():
+    """Task 2: ese trabajo se mudó al panel ("Help the research")."""
+    blocks = card.build(PERSON, DOSSIER, "alta", MESSAGE, "https://slack.com/p1")
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
+    assert "investigar_mas" not in [e.get("action_id") for e in actions]
 
 
 def test_without_a_permalink_there_is_no_broken_button():
     blocks = card.build(PERSON, DOSSIER, "media", MESSAGE, None)
     actions = next(b for b in blocks if b["type"] == "actions")["elements"]
     assert all("url" not in e for e in actions)
+
+
+def test_the_panel_button_appears_when_panel_url_is_configured(monkeypatch):
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
+    blocks = card.build(PERSON, DOSSIER, "alta", MESSAGE, None)
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
+    panel_button = next(e for e in actions if e["action_id"] == "abrir_panel")
+    assert panel_button["url"] == f"https://panel.example.com/personas/{PERSON['id']}"
+    assert panel_button["text"] == {"type": "plain_text", "text": "Open in panel"}
+
+
+def test_the_panel_button_is_absent_without_panel_url(monkeypatch):
+    monkeypatch.delenv("PANEL_URL", raising=False)
+    blocks = card.build(PERSON, DOSSIER, "alta", MESSAGE, None)
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
+    assert all(e.get("action_id") != "abrir_panel" for e in actions)
+
+
+def test_the_panel_button_and_the_original_message_button_can_coexist(monkeypatch):
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
+    blocks = card.build(PERSON, DOSSIER, "alta", MESSAGE, "https://slack.com/p1")
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
+    url_action_ids = [e["action_id"] for e in actions if "url" in e]
+    assert url_action_ids == ["abrir_panel", "ver_original"]
+
+
+def test_the_panel_url_with_a_trailing_slash_does_not_double_it(monkeypatch):
+    """El recorte de la barra final vive en config.load_settings (PANEL_URL);
+    aquí solo se comprueba que la tarjeta no acaba con dos barras seguidas."""
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com/")
+    blocks = card.build(PERSON, DOSSIER, "alta", MESSAGE, None)
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
+    panel_button = next(e for e in actions if e["action_id"] == "abrir_panel")
+    assert panel_button["url"] == f"https://panel.example.com/personas/{PERSON['id']}"
+
+
+def test_the_panel_button_uses_the_stringified_uuid(monkeypatch):
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
+    person = {**PERSON, "id": uuid.UUID(PERSON["id"])}
+    blocks = card.build(person, DOSSIER, "alta", MESSAGE, None)
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
+    panel_button = next(e for e in actions if e["action_id"] == "abrir_panel")
+    assert panel_button["url"] == f"https://panel.example.com/personas/{PERSON['id']}"
 
 
 def test_a_new_member_has_no_quote_to_show():
@@ -185,10 +235,16 @@ def test_a_long_fuente_stays_under_the_section_cap():
     assert len(text) <= 3000
 
 
-def test_a_fully_hostile_card_stays_under_every_slack_block_limit():
+def test_a_fully_hostile_card_stays_under_every_slack_block_limit(monkeypatch):
     """Cabecera, cita, razón, tres señales, la línea de contratación y el
     resumen, todos largos y con caracteres que se expanden al escaparse: la
-    tarjeta entera debe seguir cabiendo en los topes de Slack por bloque."""
+    tarjeta entera debe seguir cabiendo en los topes de Slack por bloque.
+
+    PANEL_URL configurado a la vez que el permalink: los tres botones de
+    enlace (panel, mensaje original) más los dos de acción conviven sin que
+    nada del dossier hostil los afecte -- solo person['id'] y settings.panel_url
+    entran en esa URL, nunca un campo del dossier."""
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
     hostile_message = {"text": "&" * 2000, "ts": "1.0"}
     hostile_dossier = {
         **DOSSIER,
@@ -290,7 +346,7 @@ def _assert_card_under_limits_no_syntax_leak(blocks):
             assert card._is_safe_link(url), f"link syntax with an unsafe url: {url!r}"
 
 
-def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
+def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit(monkeypatch):
     """Ataca cada campo de `person`, `dossier` y `message` a la vez: strings
     hostiles larguísimos en todos los campos de texto, y strings hostiles
     (con pinta de número, pero no números) en los campos que deberían ser
@@ -299,9 +355,14 @@ def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
     el de un enlace validado, no cualquier sintaxis de enlace colada por un
     campo hostil.
 
+    PANEL_URL también configurado aquí: el botón "Open in panel" se construye
+    solo a partir de settings.panel_url y person['id'] (un UUID fijo en este
+    test), así que ningún campo hostil del dossier puede llegar a esa URL.
+
     Recorre el payload entero con `_mrkdwn_texts` en vez de indexar bloques
     concretos, para que un campo nuevo quede cubierto solo con añadirlo a
     los fixtures de este test."""
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
     hostile_text = "<!channel> <@U1> <#C1|x> & " * 400
     hostile_number = "50<!channel>"
     unsafe_fuente = "https://evil.example|hack"
@@ -592,5 +653,5 @@ def test_a_uuid_id_from_the_database_is_serialisable():
     person = {**PERSON, "id": uuid.UUID(PERSON["id"])}
     blocks = card.build(person, DOSSIER, "alta", MESSAGE, "https://slack.com/p1")
     actions = next(b for b in blocks if b["type"] == "actions")["elements"]
-    assert all(e["value"] == PERSON["id"] for e in actions[:3])
+    assert all(e["value"] == PERSON["id"] for e in actions[:2])
     json.dumps(blocks)

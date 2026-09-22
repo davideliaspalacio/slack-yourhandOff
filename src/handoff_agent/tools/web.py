@@ -5,8 +5,10 @@ what a corporate site is made of. Feeding raw HTML to the model would cost
 several times more per page and read worse.
 
 Everything this module fetches is attacker-influenced: URLs arrive from web
-search results and from links other people paste into a third-party Slack. So
-the fetch is deliberately hostile-input-shaped — scheme allowlist, per-hop
+search results, from links other people paste into a third-party Slack, and
+now from `research_links` typed into the panel by the Handoff team (trusted
+not to be malicious, but still free text no one has to get right). So the
+fetch is deliberately hostile-input-shaped — scheme allowlist, per-hop
 address checks, a byte ceiling and a total deadline — rather than a plain GET.
 """
 

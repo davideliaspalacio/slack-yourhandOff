@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ESTADOS_EDITABLES, accionLabel, bandLabel, estadoLabel, fecha, jobStatusLabel, reasonLabel, usd } from "@/lib/format";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
-import { CorregirWebForm } from "./CorregirWebForm";
+import { AyudarResearchForm } from "./AyudarResearchForm";
 
 type Senal = { hecho?: string; fuente?: string };
 type Lugar = { ciudad?: string; region?: string; pais?: string };
@@ -159,11 +159,18 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
             </form>
           </div>
           <div className="card">
-            <h2 style={{ marginTop: 0 }}>Company website</h2>
+            <h2 style={{ marginTop: 0 }}>Help the research</h2>
             <p>
+              Website:{" "}
               {p.company_domain_override
                 ? <>{p.company_domain_override} <span className="muted">(set manually)</span></>
                 : p.company_domain ?? <span className="muted">No website on file.</span>}
+            </p>
+            <p>
+              Company:{" "}
+              {p.company_name_override
+                ? <>{p.company_name_override} <span className="muted">(set manually)</span></>
+                : p.company_name ?? <span className="muted">No company on file.</span>}
             </p>
             {d.empresa_no_confirmada?.dominio_adivinado && (
               <p className="notice">
@@ -171,7 +178,15 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
                 was discarded. Set the right one below.
               </p>
             )}
-            <CorregirWebForm id={p.id} discarded={p.state === "descartado"} />
+            <AyudarResearchForm
+              id={p.id}
+              discarded={p.state === "descartado"}
+              contacted={p.state === "contactado"}
+              empresa={p.company_name_override ?? ""}
+              dominio={p.company_domain_override ?? ""}
+              links={(p.research_links as string[] | null) ?? []}
+              notas={p.research_notes ?? ""}
+            />
           </div>
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Spend on this person</h2>

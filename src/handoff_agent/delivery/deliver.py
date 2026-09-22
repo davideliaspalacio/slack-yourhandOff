@@ -13,7 +13,12 @@ from .. import db, guards, ledger
 from . import bands, card, slack_writer
 
 logger = logging.getLogger(__name__)
-NO_ALERT_STATES = ("descartado",)
+# "descartado" es definitivo: nunca más avisa. "contactado" ya cumplió su
+# propósito -- alguien de Handoff ya vio a esta persona -- así que una nueva
+# tarjeta o un SMS sería ruido; el research sigue corriendo (research/worker.py
+# solo salta "descartado"), pero deliver_for, sms.maybe_send y el digest
+# comparten esta lista para no volver a interrumpir.
+NO_ALERT_STATES = ("descartado", "contactado")
 # Etiqueta en inglés del texto de notificación push (fallback de la tarjeta):
 # la banda interna sigue siendo alta/media/baja en el resto del sistema.
 BAND_NOTIFICATION_LABELS = {"alta": "High", "media": "Medium", "baja": "Low"}

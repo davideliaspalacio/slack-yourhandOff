@@ -618,3 +618,76 @@ def test_tld_name_does_not_match_through_tld_label(monkeypatch):
         ),
     )
     assert g.resolve_domain("IO", "pid") is None
+
+
+# --- Task 2: enlaces sueltos que el equipo añade a mano (research_links) ----
+
+
+def test_a_team_link_is_fetched_as_enlace_equipo_evidence(monkeypatch):
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page(ok_paths=("/", "/careers", "/news")))
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather(
+        "pid", "Ada Ruiz", "Acme", domain="acme.com", extra_links=["https://acme.com/news"]
+    )
+    team_evidence = [e for e in result.evidence if e.kind == "enlace_equipo"]
+    assert len(team_evidence) == 1
+    assert team_evidence[0].url == "https://acme.com/news"
+    assert "https://acme.com/news" in result.sources
+    assert result.team_links == []
+
+
+def test_a_linkedin_link_is_kept_but_never_fetched(monkeypatch):
+    calls = []
+
+    def leer(url, max_chars=20_000, prospect_id=None):
+        calls.append(url)
+        raise AssertionError("LinkedIn should never be fetched")
+
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", leer)
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather(
+        "pid",
+        "Ada Ruiz",
+        "Acme",
+        domain=None,
+        extra_links=["https://www.linkedin.com/in/adaruiz"],
+    )
+    assert calls == []
+    assert result.team_links == ["https://www.linkedin.com/in/adaruiz"]
+    assert not any(e.kind == "enlace_equipo" for e in result.evidence)
+
+
+def test_a_failing_team_link_records_an_error_and_research_continues(monkeypatch):
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page(ok_paths=("/", "/careers")))
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather(
+        "pid",
+        "Ada Ruiz",
+        "Acme",
+        domain="acme.com",
+        extra_links=["https://acme.com/broken-link"],
+    )
+    assert any(err.startswith("enlace_equipo:") for err in result.errors)
+    assert not any(e.kind == "enlace_equipo" for e in result.evidence)
+    # El resto del research siguió corriendo: la home y careers se leyeron igual.
+    assert {"home", "careers"} <= {e.kind for e in result.evidence}
+
+
+def test_team_notes_are_carried_into_the_result(monkeypatch):
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com", notes="Hiring fast.")
+    assert result.team_notes == "Hiring fast."
+
+
+def test_no_extra_links_or_notes_leave_defaults_empty(monkeypatch):
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com")
+    assert result.team_links == []
+    assert result.team_notes is None

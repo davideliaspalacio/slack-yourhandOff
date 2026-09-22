@@ -134,6 +134,13 @@ def test_a_discarded_person_never_gets_an_sms(conn, monkeypatch):
     assert calls == []
 
 
+def test_a_contacted_person_never_gets_an_sms_either(conn, monkeypatch):
+    calls = sent(monkeypatch)
+    person = a_person(state="contactado")
+    assert sms.maybe_send(person["id"], "alta", now=MIDDAY) is False
+    assert calls == []
+
+
 def test_a_long_third_party_name_is_trimmed(conn, monkeypatch):
     calls = sent(monkeypatch)
     person = a_person()

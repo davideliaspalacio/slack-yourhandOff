@@ -53,6 +53,7 @@ class Settings:
     enrichment_webhook_url: str | None
     enrichment_timeout_seconds: float
     price_enrichment_per_call: float
+    panel_url: str | None
 
 
 def _required(name: str) -> str:
@@ -121,4 +122,10 @@ def load_settings() -> Settings:
         # su coste no se conoce todavía, de ahí el 0.0 -- corregir en cuanto
         # se sepa, igual que PRICE_TWILIO_PER_SMS y PRICE_RESEND_PER_EMAIL.
         price_enrichment_per_call=float(os.environ.get("PRICE_ENRICHMENT_PER_CALL", "0.0")),
+        # URL pública del panel (Railway o donde se sirva): la tarjeta de Slack
+        # la usa para el botón "Open in panel" (ver delivery/card.py). Sin ella,
+        # el botón simplemente no aparece -- una cadena vacía cuenta como
+        # ausente, y una barra final se recorta para no duplicarla al montar
+        # la URL de la persona.
+        panel_url=(os.environ.get("PANEL_URL") or "").rstrip("/") or None,
     )

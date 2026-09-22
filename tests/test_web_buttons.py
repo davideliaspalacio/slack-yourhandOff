@@ -399,6 +399,30 @@ def test_investigar_mas_on_a_discarded_person_note_is_in_english(conn, client, m
     assert seen["note"] == "🚫 Discarded: won't be researched again · by <@U123ABC>"
 
 
+def test_investigar_mas_on_a_contacted_person_still_queues_and_says_so(conn, client, monkeypatch):
+    """Task 1: contactado ya no genera alertas, pero el research sigue
+    corriendo -- la nota lo aclara para que nadie espere una tarjeta nueva."""
+    person = a_person(state="contactado")
+    seen = _note_of(client, monkeypatch, "investigar_mas", person)
+    assert seen["note"] == (
+        "🔁 Queued for new research (contacted: no new card will be posted) · by <@U123ABC>"
+    )
+    row = db.fetch_one(
+        "select reason, status from research_jobs where slack_user_id = %s",
+        (person["slack_user_id"],),
+    )
+    assert (row["reason"], row["status"]) == ("manual", "pendiente")
+
+
+def test_investigar_mas_on_a_contacted_person_already_queued_says_so(conn, client, monkeypatch):
+    person = a_person(state="contactado")
+    queue.enqueue(person["slack_user_id"], "manual")
+    seen = _note_of(client, monkeypatch, "investigar_mas", person)
+    assert seen["note"] == (
+        "⏳ Already queued for research (contacted: no new card will be posted) · by <@U123ABC>"
+    )
+
+
 def test_no_note_contains_the_old_spanish_wording(conn, client, monkeypatch):
     person = a_person()
     seen = _note_of(client, monkeypatch, "contactado", person)

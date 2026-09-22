@@ -30,23 +30,38 @@ export async function volverAInvestigar(formData: FormData) {
   revalidatePath(`/personas/${id}`);
 }
 
-export type CorregirWebState = { error?: string };
+export type AyudarResearchState = { error?: string };
 
-// La web adivinada acierta poco con nombres comunes (ver research/gather.py);
-// esto deja corregirla a mano. panel_corregir_web (RLS,
-// 0007_web_manual.sql) valida el dominio, guarda el override y -- si la
-// persona no está descartada -- encola un research manual. Todo lo que este
-// action hace es pasar el error de la función a la pantalla: la validación de
-// verdad vive en la base, no aquí.
-export async function corregirWeb(
-  _previo: CorregirWebState,
+// Lo que el equipo ya sabe y el agente no: el nombre real de la empresa
+// cuando el título de Slack lo dice mal o no lo dice, la web, enlaces sueltos
+// (noticias, blog, la página de equipo, hasta un perfil de LinkedIn que nunca
+// se descarga pero sí se lista) y notas libres para orientar el encaje.
+// panel_ayudar_research (RLS, 0008_ayuda_research.sql) normaliza y valida
+// las cuatro cosas, guarda el override y -- si la persona no está descartada
+// -- encola un research manual, igual que panel_corregir_web (que sigue
+// existiendo tal cual, por si algo de producción todavía la llama). Todo lo
+// que este action hace es partir los enlaces por línea y pasar el error de
+// la función a la pantalla: la validación de verdad vive en la base.
+export async function ayudarResearch(
+  _previo: AyudarResearchState,
   formData: FormData,
-): Promise<CorregirWebState> {
+): Promise<AyudarResearchState> {
   const id = String(formData.get("id"));
-  const dominio = String(formData.get("dominio") ?? "").trim();
-  if (!dominio) return { error: "Enter a website." };
+  const empresa = String(formData.get("empresa") ?? "");
+  const dominio = String(formData.get("dominio") ?? "");
+  const notas = String(formData.get("notas") ?? "");
+  const links = String(formData.get("links") ?? "")
+    .split("\n")
+    .map((link) => link.trim())
+    .filter(Boolean);
   const supabase = await createClient();
-  const { error } = await supabase.rpc("panel_corregir_web", { p_prospect: id, p_dominio: dominio });
+  const { error } = await supabase.rpc("panel_ayudar_research", {
+    p_prospect: id,
+    p_empresa: empresa,
+    p_dominio: dominio,
+    p_links: links,
+    p_notas: notas,
+  });
   if (error) return { error: error.message };
   revalidatePath(`/personas/${id}`);
   return {};

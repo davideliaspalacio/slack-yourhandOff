@@ -55,4 +55,8 @@ def run_followup(prospect_id: str, gathered: Gathered, queries: list[str]) -> Ga
         # Igual que `proveedor`: la confirmación del dominio ya se decidió en
         # la primera pasada, el seguimiento solo la arrastra.
         unconfirmed_domain=gathered.unconfirmed_domain,
+        # Los enlaces y notas del equipo tampoco se vuelven a pedir: ya están
+        # en la evidencia (o listados) desde la primera pasada.
+        team_links=gathered.team_links,
+        team_notes=gathered.team_notes,
     )

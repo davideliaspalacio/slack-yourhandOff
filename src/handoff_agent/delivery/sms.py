@@ -114,7 +114,8 @@ def maybe_send(prospect_id: str, band: str, now: datetime | None = None) -> bool
     person = db.fetch_one("select * from prospects where id = %s", (prospect_id,))
     if person is None or person["state"] in NO_ALERT_STATES:
         # deliver_for ya filtra, pero la regla vive también aquí: una persona
-        # descartada no recibe SMS venga de donde venga la llamada.
+        # descartada o ya contactada no recibe SMS venga de donde venga la
+        # llamada.
         return False
 
     now = now or datetime.now(tz=ZoneInfo("UTC"))

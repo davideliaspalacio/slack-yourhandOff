@@ -5,6 +5,15 @@ la tarjeta cita textualmente, explica por qué importa con fuentes, y propone un
 ángulo. El texto ajeno se cita como bloque de cita y se recorta: no puede
 romper el formato ni alargar la tarjeta sin fin.
 
+Ya no hay botón "Research more": ese trabajo ahora se hace desde el panel
+("Help the research", panel_ayudar_research en migración 0008), que además
+deja añadir empresa, enlaces y notas antes de reencolar. En su lugar hay un
+botón de enlace "Open in panel" hacia `personas/<id>` -- solo si
+`settings.panel_url` está configurado, y validado con `_is_safe_link` como
+cualquier otro enlace de esta tarjeta. `web/app.py` sigue aceptando
+`investigar_mas` porque las tarjetas ya publicadas antes de este cambio
+todavía llevan ese botón.
+
 Todo lo que se interpola aquí (la cita, y cada campo del dossier) lo escribió
 un tercero o un modelo leyendo páginas de terceros: nunca se confía en su
 contenido, solo se valida su presencia. Por eso pasa siempre por
@@ -20,6 +29,8 @@ antes por `_escape_and_cap`/`_escape_mrkdwn` (texto) o `_safe_number`
 from __future__ import annotations
 
 from urllib.parse import urlparse
+
+from ..config import load_settings
 
 QUOTE_CHARS = 300
 HECHO_CHARS = 240
@@ -401,13 +412,19 @@ def build(
             "value": str(person["id"]),
             "style": "danger",
         },
-        {
-            "type": "button",
-            "action_id": "investigar_mas",
-            "text": {"type": "plain_text", "text": "Research more"},
-            "value": str(person["id"]),
-        },
     ]
+    settings = load_settings()
+    if settings.panel_url:
+        panel_link = f"{settings.panel_url}/personas/{person['id']}"
+        if _is_safe_link(panel_link):
+            elements.append(
+                {
+                    "type": "button",
+                    "action_id": "abrir_panel",
+                    "text": {"type": "plain_text", "text": "Open in panel"},
+                    "url": panel_link,
+                }
+            )
     if permalink:
         elements.append(
             {

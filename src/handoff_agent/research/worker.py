@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -139,6 +140,12 @@ def research_person(
     domain: str | None = None,
     slack_user_id: str | None = None,
     force: bool = False,
+    # Lo que el panel añadió a mano (`panel_ayudar_research`, migración 0008):
+    # enlaces sueltos que gather() lee como cualquier otra página (salvo
+    # LinkedIn, que nunca se descarga), y notas libres que synthesize() pasa
+    # al modelo como orientación, nunca como fuente.
+    extra_links: Sequence[str] = (),
+    notes: str | None = None,
 ) -> ResearchOutcome:
     if not (full_name or company):
         raise ValueError("hace falta al menos un nombre o una empresa")
@@ -172,7 +179,7 @@ def research_person(
     gathered = None
     try:
         with budget:
-            gathered = gather(pid, full_name, company, domain)
+            gathered = gather(pid, full_name, company, domain, extra_links=extra_links, notes=notes)
             result = synthesize(pid, full_name, company, gathered, budget=budget)
             # Desde aquí hay un dossier válido y pagado: todo camino lo guarda.
             first_result, first_gathered = result, gathered

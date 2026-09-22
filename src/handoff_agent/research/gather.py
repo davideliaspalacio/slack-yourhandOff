@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -96,6 +97,14 @@ class Gathered:
     # que la síntesis y la tarjeta puedan avisar sin volver a afirmar que es
     # la empresa de la persona.
     unconfirmed_domain: str | None = None
+    # Enlaces de LinkedIn que el equipo puso a mano (`research_links`, panel
+    # `panel_ayudar_research`): se listan para el modelo pero nunca se
+    # descargan -- igual que el resto de LinkedIn en este módulo, ver el
+    # comentario sobre Proxycurl más abajo.
+    team_links: list[str] = field(default_factory=list)
+    # Notas libres del equipo sobre esta persona o empresa (`research_notes`,
+    # mismo panel): orientan la síntesis, nunca son una fuente citable.
+    team_notes: str | None = None
 
     @property
     def sources(self) -> set[str]:
@@ -272,11 +281,43 @@ def _search_into(evidence, errors, tally, kind, query, limit, prospect_id) -> No
         errors.append(f"{kind}: {exc}")
 
 
+def _is_linkedin(url: str) -> bool:
+    host = (urlparse(url).hostname or "").removeprefix("www.")
+    return host == "linkedin.com" or host.endswith(".linkedin.com")
+
+
+def _gather_team_links(
+    extra_links: Sequence[str], prospect_id: str, errors: list[str]
+) -> tuple[list[Evidence], list[str]]:
+    """Los enlaces que el equipo añadió a mano son entrada de confianza: a
+    diferencia del dominio adivinado, no hace falta confirmarlos contra el
+    nombre de la persona -- alguien de Handoff ya los eligió a propósito.
+
+    LinkedIn nunca se descarga (ver el comentario de más abajo sobre
+    Proxycurl y sus términos de servicio): se guarda aparte, para que
+    synthesize.build_prompt los liste sin fingir que se leyeron.
+    """
+    evidence: list[Evidence] = []
+    team_links: list[str] = []
+    for link in extra_links:
+        if _is_linkedin(link):
+            team_links.append(link)
+            continue
+        try:
+            page = web.leer_sitio(link, max_chars=PAGE_CHARS, prospect_id=prospect_id)
+            evidence.append(Evidence("enlace_equipo", page.final_url, page.title, page.text))
+        except web.PageUnavailable as exc:
+            errors.append(f"enlace_equipo: {exc}")
+    return evidence, team_links
+
+
 def gather(
     prospect_id: str,
     full_name: str | None,
     company: str | None,
     domain: str | None = None,
+    extra_links: Sequence[str] = (),
+    notes: str | None = None,
 ) -> Gathered:
     evidence: list[Evidence] = []
     errors: list[str] = []
@@ -342,6 +383,9 @@ def gather(
     # búsqueda a la salud del buscador.
     proveedor = enrichment.enrich_company(domain, prospect_id) if domain else None
 
+    team_evidence, team_links = _gather_team_links(extra_links, prospect_id, errors)
+    evidence.extend(team_evidence)
+
     return Gathered(
         domain,
         dedupe_evidence(evidence),
@@ -352,4 +396,6 @@ def gather(
         domain_guessed=domain_guessed,
         proveedor=proveedor,
         unconfirmed_domain=unconfirmed_domain,
+        team_links=team_links,
+        team_notes=notes,
     )

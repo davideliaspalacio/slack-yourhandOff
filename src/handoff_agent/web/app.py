@@ -90,14 +90,32 @@ def _mention(user: dict) -> str:
 
 
 def _investigar_mas_note(person: dict) -> str:
-    """No encola nunca a una persona descartada: la regla global es que una
+    """`delivery/card.py` ya no dibuja el botón "Research more" (Task 2: ese
+    trabajo se mudó al panel, "Help the research" / `panel_ayudar_research`,
+    migración 0008) -- pero las tarjetas publicadas antes de ese cambio siguen
+    vivas en Slack con el botón puesto, y sus clics tienen que seguir
+    funcionando. Por eso este manejador y sus tests se quedan tal cual.
+
+    No encola nunca a una persona descartada: la regla global es que una
     persona descartada no vuelve a generar nada, y el worker de research la
-    saltaría igualmente -- pero es mejor no gastar ni la fila de la cola."""
+    saltaría igualmente -- pero es mejor no gastar ni la fila de la cola.
+
+    Una persona contactada sí se reencola (el research sigue corriendo para
+    ella, ver research/worker.py y delivery/deliver.py NO_ALERT_STATES): solo
+    deja de avisar, así que la nota lo dice para que nadie espere una tarjeta
+    nueva.
+    """
     if person["state"] == "descartado":
         return "🚫 Discarded: won't be researched again"
-    if queue.enqueue(person["slack_user_id"], "manual"):
-        return "🔁 Queued for new research"
-    return "⏳ Already queued for research"
+    queued = queue.enqueue(person["slack_user_id"], "manual")
+    if person["state"] == "contactado":
+        suffix = " (contacted: no new card will be posted)"
+        return (
+            f"🔁 Queued for new research{suffix}"
+            if queued
+            else f"⏳ Already queued for research{suffix}"
+        )
+    return "🔁 Queued for new research" if queued else "⏳ Already queued for research"
 
 
 def _apply_action(action_id: str, person: dict) -> str:
@@ -145,7 +163,11 @@ def _handle(payload: dict, settings: Settings) -> None:
         return
 
     if action_id not in NEW_STATE and action_id != "investigar_mas":
-        # "ver_original" (botón de URL) y cualquier action_id desconocido.
+        # "ver_original" (botón de URL), "abrir_panel" (idem, Task 2) y
+        # cualquier action_id desconocido. "investigar_mas" ya no se dibuja en
+        # tarjetas nuevas (ver delivery/card.py y _investigar_mas_note más
+        # arriba), pero se sigue aceptando: tarjetas viejas ya publicadas
+        # todavía lo llevan.
         return
 
     try:

@@ -21,13 +21,23 @@ def reader():
 def stub_research(monkeypatch, error=None):
     seen = []
 
-    def research(full_name=None, company=None, domain=None, slack_user_id=None, force=False):
+    def research(
+        full_name=None,
+        company=None,
+        domain=None,
+        slack_user_id=None,
+        force=False,
+        extra_links=(),
+        notes=None,
+    ):
         seen.append(
             {
                 "full_name": full_name,
                 "company": company,
                 "domain": domain,
                 "slack_user_id": slack_user_id,
+                "extra_links": extra_links,
+                "notes": notes,
             }
         )
         if error:
@@ -56,6 +66,8 @@ def test_a_job_is_researched_with_what_the_profile_tells_us(conn, reader, monkey
             "company": "Acme",
             "domain": "acme.com",
             "slack_user_id": "U1",
+            "extra_links": (),
+            "notes": None,
         }
     ]
     assert job()["status"] == "hecho"
@@ -64,8 +76,9 @@ def test_a_job_is_researched_with_what_the_profile_tells_us(conn, reader, monkey
 
 def test_a_panel_override_beats_the_email_domain(conn, reader, monkeypatch):
     """`company_domain_override` (puesto a mano desde el panel, ver
-    ingest/research_runner.py `_domain_override`) gana al dominio del correo:
-    alguien ya lo corrigió a propósito tras ver una adivinanza equivocada."""
+    ingest/research_runner.py `_prospect_overrides`) gana al dominio del
+    correo: alguien ya lo corrigió a propósito tras ver una adivinanza
+    equivocada."""
     prospects.upsert_prospect("U1", full_name="Ada Ruiz")
     db.execute(
         "update prospects set company_domain_override = 'override.example' "
@@ -82,6 +95,51 @@ def test_the_email_domain_is_used_when_there_is_no_override(conn, reader, monkey
     seen = stub_research(monkeypatch)
     assert runner.run_next_job(reader).status == "hecho"
     assert seen[0]["domain"] == "acme.com"
+
+
+# -- Task 2: company_name_override, research_links y research_notes, puestos
+# a mano desde el panel (`panel_ayudar_research`, migración 0008). --
+
+
+def test_a_company_name_override_beats_the_slack_title(conn, reader, monkeypatch):
+    prospects.upsert_prospect("U1", full_name="Ada Ruiz")
+    db.execute(
+        "update prospects set company_name_override = 'Acme Holdings' where slack_user_id = 'U1'"
+    )
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    # El perfil de Slack de U1 dice "CEO @ Acme" (ver fixture `reader`): el
+    # override gana igual que gana con el dominio.
+    assert seen[0]["company"] == "Acme Holdings"
+
+
+def test_the_slack_title_is_used_when_there_is_no_company_override(conn, reader, monkeypatch):
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["company"] == "Acme"
+
+
+def test_research_links_and_notes_are_passed_through(conn, reader, monkeypatch):
+    prospects.upsert_prospect("U1", full_name="Ada Ruiz")
+    db.execute(
+        "update prospects set research_links = %s, research_notes = %s where slack_user_id = 'U1'",
+        (["https://acme.com/news", "https://acme.com/team"], "Hiring fast, per the team."),
+    )
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["extra_links"] == ("https://acme.com/news", "https://acme.com/team")
+    assert seen[0]["notes"] == "Hiring fast, per the team."
+
+
+def test_no_links_or_notes_pass_through_empty_defaults(conn, reader, monkeypatch):
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["extra_links"] == ()
+    assert seen[0]["notes"] is None
 
 
 def test_no_override_and_no_work_email_leaves_the_domain_to_be_guessed(conn, monkeypatch):
@@ -101,7 +159,15 @@ def test_a_manual_job_forces_research_but_a_mensaje_job_does_not(conn, reader, m
     (o "Volver a investigar" del panel) no hace nada."""
     seen_force = []
 
-    def research(full_name=None, company=None, domain=None, slack_user_id=None, force=False):
+    def research(
+        full_name=None,
+        company=None,
+        domain=None,
+        slack_user_id=None,
+        force=False,
+        extra_links=(),
+        notes=None,
+    ):
         seen_force.append(force)
         return ResearchOutcome("pid", slack_user_id, "investigado", 1, Decimal("0.02"), None)
 
@@ -322,9 +388,27 @@ def test_without_a_slack_profile_it_researches_with_what_is_stored(conn, reader,
             "company": "Dapta",
             "domain": "dapta.ai",
             "slack_user_id": "UGONE",
+            "extra_links": (),
+            "notes": None,
         }
     ]
     assert job()["status"] == "hecho"
+
+
+def test_without_a_slack_profile_a_company_override_beats_the_stored_name(conn, monkeypatch):
+    """Sin perfil de Slack no hay título del que sacar la empresa, pero el
+    override del panel sigue ganando a lo que ya había guardado un research
+    anterior."""
+    reader = FakeReader()
+    prospects.upsert_prospect("UGONE", full_name="Maria Test")
+    db.execute(
+        "update prospects set company_name = 'Dapta', company_name_override = 'Dapta Labs' "
+        "where slack_user_id = 'UGONE'"
+    )
+    queue.enqueue("UGONE", "manual")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["company"] == "Dapta Labs"
 
 
 def test_without_a_slack_profile_or_stored_data_the_job_gives_up(conn, reader, monkeypatch):

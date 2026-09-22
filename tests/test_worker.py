@@ -19,7 +19,7 @@ from tests.test_gather import fake_page, fake_search
 from tests.test_synthesize import ScriptedOpenAI
 
 
-def stub_gather(pid, full_name, company, domain=None):
+def stub_gather(pid, full_name, company, domain=None, extra_links=(), notes=None):
     return Gathered("acme.com", [Evidence("home", "https://acme.com/", "Acme", "t")], [], [])
 
 
@@ -207,7 +207,7 @@ def test_a_followup_crash_keeps_the_first_dossier(conn, pipeline):
 
 
 def gather_with(errors, attempted, answered):
-    def fake(pid, full_name, company, domain=None):
+    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None):
         return Gathered(
             "acme.com",
             [Evidence("home", "https://acme.com/", "Acme", "t")],
@@ -288,7 +288,7 @@ def test_a_person_discarded_mid_run_stays_discarded(conn, pipeline):
 
 
 def test_stored_sources_record_their_provenance(conn, pipeline):
-    def gather_with_a_job(pid, full_name, company, domain=None):
+    def gather_with_a_job(pid, full_name, company, domain=None, extra_links=(), notes=None):
         return Gathered(
             "acme.com",
             [Evidence("home", "https://acme.com/", "Acme", "t")],
@@ -556,7 +556,7 @@ def test_a_first_pass_stop_saves_nothing_and_says_so(conn, pipeline):
 
 
 def gather_with_provider(proveedor):
-    def fake(pid, full_name, company, domain=None):
+    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None):
         return Gathered(
             "acme.com",
             [Evidence("home", "https://acme.com/", "Acme", "t")],
@@ -604,7 +604,7 @@ def test_store_omits_datos_proveedor_when_there_is_none(conn, pipeline):
 
 
 def gather_with_unconfirmed_domain(unconfirmed_domain):
-    def fake(pid, full_name, company, domain=None):
+    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None):
         return Gathered(
             None,
             [Evidence("home", "https://acme.com/", "Acme", "t")],

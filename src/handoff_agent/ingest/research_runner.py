@@ -1,13 +1,16 @@
 """Take one job from the queue and research that person.
 
 The Slack profile feeds the research: the real name, a company parsed from the
-title and, best of all, a company domain from a work email. A person can also
-correct the domain by hand from the panel (`prospects.company_domain_override`,
-set through the `panel_corregir_web` RPC): that override outranks the email,
-because someone fixed it on purpose after seeing a wrong guess. Both the
-override and the email are trusted domains -- research/gather.py only ever
-verifies a domain it had to guess itself. System stops and a dead token hand
-the job back untouched and propagate -- they need a person, not a retry.
+title and, best of all, a company domain from a work email. The panel can also
+hand the agent more than a correction (`panel_ayudar_research`, migration 0008):
+a company name override, extra links, and free-text notes, on top of the
+domain override `panel_corregir_web` (0007) already offered. Company priority
+is override > Slack title > whatever is already stored; domain priority is
+unchanged (override > work email > guessed by research/gather.py). Both
+overrides are trusted input -- research/gather.py only ever verifies a domain
+or a link it had to guess or was handed unvetted. System stops and a dead
+token hand the job back untouched and propagate -- they need a person, not a
+retry.
 
 `queue.complete`/`fail`/`give_up`/`release` are guarded so they only ever
 change the job this worker actually claimed (see queue.py's started_at
@@ -37,22 +40,19 @@ logger = logging.getLogger(__name__)
 DELIVERABLE_STATUSES = ("investigado", "incompleto")
 
 
-def _stored_person(slack_user_id: str) -> dict | None:
+def _prospect_overrides(slack_user_id: str) -> dict | None:
+    """Todo lo que ya vive en `prospects` para esta persona: lo que guardó un
+    research anterior (nombre, empresa) y lo que el panel fijó a mano
+    (`panel_corregir_web`/`panel_ayudar_research`, migraciones 0007 y 0008).
+    Una sola lectura, no cuatro: se pide junto para no ir y volver a la base
+    por cada override. None si la persona todavía no existe -- para alguien
+    nuevo no hay fila, y por tanto no hay overrides ni nada guardado."""
     return db.fetch_one(
-        "select full_name, company_name from prospects where slack_user_id = %s",
+        "select full_name, company_name, company_domain_override, "
+        "company_name_override, research_links, research_notes "
+        "from prospects where slack_user_id = %s",
         (slack_user_id,),
     )
-
-
-def _domain_override(slack_user_id: str) -> str | None:
-    """Lo que alguien fijó a mano desde el panel (`panel_corregir_web`), si lo
-    hay. Se guarda en `prospects`, así que hace falta que la persona ya
-    exista -- para alguien nuevo aún no hay fila, y por tanto no hay override."""
-    row = db.fetch_one(
-        "select company_domain_override from prospects where slack_user_id = %s",
-        (slack_user_id,),
-    )
-    return row["company_domain_override"] if row else None
 
 
 @dataclass(frozen=True)
@@ -107,16 +107,27 @@ def run_next_job(reader) -> RunResult | None:
             return _discarded(job, "completar", uid, reason)
         return RunResult("omitido", uid, reason)
 
+    overrides = _prospect_overrides(uid)
     if profile is not None:
         full_name = profile.real_name or None
-        company = company_from_title(profile.title)
+        title_company = company_from_title(profile.title)
         email_domain = domain_from_email(profile.email)
     else:
-        stored = _stored_person(uid)
-        full_name = stored["full_name"] if stored else None
-        company = stored["company_name"] if stored else None
+        full_name = overrides["full_name"] if overrides else None
+        title_company = None
         email_domain = None
-    domain = _domain_override(uid) or email_domain
+    # Empresa: lo que alguien fijó a mano en el panel gana siempre -- lo puso
+    # después de ver un título de Slack ambiguo o vacío. Sin override, el
+    # título manda; sin ninguno de los dos (o sin perfil de Slack), lo que ya
+    # había guardado un research anterior.
+    company = (
+        (overrides["company_name_override"] if overrides else None)
+        or title_company
+        or (overrides["company_name"] if overrides else None)
+    )
+    domain = (overrides["company_domain_override"] if overrides else None) or email_domain
+    extra_links = tuple((overrides["research_links"] if overrides else None) or ())
+    notes = overrides["research_notes"] if overrides else None
     try:
         outcome = worker.research_person(
             full_name,
@@ -127,6 +138,8 @@ def run_next_job(reader) -> RunResult | None:
             # que forzar aunque el dossier siga vigente -- si no, siempre
             # termina en "omitido: dossier vigente" y el botón no hace nada.
             force=(job["reason"] == "manual"),
+            extra_links=extra_links,
+            notes=notes,
         )
     except worker.SYSTEM_STOPS:
         queue.release(job)

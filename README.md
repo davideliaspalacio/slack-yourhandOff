@@ -203,6 +203,7 @@ Las migraciones no se aplican al desplegar: se suben con `supabase db push`.
 | `LANGFUSE_BASE_URL` | Solo con Langfuse | Tiene que coincidir con la región del proyecto. Por defecto es Europa: un proyecto de EE. UU. necesita `https://us.cloud.langfuse.com` o las trazas no llegan. |
 | `SLACK_POLL_SECONDS`, `SLACK_LOOKBACK_HOURS` | No | 3600 y 1 por defecto. |
 | `OPENAI_MODEL`, `PRICE_*`, `HTTP_TIMEOUT_SECONDS` | No | Tienen valores por defecto (ver `.env.example`). |
+| `PANEL_URL` | Recomendada | URL pública del panel, sin barra final. Sin ella, la tarjeta de Slack no lleva el botón "Open in panel". |
 
 ### Por qué `railway.json` está así
 

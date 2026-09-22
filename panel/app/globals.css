@@ -36,7 +36,7 @@ th { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spa
              background: var(--card); color: var(--text); }
 .filters a.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 form.inline { display: inline-flex; gap: 8px; align-items: center; }
-button, select, input { font: inherit; padding: 6px 12px; border-radius: 8px;
+button, select, input, textarea { font: inherit; padding: 6px 12px; border-radius: 8px;
                         border: 1px solid var(--line); background: var(--card); color: var(--text); }
 button { cursor: pointer; } button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .notice { background: var(--warn); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }

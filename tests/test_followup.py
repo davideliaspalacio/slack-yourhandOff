@@ -119,3 +119,25 @@ def test_run_followup_keeps_no_unconfirmed_domain_as_none(monkeypatch):
     monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
     start = Gathered("acme.com", [], [], [], unconfirmed_domain=None)
     assert f.run_followup("pid", start, ["x"]).unconfirmed_domain is None
+
+
+def test_run_followup_carries_team_links_and_notes(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    start = Gathered(
+        "acme.com",
+        [],
+        [],
+        [],
+        team_links=["https://www.linkedin.com/in/adaruiz"],
+        team_notes="Hiring fast.",
+    )
+    enriched = f.run_followup("pid", start, ["x"])
+    assert enriched.team_links == ["https://www.linkedin.com/in/adaruiz"]
+    assert enriched.team_notes == "Hiring fast."
+
+
+def test_run_followup_keeps_no_team_links_or_notes_as_empty(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    enriched = f.run_followup("pid", base(), ["x"])
+    assert enriched.team_links == []
+    assert enriched.team_notes is None
