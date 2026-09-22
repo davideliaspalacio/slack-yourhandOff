@@ -1,0 +1,191 @@
+{
+  "Company": {
+    "annualRevenue": "6.9B",
+    "departmentalHeadCount": {
+      "finance": 849,
+      "product_management": 171,
+      "sales": 1136,
+      "engineering": 4202,
+      "legal": 214,
+      "business_development": 251,
+      "human_resources": 606,
+      "administrative": 61,
+      "operations": 1260,
+      "marketing": 367,
+      "media_and_commmunication": 39,
+      "support": 334,
+      "arts_and_design": 246,
+      "entrepreneurship": 13,
+      "data_science": 359,
+      "accounting": 85,
+      "education": 12,
+      "information_technology": 72,
+      "consulting": 103
+    },
+    "googleNews": [],
+    "googleJobs": []
+  },
+  "linkedIn": {
+    "name": "Stripe",
+    "followerCount": 1719406,
+    "isFollowing": true,
+    "industry": "Technology, Information and Internet",
+    "tagline": "Help increase the GDP of the internet.",
+    "description": "Stripe builds programmable financial services. Millions of companies—from the world’s largest enterprises to the most ambitious startups—use Stripe to accept payments, grow their revenue, and accelerate new business opportunities. Headquartered in San Francisco and Dublin, the company aims to increase the GDP of the internet.",
+    "locationCity": "Tokyo",
+    "locationState": "Shibuya-ku",
+    "locationCountry": "JP",
+    "website": "https://stripe.com",
+    "linkedinUrl": "https://www.linkedin.com/company/stripe/",
+    "employeeCount": 16679,
+    "employeeRangeMin": 5001,
+    "employeeRangeMax": 10000,
+    "avgTenure": "2 years",
+    "totalCount": 16679,
+    "monthlyEmployeeCounts": [
+      {
+        "count": 10747,
+        "date": "2024-09-01"
+      },
+      {
+        "count": 10997,
+        "date": "2024-10-01"
+      },
+      {
+        "count": 11161,
+        "date": "2024-11-01"
+      },
+      {
+        "count": 11285,
+        "date": "2024-12-01"
+      },
+      {
+        "count": 11509,
+        "date": "2025-01-01"
+      },
+      {
+        "count": 11694,
+        "date": "2025-02-01"
+      },
+      {
+        "count": 11892,
+        "date": "2025-03-01"
+      },
+      {
+        "count": 12044,
+        "date": "2025-04-01"
+      },
+      {
+        "count": 12343,
+        "date": "2025-05-01"
+      },
+      {
+        "count": 12709,
+        "date": "2025-06-01"
+      },
+      {
+        "count": 13000,
+        "date": "2025-07-01"
+      },
+      {
+        "count": 13106,
+        "date": "2025-08-01"
+      },
+      {
+        "count": 13440,
+        "date": "2025-09-01"
+      },
+      {
+        "count": 13655,
+        "date": "2025-10-01"
+      },
+      {
+        "count": 13865,
+        "date": "2025-11-01"
+      },
+      {
+        "count": 14010,
+        "date": "2025-12-01"
+      },
+      {
+        "count": 14443,
+        "date": "2026-01-01"
+      },
+      {
+        "count": 14700,
+        "date": "2026-02-01"
+      },
+      {
+        "count": 14893,
+        "date": "2026-03-01"
+      },
+      {
+        "count": 15097,
+        "date": "2026-04-01"
+      },
+      {
+        "count": 15551,
+        "date": "2026-05-01"
+      },
+      {
+        "count": 16017,
+        "date": "2026-06-01"
+      },
+      {
+        "count": 16417,
+        "date": "2026-07-01"
+      },
+      {
+        "count": 16551,
+        "date": "2026-08-01"
+      },
+      {
+        "count": 16679,
+        "date": "2026-09-01"
+      }
+    ]
+  },
+  "crm": {
+    "companyName": "Stripe",
+    "companyWebsiteUrl": "http://www.stripe.com",
+    "companyLinkedinUrl": "http://www.linkedin.com/company/stripe",
+    "companyLinkedinUid": "2135371",
+    "companyTwitterUrl": "http://twitter.com/stripe",
+    "companyFacebookUrl": "https://www.facebook.com/StripeHQ",
+    "companyPrimaryPhoneNumber": "+14152985539",
+    "CompanyIndustry": "information technology & services",
+    "companyStreetAddress": "354 Oyster Point Blvd",
+    "companyCity": "South San Francisco",
+    "companyState": "California",
+    "companyPostalCode": "94080-1912",
+    "companyCountry": "United States",
+    "companyAboutUs": "Stripe, Inc. is a global financial technology company that provides economic infrastructure for the internet. Founded in 2010 by Patrick and John Collison, Stripe has grown into a comprehensive financial platform serving millions of businesses worldwide. With headquarters in South San Francisco, California, and Dublin, Ireland, the company operates in over 46 countries and is recognized as the largest privately owned fintech company.\n\nStripe offers a wide range of financial and payment processing products designed to support businesses throughout their commercial transactions. This includes payment processing for online and mobile payments, subscription management, invoicing, and fraud prevention. The platform also features banking-as-a-service solutions, allowing businesses to offer financial accounts to their users. Stripe serves a diverse clientele, from startups to Fortune 100 companies, and is known for its developer-friendly APIs that simplify financial operations. With a mission to increase the GDP of the internet, Stripe continues to innovate and expand its offerings in the financial technology space.",
+    "companyAnnualRevenue": 6935000000,
+    "companyYearFounded": 2010,
+    "companyCrunchbaseUrl": null,
+    "companyEmployeeCount": 8000,
+    "companyGrowthMetrics": [
+      {
+        "monthRange": 6,
+        "netChange": 12,
+        "growthPercentage": 0.07194675939804544
+      },
+      {
+        "monthRange": 12,
+        "netChange": 24,
+        "growthPercentage": 0.14389351879609089
+      },
+      {
+        "monthRange": 24,
+        "netChange": 55,
+        "growthPercentage": 0.329755980574375
+      }
+    ],
+    "aiSummary": {
+      "summary": "Stripe is a large technology company based in Shibuya-ku, Tokyo, with over 5,000 employees. The company creates tools and services that help businesses accept payments and manage finances online. Stripe supports companies of all sizes, from small startups to big enterprises, to grow and succeed on the internet. Its main products include programmable financial services that allow businesses to process payments, handle subscriptions, and expand their revenue. Stripe’s headquarters are in San Francisco and Dublin. The company focuses on using technology to make financial services easier and more accessible around the world. There are no listed key decision makers, recent news, or job postings for the Tokyo location at this time."
+    }
+  },
+  "industryHubspot": null,
+  "industryMatched": false,
+  "industryRaw": ""
+}

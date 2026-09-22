@@ -173,3 +173,24 @@ def test_the_prompt_warns_when_the_domain_was_guessed():
     given = Gathered(domain="acme.com", evidence=[], jobs=[])
     assert "adivinado" in s.build_prompt("Ada", "Acme", guessed)
     assert "adivinado" not in s.build_prompt("Ada", "Acme", given)
+
+
+def test_provider_data_is_fenced_with_an_instruction_outside_the_fence():
+    proveedor = {"empleados_linkedin": 16679, "fuente": "proveedor externo (sin verificar)"}
+    with_provider = Gathered(domain="acme.com", evidence=[], jobs=[], proveedor=proveedor)
+    prompt = s.build_prompt("Ada", "Acme", with_provider)
+    assert s.PROVEEDOR_INSTRUCTION in prompt
+    fenced = untrusted.fence(json.dumps(proveedor, ensure_ascii=False), "proveedor")
+    assert fenced in prompt
+    # La instrucción va fuera del delimitador: si estuviera dentro, el modelo
+    # la trataría como dato de terceros y no como una regla a seguir.
+    instruction_index = prompt.index(s.PROVEEDOR_INSTRUCTION)
+    fence_index = prompt.index(fenced)
+    assert instruction_index < fence_index
+    assert not (fence_index < instruction_index < fence_index + len(fenced))
+
+
+def test_no_provider_section_when_there_is_no_provider_data():
+    without_provider = Gathered(domain="acme.com", evidence=[], jobs=[])
+    prompt = s.build_prompt("Ada", "Acme", without_provider)
+    assert "proveedor" not in prompt.lower()

@@ -26,6 +26,10 @@ FRESH_FOR = timedelta(days=180)
 SYSTEM_STOPS = (guards.KillSwitchActive, guards.MonthlyBudgetExceeded)
 DEGRADED_REASON = "búsqueda degradada"
 DEGRADED_KEY = "degradado"
+# Como DEGRADED_KEY: solo lo pone el código. Si el modelo devolviera esta
+# clave por su cuenta, se descarta -- son datos de `enrichment.enrich_company`,
+# nunca algo que el modelo deba inventar o repetir.
+PROVEEDOR_KEY = "datos_proveedor"
 
 
 @dataclass(frozen=True)
@@ -88,8 +92,12 @@ def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | 
     Un dossier degradado lleva `"degradado": true` en su contenido: la regla de
     frescura no lo protege, así que la próxima ejecución lo repite. Solo lo pone
     el código; si el modelo devolviera esa clave, se descarta.
+
+    `"datos_proveedor"` es igual de código-propia: si `gathered.proveedor` trae
+    algo, se guarda tal cual (ya normalizado por `enrichment.enrich_company`);
+    si el modelo devolviera esa clave por su cuenta, también se descarta.
     """
-    content = {k: v for k, v in result.dossier.items() if k != DEGRADED_KEY}
+    content = {k: v for k, v in result.dossier.items() if k not in (DEGRADED_KEY, PROVEEDOR_KEY)}
     degraded = None
     if gathered.search_degraded:
         content[DEGRADED_KEY] = True
@@ -97,6 +105,8 @@ def _store(pid: str, result, gathered, company: str | None) -> tuple[int, str | 
             f"{DEGRADED_REASON}: ninguna de las {gathered.searches_attempted} "
             "búsquedas devolvió resultados"
         )
+    if gathered.proveedor:
+        content[PROVEEDOR_KEY] = gathered.proveedor
     version = prospects.save_dossier(pid, content, gathered.source_records())
     if gathered.errors:
         ledger.record_action("research_errores", {"errores": gathered.errors}, prospect_id=pid)

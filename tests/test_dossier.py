@@ -58,6 +58,17 @@ def test_null_sources_are_allowed_for_unknown_facts():
     assert validate_dossier(data, SOURCES) == []
 
 
+def test_citing_proveedor_as_a_source_is_rejected():
+    """Los datos de proveedor van con origen "proveedor" (ver
+    research/synthesize.py), pero nunca son una fuente consultada de verdad:
+    el modelo no puede citarla como si lo fuera."""
+    data = make_dossier(
+        senales_contexto=[{"hecho": "Tiene 16.679 empleados", "fuente": "proveedor"}]
+    )
+    problems = validate_dossier(data, SOURCES)
+    assert any("proveedor" in p for p in problems)
+
+
 def test_fit_score_must_be_an_integer_from_0_to_3():
     for bad in (4, -1, "3", 2.5, None):
         data = make_dossier(encaje_handoff={"puntuacion": bad, "razon": "x"})

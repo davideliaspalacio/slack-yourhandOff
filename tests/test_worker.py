@@ -550,3 +550,51 @@ def test_a_first_pass_stop_saves_nothing_and_says_so(conn, pipeline):
     with pytest.raises(guards.MonthlyBudgetExceeded) as info:
         w.research_person("Ada Ruiz", "Acme")
     assert getattr(info.value, "saved_version", None) is None
+
+
+# --- datos_proveedor: código-propio, nunca lo pone el modelo ------------------
+
+
+def gather_with_provider(proveedor):
+    def fake(pid, full_name, company, domain=None):
+        return Gathered(
+            "acme.com",
+            [Evidence("home", "https://acme.com/", "Acme", "t")],
+            [],
+            [],
+            proveedor=proveedor,
+        )
+
+    return fake
+
+
+def test_store_writes_the_gathered_provider_data(conn, pipeline):
+    proveedor = {"empleados_linkedin": 16679, "fuente": "proveedor externo (sin verificar)"}
+    pipeline.setattr(w, "gather", gather_with_provider(proveedor))
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    stored = db.fetch_one(
+        "select content from dossiers where prospect_id = %s", (outcome.prospect_id,)
+    )
+    assert stored["content"]["datos_proveedor"] == proveedor
+
+
+def test_store_drops_a_model_supplied_datos_proveedor(conn, pipeline):
+    pipeline.setattr(w, "gather", gather_with_provider(None))
+    pipeline.setattr(
+        w, "synthesize", synth_returning(make_dossier(datos_proveedor={"empleados": 999999}))
+    )
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    stored = db.fetch_one(
+        "select content from dossiers where prospect_id = %s", (outcome.prospect_id,)
+    )
+    assert "datos_proveedor" not in stored["content"]
+
+
+def test_store_omits_datos_proveedor_when_there_is_none(conn, pipeline):
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    outcome = w.research_person("Ada Ruiz", "Acme")
+    stored = db.fetch_one(
+        "select content from dossiers where prospect_id = %s", (outcome.prospect_id,)
+    )
+    assert "datos_proveedor" not in stored["content"]

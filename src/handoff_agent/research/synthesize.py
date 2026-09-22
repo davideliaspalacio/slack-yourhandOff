@@ -18,6 +18,18 @@ from .gather import Gathered
 
 MAX_ATTEMPTS = 2
 
+# Instrucción que acompaña el bloque de datos de proveedor (fuera del
+# delimitador, para que el modelo la lea como instrucción y no como dato).
+PROVEEDOR_INSTRUCTION = (
+    "Lo siguiente son datos de un proveedor externo, sin fuente citable y a veces "
+    "contradictorios entre sí (por ejemplo, distintas cifras de empleados, o una sede "
+    "que no coincide con la de la evidencia). Pueden orientar "
+    '"encaje_handoff.razon" y "huecos" -- un equipo grande de soporte u operaciones, o '
+    "un crecimiento fuerte de plantilla, son buenas señales para el staffing de Handoff "
+    'en LATAM -- pero nunca se citan en "fuente"/"fuentes" ni se afirman como hechos en '
+    '"empresa" o "senales_contexto".'
+)
+
 SYSTEM_PROMPT = """Eres analista de research de Handoff, una empresa de staffing que coloca
 talento de LATAM (sobre todo Colombia) en empresas de Estados Unidos: soporte,
 operaciones, asistentes ejecutivos, desarrollo y roles de back-office.
@@ -113,6 +125,12 @@ def build_prompt(
         lines.append(untrusted.fence(f"{job.title} — {job.company} — {job.location}", job.url))
     if not gathered.evidence and not gathered.jobs:
         lines.append("(no se encontró evidencia)")
+    if gathered.proveedor:
+        lines.append("")
+        lines.append(PROVEEDOR_INSTRUCTION)
+        lines.append(
+            untrusted.fence(json.dumps(gathered.proveedor, ensure_ascii=False), "proveedor")
+        )
     if problems:
         lines.append("\nTu respuesta anterior se rechazó por estos problemas. Corrígelos:")
         lines.extend(f"- {problem}" for problem in problems)

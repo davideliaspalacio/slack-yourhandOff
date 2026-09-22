@@ -34,6 +34,26 @@ NUM_CHARS = 20
 MAX_SIGNALS = 3
 EMOJI = {"alta": "🔥", "media": "👀", "baja": "📋"}
 
+# `datos_proveedor` (ver research/worker.py): datos de un proveedor externo,
+# sin fuente citable. Igual que el resto del dossier, se trata como escrito
+# por un tercero -- nunca se confía en su tipo, solo se valida su presencia.
+PROVEEDOR_CHARS = 500
+PROVEEDOR_MAX_AREAS = 3
+PROVEEDOR_GROWTH_MONTHS = 12
+PROVEEDOR_AREA_LABELS = {
+    "support": "soporte",
+    "operations": "operaciones",
+    "sales": "ventas",
+    "engineering": "ingeniería",
+    "finance": "finanzas",
+    "human_resources": "RR. HH.",
+    "marketing": "marketing",
+    "customer_success": "éxito del cliente",
+}
+# En qué orden se prefieren las áreas cuando hay que elegir solo tres: son las
+# que mejor predicen encaje con el staffing de Handoff en LATAM.
+PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success")
+
 # Los topes de arriba se aplican al texto YA escapado (ver _escape_and_cap):
 # `_escape_mrkdwn` puede multiplicar la longitud hasta por 5 ('&' -> '&amp;'),
 # así que recortar el texto crudo y escapar después, como se hacía antes, no
@@ -165,6 +185,84 @@ def _headline(person: dict, dossier: dict, band: str) -> str:
     return f"*{name}*" + (f" — {', '.join(bits)}{tail}" if bits else "")
 
 
+def _proveedor_int(value: object) -> int | None:
+    """Como `_safe_number`, pero devuelve el `int` (o None), no el texto ya
+    recortado: aquí el número todavía se combina con otros antes de escapar."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _format_int_es(n: int) -> str:
+    return f"{n:,}".replace(",", ".")
+
+
+def _area_label(key: str) -> str:
+    if key in PROVEEDOR_AREA_LABELS:
+        return PROVEEDOR_AREA_LABELS[key]
+    return key.replace("_", " ")
+
+
+def _proveedor_areas(areas: object) -> list[tuple[str, int]]:
+    if not isinstance(areas, dict):
+        return []
+    safe = {
+        key: _proveedor_int(value)
+        for key, value in areas.items()
+        if isinstance(key, str) and _proveedor_int(value) is not None
+    }
+    selected = [k for k in PROVEEDOR_PRIORITY_AREAS if k in safe][:PROVEEDOR_MAX_AREAS]
+    if not selected:
+        by_count = sorted(safe.items(), key=lambda kv: -kv[1])
+        selected = [k for k, _ in by_count[:PROVEEDOR_MAX_AREAS]]
+    return [(k, safe[k]) for k in selected]
+
+
+def _proveedor_growth(crecimiento: object) -> str | None:
+    if not isinstance(crecimiento, list):
+        return None
+    for item in crecimiento:
+        if not isinstance(item, dict) or item.get("meses") != PROVEEDOR_GROWTH_MONTHS:
+            continue
+        pct = item.get("porcentaje")
+        if isinstance(pct, bool) or not isinstance(pct, (int, float)):
+            continue
+        value = round(pct * 100)
+        sign = "+" if value >= 0 else ""
+        return f"{sign}{value}% en {PROVEEDOR_GROWTH_MONTHS} meses"
+    return None
+
+
+def _proveedor_block(dossier: dict) -> dict | None:
+    """Una línea de contexto con lo poco del proveedor externo que se puede
+    presentar sin verificar: recuento de empleados, crecimiento a 12 meses y
+    hasta tres áreas. Si no sobrevive ningún número, no hay bloque."""
+    proveedor = dossier.get("datos_proveedor")
+    if not isinstance(proveedor, dict):
+        return None
+
+    empleados = _proveedor_int(proveedor.get("empleados_linkedin"))
+    if empleados is None:
+        empleados = _proveedor_int(proveedor.get("empleados_crm"))
+
+    bits = []
+    if empleados is not None:
+        bits.append(f"{_format_int_es(empleados)} empleados")
+
+    growth = _proveedor_growth(proveedor.get("crecimiento"))
+    if growth:
+        bits.append(growth)
+
+    for key, count in _proveedor_areas(proveedor.get("empleados_por_area")):
+        bits.append(f"{_area_label(key)} {_format_int_es(count)}")
+
+    if not bits:
+        return None
+
+    text = _escape_and_cap("Proveedor (sin verificar): " + " · ".join(bits), PROVEEDOR_CHARS)
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
+
+
 def build(
     person: dict,
     dossier: dict,
@@ -222,6 +320,10 @@ def build(
     if resumen:
         trimmed = _escape_and_cap(resumen, RESUMEN_CHARS)
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": trimmed}]})
+
+    proveedor_block = _proveedor_block(dossier)
+    if proveedor_block:
+        blocks.append(proveedor_block)
 
     elements = [
         {

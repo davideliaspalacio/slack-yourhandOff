@@ -93,3 +93,17 @@ def test_run_followup_keeps_the_guessed_domain_flag(monkeypatch):
     monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
     guessed = Gathered("acme.com", [], [], [], domain_guessed=True)
     assert f.run_followup("pid", guessed, ["x"]).domain_guessed is True
+
+
+def test_run_followup_carries_the_provider_data_without_refetching(monkeypatch):
+    """El seguimiento no debe volver a llamar al webhook de enriquecimiento:
+    ya se pagó y se guardó en la primera pasada."""
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    start = Gathered("acme.com", [], [], [], proveedor={"empleados_linkedin": 100})
+    assert f.run_followup("pid", start, ["x"]).proveedor == {"empleados_linkedin": 100}
+
+
+def test_run_followup_keeps_no_provider_data_as_none(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    start = Gathered("acme.com", [], [], [], proveedor=None)
+    assert f.run_followup("pid", start, ["x"]).proveedor is None

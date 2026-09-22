@@ -206,3 +206,52 @@ def test_price_resend_per_email_reads_the_environment(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PRICE_RESEND_PER_EMAIL", "0.001")
     assert load_settings().price_resend_per_email == 0.001
+
+
+def test_enrichment_webhook_url_defaults_to_none(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("ENRICHMENT_WEBHOOK_URL", raising=False)
+    assert load_settings().enrichment_webhook_url is None
+
+
+def test_enrichment_webhook_url_empty_string_counts_as_absent(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("ENRICHMENT_WEBHOOK_URL", "")
+    assert load_settings().enrichment_webhook_url is None
+
+
+def test_enrichment_webhook_url_reads_the_environment(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("ENRICHMENT_WEBHOOK_URL", "https://n8n.example/webhook/enrich")
+    assert load_settings().enrichment_webhook_url == "https://n8n.example/webhook/enrich"
+
+
+def test_enrichment_timeout_seconds_defaults_to_120(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("ENRICHMENT_TIMEOUT_SECONDS", raising=False)
+    assert load_settings().enrichment_timeout_seconds == 120.0
+
+
+def test_enrichment_timeout_seconds_reads_the_environment(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("ENRICHMENT_TIMEOUT_SECONDS", "60")
+    assert load_settings().enrichment_timeout_seconds == 60.0
+
+
+def test_price_enrichment_per_call_defaults_to_0(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("PRICE_ENRICHMENT_PER_CALL", raising=False)
+    assert load_settings().price_enrichment_per_call == 0.0
+
+
+def test_price_enrichment_per_call_reads_the_environment(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PRICE_ENRICHMENT_PER_CALL", "0.05")
+    assert load_settings().price_enrichment_per_call == 0.05

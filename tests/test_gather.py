@@ -381,6 +381,36 @@ def test_five_letter_name_accepts_prefix_domain(monkeypatch):
     assert g.resolve_domain("Northwind", "pid") == "northwindhq.com"
 
 
+def test_gather_calls_enrichment_when_the_domain_is_known(monkeypatch):
+    calls = []
+
+    def fake_enrich(domain, prospect_id=None):
+        calls.append((domain, prospect_id))
+        return {"empleados_linkedin": 100}
+
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", no_jobs)
+    monkeypatch.setattr(g.enrichment, "enrich_company", fake_enrich)
+    result = g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com")
+    assert calls == [("acme.com", "pid")]
+    assert result.proveedor == {"empleados_linkedin": 100}
+
+
+def test_gather_skips_enrichment_without_a_domain(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", no_jobs)
+    monkeypatch.setattr(
+        g.enrichment, "enrich_company", lambda domain, prospect_id=None: calls.append(domain)
+    )
+    result = g.gather("pid", "Ada Ruiz", None)
+    assert calls == []
+    assert result.proveedor is None
+
+
 def test_tld_name_does_not_match_through_tld_label(monkeypatch):
     """A name equal to a TLD must not match through the TLD: 'IO' vs example.io."""
     monkeypatch.setattr(

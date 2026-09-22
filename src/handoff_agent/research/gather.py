@@ -13,7 +13,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from ..tools import jobs, search, web
+from ..tools import enrichment, jobs, search, web
 
 PAGE_CHARS = 6_000
 CANDIDATE_PATHS = {"home": "/", "about": "/about", "careers": "/careers"}
@@ -83,6 +83,9 @@ class Gathered:
     searches_attempted: int = 0
     searches_answered: int = 0
     domain_guessed: bool = False
+    # Dato de proveedor externo (sin verificar), del webhook de enriquecimiento.
+    # None si no hay dominio, no hay webhook configurado, o el webhook falló.
+    proveedor: dict | None = None
 
     @property
     def sources(self) -> set[str]:
@@ -249,6 +252,12 @@ def gather(
         )
 
     found_jobs = jobs.buscar_ofertas(company, limit=20, prospect_id=prospect_id) if company else []
+
+    # El webhook de enriquecimiento es de terceros y puede fallar o tardar; ver
+    # tools/enrichment.py para el porqué de que nunca lance ni cueste una
+    # búsqueda a la salud del buscador.
+    proveedor = enrichment.enrich_company(domain, prospect_id) if domain else None
+
     return Gathered(
         domain,
         dedupe_evidence(evidence),
@@ -257,4 +266,5 @@ def gather(
         searches_attempted=tally.attempted,
         searches_answered=tally.answered,
         domain_guessed=domain_guessed,
+        proveedor=proveedor,
     )

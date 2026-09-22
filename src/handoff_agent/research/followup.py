@@ -49,4 +49,7 @@ def run_followup(prospect_id: str, gathered: Gathered, queries: list[str]) -> Ga
         searches_attempted=gathered.searches_attempted,
         searches_answered=gathered.searches_answered,
         domain_guessed=gathered.domain_guessed,
+        # El seguimiento no vuelve a llamar al webhook: ya se pagó y se guardó
+        # en la primera pasada.
+        proveedor=gathered.proveedor,
     )

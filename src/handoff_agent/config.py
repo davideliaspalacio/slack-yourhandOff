@@ -50,6 +50,9 @@ class Settings:
     digest_from: str | None
     digest_to: tuple[str, ...]
     price_resend_per_email: float
+    enrichment_webhook_url: str | None
+    enrichment_timeout_seconds: float
+    price_enrichment_per_call: float
 
 
 def _required(name: str) -> str:
@@ -107,4 +110,15 @@ def load_settings() -> Settings:
         # por defecto -- igual que PRICE_TWILIO_PER_SMS, vive en el entorno
         # para poder corregirse sin tocar código si algún día cambia.
         price_resend_per_email=float(os.environ.get("PRICE_RESEND_PER_EMAIL", "0.0")),
+        # Webhook privado de Handoff que enriquece una empresa a partir de su
+        # dominio. Repo público: su URL real nunca se comitea, solo vive en el
+        # entorno; sin ella, enrich_company se omite (ver tools/enrichment.py).
+        enrichment_webhook_url=os.environ.get("ENRICHMENT_WEBHOOK_URL") or None,
+        # Visto tardar hasta ~100s y caído por días con un 500 "Error in
+        # workflow": el timeout es generoso a propósito.
+        enrichment_timeout_seconds=float(os.environ.get("ENRICHMENT_TIMEOUT_SECONDS", "120")),
+        # El flujo real llama a GPT-4.1 más un proveedor de datos de empresa;
+        # su coste no se conoce todavía, de ahí el 0.0 -- corregir en cuanto
+        # se sepa, igual que PRICE_TWILIO_PER_SMS y PRICE_RESEND_PER_EMAIL.
+        price_enrichment_per_call=float(os.environ.get("PRICE_ENRICHMENT_PER_CALL", "0.0")),
     )

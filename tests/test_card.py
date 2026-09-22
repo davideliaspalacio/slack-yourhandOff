@@ -332,6 +332,123 @@ def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit():
     _assert_card_under_limits_no_syntax_leak(blocks)
 
 
+PROVEEDOR = {
+    "empleados_linkedin": 16679,
+    "empleados_crm": 8000,
+    "crecimiento": [
+        {"meses": 6, "cambio_neto": 12, "porcentaje": 0.072},
+        {"meses": 12, "cambio_neto": 24, "porcentaje": 0.1439},
+        {"meses": 24, "cambio_neto": 55, "porcentaje": 0.3298},
+    ],
+    "empleados_por_area": {
+        "support": 334,
+        "operations": 1260,
+        "sales": 1136,
+        "engineering": 4202,
+    },
+}
+
+
+def test_the_provider_block_has_the_expected_content():
+    dossier = {**DOSSIER, "datos_proveedor": PROVEEDOR}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    context_texts = [b["elements"][0]["text"] for b in blocks if b["type"] == "context"]
+    text = next(t for t in context_texts if "Proveedor (sin verificar)" in t)
+    assert text == (
+        "Proveedor (sin verificar): 16.679 empleados · +14% en 12 meses · "
+        "soporte 334 · operaciones 1.260 · ventas 1.136"
+    )
+
+
+def test_no_provider_block_when_the_dossier_has_no_provider_data():
+    blocks = card.build(PERSON, DOSSIER, "alta", None, None)
+    assert "Proveedor" not in blocks_text(blocks)
+
+
+def test_no_provider_block_when_nothing_usable_survives():
+    dossier = {**DOSSIER, "datos_proveedor": {"fuente": "proveedor externo (sin verificar)"}}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    assert "Proveedor" not in blocks_text(blocks)
+
+
+def test_no_provider_block_when_datos_proveedor_is_not_a_dict():
+    dossier = {**DOSSIER, "datos_proveedor": "not a dict"}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    assert "Proveedor" not in blocks_text(blocks)
+
+
+def test_provider_block_falls_back_to_the_crm_employee_count():
+    dossier = {**DOSSIER, "datos_proveedor": {"empleados_crm": 8000}}
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "8.000 empleados" in text
+
+
+def test_provider_block_ignores_a_boolean_disguised_as_an_employee_count():
+    dossier = {**DOSSIER, "datos_proveedor": {"empleados_linkedin": True}}
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    assert "Proveedor" not in blocks_text(blocks)
+
+
+def test_provider_block_falls_back_to_top_areas_by_count_when_priority_areas_are_absent():
+    dossier = {
+        **DOSSIER,
+        "datos_proveedor": {"empleados_por_area": {"finance": 5, "legal": 50, "marketing": 20}},
+    }
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "legal 50" in text
+    assert "marketing 20" in text
+    assert "finanzas 5" in text
+
+
+def test_provider_block_only_shows_the_12_month_growth_entry():
+    dossier = {
+        **DOSSIER,
+        "datos_proveedor": {"crecimiento": [{"meses": 24, "cambio_neto": 1, "porcentaje": 0.5}]},
+    }
+    text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
+    assert "en 24 meses" not in text
+    assert "en 12 meses" not in text
+
+
+def test_a_hostile_datos_proveedor_never_leaks_syntax_or_breaks_a_block_limit():
+    """`datos_proveedor` viene de un webhook de terceros: mismo trato hostil
+    que el resto del dossier. Se deja una cifra válida (`empleados_linkedin`)
+    para forzar que el bloque exista y de verdad se someta a las cifras y
+    claves hostiles del resto de campos."""
+    hostile_text = "<!channel> <@U1> <#C1|x> & " * 400
+    hostile_number = "50<!channel>"
+    dossier = {
+        **DOSSIER,
+        "datos_proveedor": {
+            "empleados_linkedin": 16679,
+            "empleados_crm": hostile_number,
+            "crecimiento": [{"meses": 12, "cambio_neto": hostile_number, "porcentaje": True}],
+            "empleados_por_area": {hostile_text: 5, "support": hostile_number},
+        },
+    }
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    _assert_card_under_limits_no_syntax_leak(blocks)
+    context_texts = [b["elements"][0]["text"] for b in blocks if b["type"] == "context"]
+    assert any("Proveedor (sin verificar)" in t for t in context_texts)
+
+
+def test_a_realistic_hostile_datos_proveedor_still_renders_and_stays_safe():
+    """Con formas válidas pero con claves de área hostiles, el bloque debe
+    seguir cabiendo en el tope de un bloque `context` y no filtrar sintaxis."""
+    hostile_key = ("mala" * 100)[:40]
+    dossier = {
+        **DOSSIER,
+        "datos_proveedor": {
+            "empleados_linkedin": 16679,
+            "empleados_por_area": {hostile_key: 5000000000000},
+        },
+    }
+    blocks = card.build(PERSON, dossier, "alta", None, None)
+    _assert_card_under_limits_no_syntax_leak(blocks)
+    context_texts = [b["elements"][0]["text"] for b in blocks if b["type"] == "context"]
+    assert any("Proveedor (sin verificar)" in t for t in context_texts)
+
+
 def test_fallback_to_person_full_name_when_persona_missing_is_escaped():
     """When persona and empresa are missing, person.full_name and person.company_name
     are used for the header. They must be escaped and bounded even with hostile payloads."""
