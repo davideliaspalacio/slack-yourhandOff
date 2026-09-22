@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 
 from handoff_agent.delivery import card
 
@@ -556,3 +557,13 @@ def test_the_rendered_card_has_no_leftover_spanish_labels():
     ]
     for leftover in spanish_leftovers:
         assert leftover not in text, f"leftover Spanish label found in the card: {leftover!r}"
+
+
+def test_a_uuid_id_from_the_database_is_serialisable():
+    """psycopg devuelve prospects.id como uuid.UUID, no como str: sin
+    convertirlo, slack_sdk no puede serializar la tarjeta y no sale ninguna."""
+    person = {**PERSON, "id": uuid.UUID(PERSON["id"])}
+    blocks = card.build(person, DOSSIER, "alta", MESSAGE, "https://slack.com/p1")
+    actions = next(b for b in blocks if b["type"] == "actions")["elements"]
+    assert all(e["value"] == PERSON["id"] for e in actions[:3])
+    json.dumps(blocks)

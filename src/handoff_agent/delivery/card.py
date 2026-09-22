@@ -358,21 +358,21 @@ def build(
             "type": "button",
             "action_id": "contactado",
             "text": {"type": "plain_text", "text": "Contacted"},
-            "value": person["id"],
+            "value": str(person["id"]),
             "style": "primary",
         },
         {
             "type": "button",
             "action_id": "descartar",
             "text": {"type": "plain_text", "text": "Discard"},
-            "value": person["id"],
+            "value": str(person["id"]),
             "style": "danger",
         },
         {
             "type": "button",
             "action_id": "investigar_mas",
             "text": {"type": "plain_text", "text": "Research more"},
-            "value": person["id"],
+            "value": str(person["id"]),
         },
     ]
     if permalink:

@@ -30,7 +30,7 @@ def test_a_high_band_person_gets_a_card(conn, monkeypatch):
     monkeypatch.setattr(
         deliver.slack_writer,
         "post_card",
-        lambda blocks, text: posted.append((blocks, text)) or ("CHANDOFF", "1.1"),
+        lambda blocks, text: posted.append((json.dumps(blocks), text)) or ("CHANDOFF", "1.1"),
     )
     person = a_person()
     assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
