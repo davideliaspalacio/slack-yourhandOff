@@ -133,7 +133,7 @@ def test_an_overlong_hecho_is_trimmed():
 
 def _porque_importa_text(blocks):
     section = next(
-        b for b in blocks if b["type"] == "section" and "Por qué importa" in b["text"]["text"]
+        b for b in blocks if b["type"] == "section" and "Why it matters" in b["text"]["text"]
     )
     return section["text"]["text"]
 
@@ -243,7 +243,7 @@ def test_missing_empresa_still_falls_back_to_the_person_record():
 def test_missing_contratacion_produces_no_vacantes_line():
     dossier = {**DOSSIER, "contratacion": None}
     text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
-    assert "vacantes abiertas" not in text
+    assert "open roles" not in text
 
 
 def test_empty_senales_contexto_produces_no_signal_bullets():
@@ -356,10 +356,10 @@ def test_the_provider_block_has_the_expected_content():
     dossier = {**DOSSIER, "datos_proveedor": PROVEEDOR}
     blocks = card.build(PERSON, dossier, "alta", None, None)
     context_texts = [b["elements"][0]["text"] for b in blocks if b["type"] == "context"]
-    text = next(t for t in context_texts if "Proveedor (sin verificar)" in t)
+    text = next(t for t in context_texts if "Provider data (unverified)" in t)
     assert text == (
-        "Proveedor (sin verificar): 16.679 empleados · +24% en 12 meses · "
-        "soporte 334 · operaciones 1.260 · ventas 1.136"
+        "Provider data (unverified): 16,679 employees · +24% in 12 months · "
+        "support 334 · operations 1,260 · sales 1,136"
     )
 
 
@@ -367,7 +367,7 @@ def test_without_a_monthly_series_the_provider_growth_is_already_a_percentage():
     """0.1439 del proveedor es 0,14 %, no 14 %."""
     proveedor = {k: v for k, v in PROVEEDOR.items() if k != "evolucion_mensual"}
     blocks = card.build(PERSON, {**DOSSIER, "datos_proveedor": proveedor}, "alta", None, None)
-    assert "+0.1% en 12 meses" in blocks_text(blocks)
+    assert "+0.1% in 12 months" in blocks_text(blocks)
     assert "+14%" not in blocks_text(blocks)
 
 
@@ -391,7 +391,7 @@ def test_no_provider_block_when_datos_proveedor_is_not_a_dict():
 def test_provider_block_falls_back_to_the_crm_employee_count():
     dossier = {**DOSSIER, "datos_proveedor": {"empleados_crm": 8000}}
     text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
-    assert "8.000 empleados" in text
+    assert "8,000 employees" in text
 
 
 def test_provider_block_ignores_a_boolean_disguised_as_an_employee_count():
@@ -408,7 +408,7 @@ def test_provider_block_falls_back_to_top_areas_by_count_when_priority_areas_are
     text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
     assert "legal 50" in text
     assert "marketing 20" in text
-    assert "finanzas 5" in text
+    assert "finance 5" in text
 
 
 def test_provider_block_only_shows_the_12_month_growth_entry():
@@ -417,8 +417,8 @@ def test_provider_block_only_shows_the_12_month_growth_entry():
         "datos_proveedor": {"crecimiento": [{"meses": 24, "cambio_neto": 1, "porcentaje": 0.5}]},
     }
     text = blocks_text(card.build(PERSON, dossier, "alta", None, None))
-    assert "en 24 meses" not in text
-    assert "en 12 meses" not in text
+    assert "in 24 months" not in text
+    assert "in 12 months" not in text
 
 
 def test_a_hostile_datos_proveedor_never_leaks_syntax_or_breaks_a_block_limit():
@@ -440,7 +440,7 @@ def test_a_hostile_datos_proveedor_never_leaks_syntax_or_breaks_a_block_limit():
     blocks = card.build(PERSON, dossier, "alta", None, None)
     _assert_card_under_limits_no_syntax_leak(blocks)
     context_texts = [b["elements"][0]["text"] for b in blocks if b["type"] == "context"]
-    assert any("Proveedor (sin verificar)" in t for t in context_texts)
+    assert any("Provider data (unverified)" in t for t in context_texts)
 
 
 def test_a_realistic_hostile_datos_proveedor_still_renders_and_stays_safe():
@@ -457,7 +457,7 @@ def test_a_realistic_hostile_datos_proveedor_still_renders_and_stays_safe():
     blocks = card.build(PERSON, dossier, "alta", None, None)
     _assert_card_under_limits_no_syntax_leak(blocks)
     context_texts = [b["elements"][0]["text"] for b in blocks if b["type"] == "context"]
-    assert any("Proveedor (sin verificar)" in t for t in context_texts)
+    assert any("Provider data (unverified)" in t for t in context_texts)
 
 
 def test_fallback_to_person_full_name_when_persona_missing_is_escaped():
@@ -516,3 +516,43 @@ def test_fallback_to_person_slack_user_id_when_full_name_missing_is_escaped():
     # Use a small distinctive substring that's guaranteed to survive the NAME_CHARS cap.
     text = blocks_text(blocks)
     assert "&lt;!channel&gt;" in text, "Fallback slack_user_id not rendered in card"
+
+
+def test_the_rendered_card_has_no_leftover_spanish_labels():
+    """Every user-visible string in the card must be in English (this task's
+    requirement): a fully populated card (quote, reasons, hiring line, provider
+    block and buttons all present) must not contain any of the old Spanish
+    labels.
+
+    Uses English-content dossier text (as the translated synthesize.py system
+    prompt now requires from the LLM) instead of the shared `DOSSIER` fixture,
+    whose free-text fields (`resumen`, `razon`) are deliberately Spanish for
+    other tests and would otherwise trip this check on data, not on a label.
+    """
+    english_dossier = {
+        "persona": {"nombre": "Ada Ruiz", "cargo": "CEO"},
+        "empresa": {"nombre": "Acme", "empleados_aprox": 60},
+        "contratacion": {"vacantes_abiertas": 6, "roles_deslocalizables": ["support", "ops"]},
+        "senales_contexto": [
+            {"hecho": "Raised a Series A 3 months ago", "fuente": "https://tc.com/a"}
+        ],
+        "encaje_handoff": {"puntuacion": 3, "razon": "Hiring support right now"},
+        "resumen": "CEO of Acme, 60 people, hiring support.",
+        "datos_proveedor": PROVEEDOR,
+    }
+    blocks = card.build(PERSON, english_dossier, "alta", MESSAGE, "https://slack.com/p1")
+    text = blocks_text(blocks)
+    spanish_leftovers = [
+        "Por qué importa",
+        "Dijo en",
+        "Descartar",
+        "Contactado",
+        "Investigar",
+        "vacantes",
+        "personas",
+        "Proveedor",
+        "empleados",
+        "encaje",
+    ]
+    for leftover in spanish_leftovers:
+        assert leftover not in text, f"leftover Spanish label found in the card: {leftover!r}"

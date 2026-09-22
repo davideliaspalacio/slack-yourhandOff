@@ -3,7 +3,7 @@
 Slack corta a los 3 segundos, así que cada acción es una escritura corta en la
 base y una actualización de la tarjeta -- ambas síncronas, y por eso corren en
 `run_in_threadpool` en vez de bloquear el bucle de eventos. Nada de research
-aquí: "Investigar más" encola y se va.
+aquí: "Research more" encola y se va.
 
 Nada de lo que llega en el cuerpo de la petición se confía: puede venir
 falsificado (de ahí la firma), truncado, o simplemente no ser lo que Slack
@@ -40,8 +40,8 @@ app = FastAPI(title="handoff-acciones")
 # desconocido: 200, sin tocar la base ni repintar la tarjeta.
 NEW_STATE = {"contactado": "contactado", "descartar": "descartado"}
 NOTES = {
-    "contactado": "✅ Marcado como contactado",
-    "descartar": "🚫 Descartado: no volverá a aparecer",
+    "contactado": "✅ Marked as contacted",
+    "descartar": "🚫 Discarded: won't show up again",
 }
 # Un ID de usuario o de bot de Slack real: solo entonces se usa la mención viva
 # <@ID>. Cualquier otra cosa (falta el id, viene vacío, viene manipulado) cae
@@ -86,7 +86,7 @@ def _mention(user: dict) -> str:
     user_id = user.get("id") or ""
     if SLACK_ID_RE.match(user_id):
         return f"<@{user_id}>"
-    return _escape_mrkdwn(user.get("username") or "desconocido")
+    return _escape_mrkdwn(user.get("username") or "unknown")
 
 
 def _investigar_mas_note(person: dict) -> str:
@@ -94,10 +94,10 @@ def _investigar_mas_note(person: dict) -> str:
     persona descartada no vuelve a generar nada, y el worker de research la
     saltaría igualmente -- pero es mejor no gastar ni la fila de la cola."""
     if person["state"] == "descartado":
-        return "🚫 Descartada: no se vuelve a investigar"
+        return "🚫 Discarded: won't be researched again"
     if queue.enqueue(person["slack_user_id"], "manual"):
-        return "🔁 En cola para volver a investigar"
-    return "⏳ Ya estaba en cola para investigarse"
+        return "🔁 Queued for new research"
+    return "⏳ Already queued for research"
 
 
 def _apply_action(action_id: str, person: dict) -> str:
@@ -171,7 +171,7 @@ def _handle(payload: dict, settings: Settings) -> None:
     )
     logger.info("acciones: %s sobre %s", action_id, prospect_id)
 
-    note_text = f"{note} · por {_mention(user)}"
+    note_text = f"{note} · by {_mention(user)}"
     _repaint(channel, payload.get("message"), note_text)
 
 

@@ -194,3 +194,15 @@ def test_no_provider_section_when_there_is_no_provider_data():
     without_provider = Gathered(domain="acme.com", evidence=[], jobs=[])
     prompt = s.build_prompt("Ada", "Acme", without_provider)
     assert "proveedor" not in prompt.lower()
+
+
+def test_the_system_prompt_requires_english_values_with_spanish_keys():
+    """The card shows this dossier's free text (resumen, razon, hecho, cargo,
+    roles, huecos, busquedas_sugeridas) verbatim in Slack, which must be in
+    English -- but the JSON keys stay in Spanish because the validator depends
+    on them. The system prompt must say so explicitly."""
+    assert "in English" in s.SYSTEM_PROMPT
+    assert "Keep the JSON keys exactly as specified" in s.SYSTEM_PROMPT
+    # Los nombres de campo en español no cambian: el validador los exige tal cual.
+    assert '"persona": {"nombre"' in s.SYSTEM_PROMPT
+    assert '"encaje_handoff"' in s.SYSTEM_PROMPT

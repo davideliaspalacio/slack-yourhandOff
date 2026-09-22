@@ -14,6 +14,9 @@ from . import bands, card, slack_writer
 
 logger = logging.getLogger(__name__)
 NO_ALERT_STATES = ("descartado",)
+# Etiqueta en inglés del texto de notificación push (fallback de la tarjeta):
+# la banda interna sigue siendo alta/media/baja en el resto del sistema.
+BAND_NOTIFICATION_LABELS = {"alta": "High", "media": "Medium", "baja": "Low"}
 
 
 def _last_message(slack_user_id: str) -> dict | None:
@@ -85,7 +88,8 @@ def deliver_for(prospect_id: str, reader) -> str | None:
     message = _last_message(person["slack_user_id"])
     permalink = reader.permalink(message["channel_id"], message["ts"]) if message else None
     blocks = card.build(person, dossier["content"], band, message, permalink)
-    summary = f"Señal {band}: {person['full_name'] or person['slack_user_id']}"
+    band_label = BAND_NOTIFICATION_LABELS.get(band, band.capitalize())
+    summary = f"{band_label} signal: {person['full_name'] or person['slack_user_id']}"
 
     try:
         channel, ts = slack_writer.post_card(blocks, summary)

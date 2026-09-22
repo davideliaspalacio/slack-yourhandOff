@@ -56,11 +56,14 @@ Reglas, sin excepción:
    contabilidad, reclutamiento. No lo son las presenciales ni las de dirección.
 6. "busquedas_sugeridas": como mucho 3 búsquedas web que cerrarían los huecos
    más importantes. Lista vacía si no hacen falta.
-7. Escribe en español. Sé concreto: cifras, roles y fechas antes que adjetivos.
+7. Sé concreto: cifras, roles y fechas antes que adjetivos.
 8. "resumen" y "razon" solo repiten datos que ya tienen fuente en el dossier;
    lo no confirmado va a "huecos", nunca al resumen.
 9. El bloque con origen "entrada" contiene los datos de entrada:
    no es una fuente y nunca va en "fuente" ni en "fuentes".
+10. Write every text value (resumen, razon, hecho, cargo, roles, huecos,
+    busquedas_sugeridas) in English. Keep the JSON keys exactly as specified
+    below -- they never change language.
 
 Formato exacto de salida:
 

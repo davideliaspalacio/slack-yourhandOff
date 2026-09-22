@@ -25,25 +25,25 @@ from handoff_agent.tools import prospects
 SLACK_USER_ID = "UPRUEBA0001"
 
 DOSSIER = {
-    "persona": {"nombre": "Prueba Handoff", "cargo": "CEO (tarjeta de prueba)"},
-    "empresa": {"nombre": "Acme (prueba)", "empleados_aprox": 120, "sector": "SaaS"},
+    "persona": {"nombre": "Test Handoff", "cargo": "CEO (test card)"},
+    "empresa": {"nombre": "Acme (test)", "empleados_aprox": 120, "sector": "SaaS"},
     "contratacion": {
         "vacantes_abiertas": 6,
         "roles": ["Customer Support Specialist", "Operations Associate"],
-        "roles_deslocalizables": ["soporte", "operaciones"],
+        "roles_deslocalizables": ["support", "operations"],
     },
     "senales_contexto": [
-        {"hecho": "Tarjeta de prueba: no es una persona real", "fuente": "https://example.com"}
+        {"hecho": "Test card: not a real person", "fuente": "https://example.com"}
     ],
     "encaje_handoff": {
         "puntuacion": 3,
-        "razon": "Prueba del bot y de los botones: Contactado, Descartar, Investigar más.",
+        "razon": "Tests the bot and the buttons: Contacted, Discard, Research more.",
     },
-    "resumen": "Tarjeta de prueba del agente. Pulsa los botones para comprobar el receptor.",
+    "resumen": "The agent's test card. Press the buttons to check the receiver.",
     "datos_proveedor": {
         "empleados_linkedin": 120,
         "empleados_por_area": {"support": 25, "operations": 18, "sales": 12},
-        "fuente": "proveedor externo (sin verificar)",
+        "fuente": "external provider (unverified)",
     },
 }
 

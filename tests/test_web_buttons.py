@@ -349,3 +349,58 @@ def test_a_repaint_failure_does_not_fail_the_request(conn, client, monkeypatch):
     response = press(client, "contactado", person["id"])
     assert response.status_code == 200
     assert state_of(person["id"]) == "contactado"
+
+
+# -- Requirement: every note appended to the card after a click is in English --
+
+
+def _note_of(client, monkeypatch, action, person, **kwargs):
+    seen = {}
+    monkeypatch.setattr(
+        web_app.slack_writer,
+        "update_card",
+        lambda channel, ts, blocks, text: seen.update(
+            note=blocks[-1]["elements"][0]["text"], text=text
+        ),
+    )
+    press(client, action, person["id"], user={"username": "anthony", "id": "U123ABC"}, **kwargs)
+    return seen
+
+
+def test_contactado_note_is_in_english(conn, client, monkeypatch):
+    person = a_person()
+    seen = _note_of(client, monkeypatch, "contactado", person)
+    assert seen["note"] == "✅ Marked as contacted · by <@U123ABC>"
+    assert seen["text"] == seen["note"]
+
+
+def test_descartar_note_is_in_english(conn, client, monkeypatch):
+    person = a_person()
+    seen = _note_of(client, monkeypatch, "descartar", person)
+    assert seen["note"] == "🚫 Discarded: won't show up again · by <@U123ABC>"
+
+
+def test_investigar_mas_note_is_in_english(conn, client, monkeypatch):
+    person = a_person()
+    seen = _note_of(client, monkeypatch, "investigar_mas", person)
+    assert seen["note"] == "🔁 Queued for new research · by <@U123ABC>"
+
+
+def test_investigar_mas_when_already_queued_note_is_in_english(conn, client, monkeypatch):
+    person = a_person()
+    queue.enqueue(person["slack_user_id"], "manual")
+    seen = _note_of(client, monkeypatch, "investigar_mas", person)
+    assert seen["note"] == "⏳ Already queued for research · by <@U123ABC>"
+
+
+def test_investigar_mas_on_a_discarded_person_note_is_in_english(conn, client, monkeypatch):
+    person = a_person(state="descartado")
+    seen = _note_of(client, monkeypatch, "investigar_mas", person)
+    assert seen["note"] == "🚫 Discarded: won't be researched again · by <@U123ABC>"
+
+
+def test_no_note_contains_the_old_spanish_wording(conn, client, monkeypatch):
+    person = a_person()
+    seen = _note_of(client, monkeypatch, "contactado", person)
+    assert " por " not in seen["note"]
+    assert "Marcado" not in seen["note"]

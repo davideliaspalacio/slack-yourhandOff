@@ -1,6 +1,6 @@
 """La tarjeta de Slack: el producto que ve Anthony.
 
-Todo el sistema existe para producir un clic en "Ver mensaje original", así que
+Todo el sistema existe para producir un clic en "View original message", así que
 la tarjeta cita textualmente, explica por qué importa con fuentes, y propone un
 ángulo. El texto ajeno se cita como bloque de cita y se recorta: no puede
 romper el formato ni alargar la tarjeta sin fin.
@@ -33,6 +33,10 @@ COMPANY_CHARS = 160
 NUM_CHARS = 20
 MAX_SIGNALS = 3
 EMOJI = {"alta": "🔥", "media": "👀", "baja": "📋"}
+# Etiqueta visible en Slack para cada banda interna (alta/media/baja): el
+# resto del sistema sigue usando el nombre en español como valor interno (ver
+# bands.py), solo la cabecera de la tarjeta se traduce.
+BAND_LABELS = {"alta": "HIGH", "media": "MEDIUM", "baja": "LOW"}
 
 # `datos_proveedor` (ver research/worker.py): datos de un proveedor externo,
 # sin fuente citable. Igual que el resto del dossier, se trata como escrito
@@ -41,14 +45,14 @@ PROVEEDOR_CHARS = 500
 PROVEEDOR_MAX_AREAS = 3
 PROVEEDOR_GROWTH_MONTHS = 12
 PROVEEDOR_AREA_LABELS = {
-    "support": "soporte",
-    "operations": "operaciones",
-    "sales": "ventas",
-    "engineering": "ingeniería",
-    "finance": "finanzas",
-    "human_resources": "RR. HH.",
+    "support": "support",
+    "operations": "operations",
+    "sales": "sales",
+    "engineering": "engineering",
+    "finance": "finance",
+    "human_resources": "HR",
     "marketing": "marketing",
-    "customer_success": "éxito del cliente",
+    "customer_success": "customer success",
 }
 # En qué orden se prefieren las áreas cuando hay que elegir solo tres: son las
 # que mejor predicen encaje con el staffing de Handoff en LATAM.
@@ -68,30 +72,30 @@ PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success"
 # miles de dígitos.
 #
 # Aritmética del peor caso para la cabecera (tope de Slack: 3000 caracteres
-# por bloque `section`):
-#   emoji + " *SEÑAL " + banda + "*"    banda es interna (alta/media/baja),
-#                                       longitud fija y acotada             25
-#   "· encaje " + NUM_CHARS + "/3"                  10 + 20 + 2      =   32
+# por bloque `section`), con las etiquetas ya en inglés:
+#   emoji + " *SIGNAL " + band_label + "*"   band_label es "HIGH"/"MEDIUM"/
+#                                             "LOW", longitud fija y acotada  17
+#   " · fit " + NUM_CHARS + "/3"                     7 + 20 + 2       =   29
 #   salto de línea                                                        1
 #   "*" + NAME_CHARS + "*"                          2 + 160          =  162
 #   " — " + ROLE_CHARS + ", " + COMPANY_CHARS    3 + 160 + 2 + 160   =  325
-#   " (~" + NUM_CHARS + " personas)"                3 + 20 + 10      =   33
+#   " (~" + NUM_CHARS + " people)"                  3 + 20 + 8       =   31
 #                                                                --------------
-#                                                                total    578
-# 578 < 3000 con margen de sobra.
+#                                                                total    565
+# 565 < 3000 con margen de sobra.
 #
-# Aritmética del peor caso para la sección "*Por qué importa*" (tope de Slack:
+# Aritmética del peor caso para la sección "*Why it matters*" (tope de Slack:
 # 3000 caracteres por bloque `section`):
-#   prefijo "*Por qué importa*\n"                        18
+#   prefijo "*Why it matters*\n"                          17
 #   razón:            "· " + RAZON_CHARS                  2 + 400 =  402
 #   3 señales:        "· <" + FUENTE_CHARS + "|"
 #                      + HECHO_CHARS + ">"     3 × (5 + 200 + 240) = 1335
-#   contratación:     "· " + NUM_CHARS + " vacantes abiertas: "
-#                      + ROLES_CHARS                  2 + 20 + 20 + 200 =  242
+#   contratación:     "· " + NUM_CHARS + " open roles: "
+#                      + ROLES_CHARS                 2 + 20 + 13 + 200 =  235
 #   4 saltos de línea entre 5 líneas                                4
 #                                                          --------------
-#                                                          total  2001
-# 2001 < 3000 con margen de sobra.
+#                                                          total  1993
+# 1993 < 3000 con margen de sobra.
 #
 # Aritmética del peor caso para el bloque `context` del resumen (tope de
 # Slack: 2000 caracteres por bloque `context`): RESUMEN_CHARS = 1900 < 2000.
@@ -181,7 +185,7 @@ def _headline(person: dict, dossier: dict, band: str) -> str:
     company = _escape_and_cap(raw_company, COMPANY_CHARS)
     size = _safe_number(empresa.get("empleados_aprox"), NUM_CHARS)
     bits = [b for b in (role, company) if b]
-    tail = f" (~{size} personas)" if size else ""
+    tail = f" (~{size} people)" if size else ""
     return f"*{name}*" + (f" — {', '.join(bits)}{tail}" if bits else "")
 
 
@@ -193,8 +197,8 @@ def _proveedor_int(value: object) -> int | None:
     return None
 
 
-def _format_int_es(n: int) -> str:
-    return f"{n:,}".replace(",", ".")
+def _format_int(n: int) -> str:
+    return f"{n:,}"
 
 
 def _area_label(key: str) -> str:
@@ -234,7 +238,7 @@ def _growth_from_series(evolucion: object) -> str | None:
     before, now = counts[-PROVEEDOR_GROWTH_MONTHS - 1], counts[-1]
     value = round((now - before) * 100 / before)
     sign = "+" if value >= 0 else ""
-    return f"{sign}{value}% en {PROVEEDOR_GROWTH_MONTHS} meses"
+    return f"{sign}{value}% in {PROVEEDOR_GROWTH_MONTHS} months"
 
 
 def _proveedor_growth(proveedor: dict) -> str | None:
@@ -252,7 +256,7 @@ def _proveedor_growth(proveedor: dict) -> str | None:
             continue
         # El proveedor ya lo da en puntos porcentuales (0.1439 = 0,14 %).
         sign = "+" if pct >= 0 else ""
-        return f"{sign}{pct:.1f}% en {PROVEEDOR_GROWTH_MONTHS} meses"
+        return f"{sign}{pct:.1f}% in {PROVEEDOR_GROWTH_MONTHS} months"
     return None
 
 
@@ -270,19 +274,19 @@ def _proveedor_block(dossier: dict) -> dict | None:
 
     bits = []
     if empleados is not None:
-        bits.append(f"{_format_int_es(empleados)} empleados")
+        bits.append(f"{_format_int(empleados)} employees")
 
     growth = _proveedor_growth(proveedor)
     if growth:
         bits.append(growth)
 
     for key, count in _proveedor_areas(proveedor.get("empleados_por_area")):
-        bits.append(f"{_area_label(key)} {_format_int_es(count)}")
+        bits.append(f"{_area_label(key)} {_format_int(count)}")
 
     if not bits:
         return None
 
-    text = _escape_and_cap("Proveedor (sin verificar): " + " · ".join(bits), PROVEEDOR_CHARS)
+    text = _escape_and_cap("Provider data (unverified): " + " · ".join(bits), PROVEEDOR_CHARS)
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
 
 
@@ -296,8 +300,9 @@ def build(
     fit = dossier.get("encaje_handoff") or {}
     hiring = dossier.get("contratacion") or {}
     score = _safe_number(fit.get("puntuacion"), NUM_CHARS)
-    score_bit = f" · encaje {score}/3" if score else ""
-    header = f"{EMOJI.get(band, '')} *SEÑAL {band.upper()}*{score_bit}\n" + _headline(
+    score_bit = f" · fit {score}/3" if score else ""
+    band_label = BAND_LABELS.get(band, band.upper())
+    header = f"{EMOJI.get(band, '')} *SIGNAL {band_label}*{score_bit}\n" + _headline(
         person, dossier, band
     )
     blocks: list[dict] = [
@@ -308,7 +313,7 @@ def build(
         blocks.append(
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": "Dijo:\n" + _quote(message["text"])},
+                "text": {"type": "mrkdwn", "text": "Said:\n" + _quote(message["text"])},
             }
         )
 
@@ -330,12 +335,12 @@ def build(
             _escape_mrkdwn(r) for r in (hiring.get("roles_deslocalizables") or [])
         )
         roles = _trim_escaped(roles_joined, ROLES_CHARS)
-        reasons.append(f"· {vacantes} vacantes abiertas" + (f": {roles}" if roles else ""))
+        reasons.append(f"· {vacantes} open roles" + (f": {roles}" if roles else ""))
     if reasons:
         blocks.append(
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": "*Por qué importa*\n" + "\n".join(reasons)},
+                "text": {"type": "mrkdwn", "text": "*Why it matters*\n" + "\n".join(reasons)},
             }
         )
 
@@ -352,21 +357,21 @@ def build(
         {
             "type": "button",
             "action_id": "contactado",
-            "text": {"type": "plain_text", "text": "Contactado"},
+            "text": {"type": "plain_text", "text": "Contacted"},
             "value": person["id"],
             "style": "primary",
         },
         {
             "type": "button",
             "action_id": "descartar",
-            "text": {"type": "plain_text", "text": "Descartar"},
+            "text": {"type": "plain_text", "text": "Discard"},
             "value": person["id"],
             "style": "danger",
         },
         {
             "type": "button",
             "action_id": "investigar_mas",
-            "text": {"type": "plain_text", "text": "Investigar más"},
+            "text": {"type": "plain_text", "text": "Research more"},
             "value": person["id"],
         },
     ]
@@ -375,7 +380,7 @@ def build(
             {
                 "type": "button",
                 "action_id": "ver_original",
-                "text": {"type": "plain_text", "text": "Ver mensaje original"},
+                "text": {"type": "plain_text", "text": "View original message"},
                 "url": permalink,
             }
         )
