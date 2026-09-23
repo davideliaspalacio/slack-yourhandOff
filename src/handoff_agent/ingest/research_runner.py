@@ -12,6 +12,11 @@ or a link it had to guess or was handed unvetted. System stops and a dead
 token hand the job back untouched and propagate -- they need a person, not a
 retry.
 
+People found by the target-account radar (`li:<linkedin_id>`, reason
+`radar`) have no Slack profile: Slack is not asked about them, and the domain
+of their target account (stored in `prospects.company_domain` by
+accounts/decisor.py) is trusted like an override.
+
 `queue.complete`/`fail`/`give_up`/`release` are guarded so they only ever
 change the job this worker actually claimed (see queue.py's started_at
 check). If `reclaim_stale()` handed the job to a second worker while this one
@@ -48,7 +53,7 @@ def _prospect_overrides(slack_user_id: str) -> dict | None:
     por cada override. None si la persona todavía no existe -- para alguien
     nuevo no hay fila, y por tanto no hay overrides ni nada guardado."""
     return db.fetch_one(
-        "select full_name, company_name, company_domain_override, "
+        "select full_name, company_name, company_domain, company_domain_override, "
         "company_name_override, research_links, research_notes "
         "from prospects where slack_user_id = %s",
         (slack_user_id,),
@@ -86,9 +91,12 @@ def run_next_job(reader) -> RunResult | None:
     if job is None:
         return None
     uid = job["slack_user_id"]
+    del_radar = uid.startswith(queue.PREFIJO_LINKEDIN)
 
     try:
-        profile = reader.user_profile(uid)
+        # Una persona del radar no tiene perfil de Slack que leer: preguntar
+        # por 'li:...' solo gastaría una llamada para oír user_not_found.
+        profile = None if del_radar else reader.user_profile(uid)
     except SlackAuthFailed:
         queue.release(job)
         raise
@@ -126,6 +134,11 @@ def run_next_job(reader) -> RunResult | None:
         or (overrides["company_name"] if overrides else None)
     )
     domain = (overrides["company_domain_override"] if overrides else None) or email_domain
+    if del_radar and not domain and overrides:
+        # El dominio de una persona del radar es el de su cuenta objetivo, que
+        # dio de alta una persona: tan de fiar como un override. Fuera del
+        # radar, company_domain es lo que adivinó un research anterior y no lo es.
+        domain = overrides["company_domain"]
     extra_links = tuple((overrides["research_links"] if overrides else None) or ())
     notes = overrides["research_notes"] if overrides else None
     try:

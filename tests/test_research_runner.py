@@ -432,3 +432,50 @@ def test_without_a_slack_profile_or_stored_data_the_job_gives_up(conn, reader, m
     stub_research(monkeypatch, error=ValueError("hace falta al menos un nombre o una empresa"))
     assert runner.run_next_job(reader).status == "fallido"
     assert job()["status"] == "fallido"
+
+
+# -- Radar (0013): el decisor elegido entra como 'li:<linkedin_id>', sin Slack. --
+
+
+class NoSlackReader(FakeReader):
+    def user_profile(self, user_id):
+        raise AssertionError(f"no se pregunta a Slack por {user_id}")
+
+
+def test_a_radar_person_is_researched_without_asking_slack(conn, monkeypatch):
+    db.execute(
+        "insert into prospects (slack_user_id, full_name, company_name, company_domain) "
+        "values ('li:ACo1', 'Rosa Díaz', 'Codelco', 'codelco.cl')"
+    )
+    queue.enqueue("li:ACo1", "radar")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(NoSlackReader()).status == "hecho"
+    assert seen[0]["full_name"] == "Rosa Díaz"
+    assert seen[0]["company"] == "Codelco"
+    # El dominio lo puso una persona al dar de alta la cuenta objetivo.
+    assert seen[0]["domain"] == "codelco.cl"
+
+
+def test_a_panel_override_still_wins_for_a_radar_person(conn, monkeypatch):
+    db.execute(
+        "insert into prospects (slack_user_id, full_name, company_name, company_domain, "
+        "company_domain_override) values ('li:ACo1', 'Rosa Díaz', 'Codelco', 'codelco.cl', "
+        "'codelco.com')"
+    )
+    queue.enqueue("li:ACo1", "radar")
+    seen = stub_research(monkeypatch)
+    runner.run_next_job(NoSlackReader())
+    assert seen[0]["domain"] == "codelco.com"
+
+
+def test_a_stored_domain_is_not_trusted_for_slack_people(conn, monkeypatch):
+    """Fuera del radar, company_domain es lo que adivinó un research anterior:
+    no pasa a ser un dominio de confianza."""
+    db.execute(
+        "insert into prospects (slack_user_id, full_name, company_name, company_domain) "
+        "values ('manual:ada', 'Ada', 'Acme', 'acme-guess.com')"
+    )
+    queue.enqueue("manual:ada", "manual")
+    seen = stub_research(monkeypatch)
+    runner.run_next_job(FakeReader())
+    assert seen[0]["domain"] is None
