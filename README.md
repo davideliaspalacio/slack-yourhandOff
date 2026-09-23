@@ -17,7 +17,7 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 | 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Serper (resultados de Google) por delante de SearXNG | **Hecho** |
 | 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | **Código hecho**; falta conectar la app de Slack, Twilio y Resend |
 | 4. Panel web | Login, listado, ficha con dossier, costes, ajustes y las tres acciones | **Hecho** en local; falta desplegarlo en Vercel |
-| Radar de cuentas | Cuentas objetivo, vacantes con score, cliente de Unipile ([spec](docs/superpowers/specs/2026-09-22-radar-cuentas-objetivo-design.md)) | **Fase 1 hecha** (CLI, worker, MCP, esquema del panel); decisor (fase 2) y contacto (fase 3) pendientes |
+| Radar de cuentas | Cuentas objetivo, vacantes con score, cliente de Unipile ([spec](docs/superpowers/specs/2026-09-22-radar-cuentas-objetivo-design.md)) | **Fases 1 y 2 hechas** (radar y decisor: CLI, worker, MCP, esquema del panel); contacto (fase 3) pendiente del token de HubSpot |
 
 ## Arrancar en local
 
@@ -391,7 +391,7 @@ Handoff vigila una lista de empresas prospecto y detecta cuándo abren vacantes
 (spec: [`2026-09-22-radar-cuentas-objetivo-design.md`](docs/superpowers/specs/2026-09-22-radar-cuentas-objetivo-design.md)).
 Las vacantes salen de JobSpy, sin cuenta; LinkedIn con cuenta (la de Sales
 Navigator de Anthony, vía Unipile) solo se usa para resolver una vez el id de
-cada empresa.
+cada empresa y para buscar a quien decide cada vacante que se persigue.
 
 ```bash
 uv run handoff cuentas agregar "Codelco" --dominio codelco.cl [--linkedin-id 16300]
@@ -400,6 +400,8 @@ uv run handoff cuentas listar                    # vacantes abiertas, mejor scor
 uv run handoff radar                             # escanea las que toca (más de 20 h)
 uv run handoff radar --forzar                    # todas las vigiladas, ya
 uv run handoff radar --cuenta <id>               # una sola, le toque o no
+uv run handoff senales [--cuenta <id>] [--estado pursued]  # vacantes abiertas por score
+uv run handoff decisor <signal_id>               # busca ya al decisor (LinkedIn + GPT-4.1, cuesta)
 uv run handoff unipile estado                    # cuenta, uso de hoy frente a topes y horario
 ```
 
@@ -412,6 +414,35 @@ cierran, salvo si ese día falló algún board. Con score ≥ `radar_auto_min` (
 pasan solas a `pursued`. Un fallo en una cuenta queda en su `last_scan_error` y
 el radar sigue con la siguiente. La herramienta MCP `senales_empresa` devuelve
 las vacantes guardadas de una cuenta.
+
+**Decisor (fase 2).** Tras el radar, el worker toma hasta 3 señales `pursued`
+por ciclo (las de más score primero) cuya cuenta tiene `linkedin_company_id`:
+
+1. GPT-4.1 con salida estructurada propone 2–4 cargos que deciden esa
+   contratación, en el idioma probable de la empresa (stage `decisor_cargos`
+   en `llm_calls`; respeta kill switch y tope mensual).
+2. Una búsqueda de Sales Navigator por cargo, filtrada por la empresa, 5
+   resultados cada una, con los topes y el horario de Unipile.
+3. Se deduplican por id de LinkedIn y se ordenan por código: coincidencia de
+   las palabras del cargo en el headline o el rol actual, bonus de seniority
+   (director, head, VP, gerente, jefe, superintendente, manager, chief…) y
+   penalización si su posición actual no es en la empresa. Quedan en
+   `decision_candidates` con un `reason` en inglés para el panel; el primero,
+   elegido.
+4. El elegido entra en `prospects` como `li:<linkedin_id>` (empresa y dominio
+   de la cuenta) y en `research_jobs` con motivo `radar` (migración 0013). El
+   research no pregunta a Slack por esas personas y usa el dominio de la cuenta
+   como si fuera un override. La señal pasa a `researching`, y a `ready` cuando
+   el elegido tiene dossier y ningún research abierto.
+
+Sin id de LinkedIn en la cuenta, o con Unipile pausado, fuera de horario, en
+su tope o sin claves, la señal se queda `pursued` para otro ciclo; eso se mira
+antes de pagar el LLM. Un intento fallido espera 1 h antes de repetirse, y uno
+sin candidatos, 24 h (acción `decisor_senal` en `agent_actions`). Si el panel
+elige otro candidato (`panel_elegir_candidato`), el siguiente ciclo investiga
+al nuevo. La herramienta MCP `buscar_decisor` hace lo mismo que
+`handoff decisor` y devuelve los candidatos: usa el LinkedIn de Anthony y
+cuesta dinero.
 
 **Topes de Unipile** (tabla `config`, muy por debajo de lo que recomienda
 Unipile): `unipile_busquedas_por_dia` 25, `unipile_perfiles_por_dia` 40, solo
@@ -444,7 +475,7 @@ Romper cualquiera de estas es un bug, no una preferencia:
 ## Comandos
 
 ```bash
-uv run pytest                                   # 1021 tests
+uv run pytest                                   # 1076 tests
 supabase db reset                               # rehace el esquema desde cero
 docker compose -f docker-compose.searxng.yml logs -f
 ```
