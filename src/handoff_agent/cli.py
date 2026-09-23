@@ -10,12 +10,15 @@ import signal
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from . import guards, ledger, ops_alerts, serialize
+from .accounts import radar
+from .accounts import repo as cuentas
 from .config import load_settings
 from .delivery import digest
 from .ingest import queue
@@ -24,7 +27,7 @@ from .ingest.resolver import resolve_pending
 from .ingest.watcher import watch_tick
 from .research import worker
 from .slack_client import FoundersClubReader, SlackAuthFailed
-from .tools import prospects
+from .tools import prospects, unipile
 
 SYSTEM_STOPS = (guards.KillSwitchActive, guards.MonthlyBudgetExceeded)
 
@@ -312,6 +315,114 @@ def cmd_worker(args) -> int:
     return 0
 
 
+def cmd_cuentas_agregar(args) -> int:
+    try:
+        cuenta = cuentas.agregar_cuenta(args.nombre, args.dominio, args.linkedin_id)
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 1
+    print(
+        f"cuenta: {cuenta['name']} ({cuenta['domain'] or 'sin dominio'})   "
+        f"linkedin: {cuenta['linkedin_company_id'] or '—'}   id: {cuenta['id']}"
+    )
+    return 0
+
+
+def cmd_cuentas_importar(args) -> int:
+    try:
+        resultado = cuentas.importar_csv(Path(args.archivo))
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 1
+    print(f"agregadas: {resultado.agregadas}")
+    for error in resultado.errores:
+        print(f"error: {error}")
+    return 1 if resultado.errores else 0
+
+
+def _fecha(valor) -> str:
+    return f"{valor:%Y-%m-%d %H:%M}" if valor else "nunca"
+
+
+def cmd_cuentas_listar(args) -> int:
+    filas = cuentas.listar_cuentas()
+    if not filas:
+        print("no hay cuentas; añade una con `handoff cuentas agregar`")
+        return 0
+    for fila in filas:
+        top = "—" if fila["top_score"] is None else fila["top_score"]
+        linea = (
+            f"{fila['name']} ({fila['domain'] or 'sin dominio'})   {fila['status']}   "
+            f"{fila['open_roles']} abiertas   score {top}   "
+            f"linkedin: {fila['linkedin_company_id'] or '—'}   "
+            f"último escaneo: {_fecha(fila['last_scan_at'])}"
+        )
+        print(linea)
+        if fila["last_scan_error"]:
+            print(f"    error: {fila['last_scan_error']}")
+    return 0
+
+
+def _linea_escaneo(resultado: radar.ResultadoEscaneo) -> str:
+    linea = (
+        f"{resultado.nombre}: {resultado.vistas} vistas, {resultado.nuevas} nuevas, "
+        f"{resultado.reabiertas} re-publicadas, {resultado.cerradas} cerradas, "
+        f"{resultado.ignoradas} ignoradas, {resultado.auto_pursued} auto-pursued"
+    )
+    if resultado.error:
+        linea += f"\n    error: {resultado.error}"
+    return linea
+
+
+def cmd_radar(args) -> int:
+    try:
+        if args.cuenta:
+            try:
+                account_id = str(uuid.UUID(args.cuenta))
+            except ValueError:
+                print(f"no existe la cuenta {args.cuenta}")
+                return 1
+            try:
+                resultados = [radar.escanear_por_id(account_id)]
+            except LookupError as exc:
+                print(exc)
+                return 1
+        else:
+            # Desde la terminal, todas las que toquen: el tope por ciclo es
+            # para no parar la cola del worker, no para una ejecución a mano.
+            resultados = radar.escanear_pendientes(forzar=args.forzar, limite=1_000_000)
+    except SYSTEM_STOPS as exc:
+        print(f"detenido: {exc}")
+        return 1
+    if not resultados:
+        print("ninguna cuenta que escanear (usa --forzar para escanearlas todas ya)")
+        return 0
+    for resultado in resultados:
+        print(_linea_escaneo(resultado))
+    return 1 if any(r.error for r in resultados) else 0
+
+
+def cmd_unipile_estado(args) -> int:
+    settings = load_settings()
+    if not (settings.unipile_api_key and settings.unipile_dsn and settings.unipile_account_id):
+        print("falta UNIPILE_API_KEY, UNIPILE_DSN o UNIPILE_ACCOUNT_ID en .env")
+        return 1
+    try:
+        sana = unipile.estado_cuenta()
+    except unipile.UnipileError as exc:
+        print(f"cuenta: sin respuesta ({exc})")
+        sana = False
+    else:
+        print("cuenta: OK" if sana else "cuenta: NO está OK (Unipile queda pausado)")
+    uso = unipile.resumen_uso()
+    print(f"búsquedas hoy: {uso['busquedas_hoy']}/{uso['tope_busquedas']}")
+    print(f"perfiles hoy: {uso['perfiles_hoy']}/{uso['tope_perfiles']}")
+    horario = "en horario" if uso["en_horario"] else "fuera de horario"
+    print(f"horario: {horario} ({uso['franja']}, {uso['zona']}; ahora {uso['ahora']})")
+    print(f"pausado: {'sí' if uso['pausado'] else 'no'}")
+    return 0 if sana else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="handoff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -357,6 +468,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     web_cmd = sub.add_parser("web", help="sirve el receptor de los botones de la tarjeta (FastAPI)")
     web_cmd.set_defaults(func=cmd_web)
+
+    accounts_cmd = sub.add_parser("cuentas", help="cuentas objetivo que vigila el radar")
+    accounts_sub = accounts_cmd.add_subparsers(dest="accion", required=True)
+    add_cmd = accounts_sub.add_parser("agregar", help="añade (o actualiza) una cuenta")
+    add_cmd.add_argument("nombre")
+    add_cmd.add_argument("--dominio")
+    add_cmd.add_argument("--linkedin-id", help="id numérico de la empresa en LinkedIn")
+    add_cmd.set_defaults(func=cmd_cuentas_agregar)
+    import_cmd = accounts_sub.add_parser(
+        "importar", help="importa un CSV con columnas nombre,dominio[,linkedin_id]"
+    )
+    import_cmd.add_argument("archivo")
+    import_cmd.set_defaults(func=cmd_cuentas_importar)
+    list_cmd = accounts_sub.add_parser("listar", help="cuentas con sus vacantes abiertas")
+    list_cmd.set_defaults(func=cmd_cuentas_listar)
+
+    radar_cmd = sub.add_parser("radar", help="escanea las vacantes de las cuentas objetivo")
+    radar_cmd.add_argument("--cuenta", metavar="ID", help="solo esta cuenta, le toque o no")
+    radar_cmd.add_argument(
+        "--forzar", action="store_true", help="todas las vigiladas, aunque se escanearan hace poco"
+    )
+    radar_cmd.set_defaults(func=cmd_radar)
+
+    unipile_cmd = sub.add_parser("unipile", help="la cuenta de LinkedIn vía Unipile")
+    unipile_sub = unipile_cmd.add_subparsers(dest="accion", required=True)
+    status_cmd = unipile_sub.add_parser(
+        "estado", help="estado de la cuenta, uso de hoy frente a los topes y horario"
+    )
+    status_cmd.set_defaults(func=cmd_unipile_estado)
     return parser
 
 
