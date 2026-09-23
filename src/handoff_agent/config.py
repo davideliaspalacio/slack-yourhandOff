@@ -54,6 +54,9 @@ class Settings:
     enrichment_timeout_seconds: float
     price_enrichment_per_call: float
     panel_url: str | None
+    unipile_api_key: str | None
+    unipile_dsn: str | None
+    unipile_account_id: str | None
 
 
 def _required(name: str) -> str:
@@ -128,4 +131,13 @@ def load_settings() -> Settings:
         # ausente, y una barra final se recorta para no duplicarla al montar
         # la URL de la persona.
         panel_url=(os.environ.get("PANEL_URL") or "").rstrip("/") or None,
+        # Unipile (radar de cuentas, ver tools/unipile.py): la cuenta de Sales
+        # Navigator de Anthony, solo para lectura. El DSN es host:puerto
+        # (api4.unipile.com:13460); si alguien lo pega con https:// o con barra
+        # final, se recorta. Sin los tres valores, nada toca LinkedIn.
+        unipile_api_key=os.environ.get("UNIPILE_API_KEY") or None,
+        unipile_dsn=(
+            os.environ.get("UNIPILE_DSN", "").strip().removeprefix("https://").rstrip("/") or None
+        ),
+        unipile_account_id=os.environ.get("UNIPILE_ACCOUNT_ID") or None,
     )
