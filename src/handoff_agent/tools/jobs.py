@@ -10,6 +10,8 @@ must never take down a research run.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 
 from jobspy import scrape_jobs
@@ -144,6 +146,20 @@ class OfertasCuenta:
     errores: list[str]
 
 
+def _sin_acentos(texto: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c))
+
+
+def _coincide_empleador(row_company: str, wanted: str) -> bool:
+    """El filtro de empleador del radar. Igual de exacto que _matches_company,
+    pero acepta también la parte antes de " – ", " | " o "(" y no distingue
+    acentos: LinkedIn llama "CODELCO – Corporación Nacional del Cobre de Chile"
+    a Codelco, y con el filtro exacto el radar veía cero vacantes. "Codelco
+    Tech" sigue sin pasar por "Codelco"."""
+    variantes = {row_company, re.split(r"\s+[-–—|]\s+|\s*\(", row_company, maxsplit=1)[0]}
+    return any(_matches_company(_sin_acentos(v), _sin_acentos(wanted)) for v in variantes)
+
+
 def ofertas_de_cuenta(
     company: str, linkedin_company_id: str | None = None, limit: int = 50
 ) -> OfertasCuenta:
@@ -160,12 +176,25 @@ def ofertas_de_cuenta(
         consultas.append(
             (
                 "linkedin",
-                {"linkedin_company_ids": [int(linkedin_company_id)], "results_wanted": limit},
+                {
+                    "linkedin_company_ids": [int(linkedin_company_id)],
+                    # Sin ubicación, la búsqueda pública de LinkedIn se limita
+                    # a EE. UU.: una empresa chilena volvía vacía (visto en vivo
+                    # con Codelco el 2026-09-22).
+                    "location": "Worldwide",
+                    "results_wanted": limit,
+                },
                 False,
             )
         )
     else:
-        consultas.append(("linkedin", {"search_term": company, "results_wanted": limit * 4}, True))
+        consultas.append(
+            (
+                "linkedin",
+                {"search_term": company, "location": "Worldwide", "results_wanted": limit * 4},
+                True,
+            )
+        )
     consultas.append(("indeed", {"search_term": company, "results_wanted": limit * 4}, True))
 
     postings: list[JobPosting] = []
@@ -189,7 +218,7 @@ def ofertas_de_cuenta(
                 site=site,
             )
             for _, row in frame.iterrows()
-            if not filtrar or _matches_company(str(row.get("company", "")), company)
+            if not filtrar or _coincide_empleador(str(row.get("company", "")), company)
         ]
         postings.extend(encontradas[:limit])
 

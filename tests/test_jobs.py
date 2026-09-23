@@ -218,6 +218,9 @@ def test_with_a_linkedin_id_linkedin_is_asked_by_company_and_not_filtered(conn, 
     indeed_call = next(c for c in calls if c["site_name"] == ["indeed"])
     assert linkedin_call["linkedin_company_ids"] == [16300]
     assert "search_term" not in linkedin_call
+    # Sin ubicación, la búsqueda pública de LinkedIn se limita a EE. UU. y una
+    # empresa chilena vuelve vacía (visto en vivo con Codelco el 2026-09-22).
+    assert linkedin_call["location"] == "Worldwide"
     assert indeed_call["search_term"] == "Codelco"
     assert [(p.title, p.site) for p in result.postings] == [
         ("Mining Engineer", "linkedin"),
@@ -253,3 +256,23 @@ def test_a_failing_board_is_reported_not_swallowed(conn, monkeypatch):
     with conn.cursor() as cur:
         cur.execute("select result from agent_actions where action = 'ofertas_cuenta'")
         assert cur.fetchone()[0]["errores"] == ["indeed: RuntimeError: indeed blocked us"]
+
+
+def test_without_a_linkedin_id_the_employer_filter_accepts_the_linkedin_long_name(
+    conn, monkeypatch
+):
+    """LinkedIn llama "CODELCO – Corporación Nacional del Cobre de Chile" a
+    Codelco: el filtro exacto la descartaba y el radar veía cero vacantes."""
+
+    def scrape(**kw):
+        site = kw["site_name"][0]
+        return _frame(
+            [
+                _row("Geólogo", "CODELCO – Corporación Nacional del Cobre de Chile", site),
+                _row("Chofer", "Codelco Tech", site),
+            ]
+        )
+
+    monkeypatch.setattr(jobs, "_scrape", scrape)
+    result = jobs.ofertas_de_cuenta("Codelco")
+    assert [p.title for p in result.postings] == ["Geólogo", "Geólogo"]
