@@ -1,6 +1,8 @@
 """The long-running worker: read Slack once per poll interval, drain the
 research queue in between. Once per cycle it also runs the target-account
-radar (accounts/radar.py), which only does work when an account is due.
+radar (accounts/radar.py), which only does work when an account is due, and
+the decisor (accounts/decisor.py), which finds who decides each pursued
+opening and queues their research.
 
 A dead token or a system stop raises an operational alert and the loop keeps
 running: the token may be renewed and the cap may be raised without anyone
@@ -14,7 +16,7 @@ import time
 from collections.abc import Callable
 
 from .. import guards, ops_alerts
-from ..accounts import radar
+from ..accounts import decisor, radar
 from ..research.worker import SYSTEM_STOPS
 from ..slack_client import SlackAuthFailed
 from . import queue
@@ -70,6 +72,27 @@ def _radar() -> None:
         )
 
 
+def _decisor() -> None:
+    """Una pasada del decisor sobre las vacantes pursued, protegida igual que
+    el radar: un fallo se registra y el ciclo sigue con la cola de research.
+    Las paradas del sistema no son un fallo; la cola ya avisa de ellas."""
+    try:
+        resultados = decisor.procesar_pendientes()
+    except SYSTEM_STOPS as exc:
+        logger.info("decisor: parada del sistema, no se busca: %s", exc)
+        return
+    except Exception:
+        logger.exception("decisor fallido; se reintenta en el siguiente ciclo")
+        return
+    for resultado in resultados:
+        logger.info(
+            "decisor %s: %s%s",
+            resultado.signal_id,
+            resultado.estado,
+            f" ({resultado.detalle})" if resultado.detalle else "",
+        )
+
+
 def run_loop(
     reader,
     *,
@@ -110,6 +133,7 @@ def run_loop(
                     ops_alerts.alert("slack_auth", str(exc))
 
             _radar()
+            _decisor()
 
             try:
                 result = run_next_job(reader)
