@@ -17,6 +17,7 @@ entrega a Anthony dossiers accionables con un ángulo de acercamiento.
 | 2b. Ingesta | slack-watcher, resolver, cola en Postgres, research runner, bucle `handoff worker`, Serper (resultados de Google) por delante de SearXNG | **Hecho** |
 | 3. Scoring y entrega | scoring, tarjeta de Slack, SMS, email, botones | **Código hecho**; falta conectar la app de Slack, Twilio y Resend |
 | 4. Panel web | Login, listado, ficha con dossier, costes, ajustes y las tres acciones | **Hecho** en local; falta desplegarlo en Vercel |
+| Radar de cuentas | Cuentas objetivo, vacantes con score, cliente de Unipile ([spec](docs/superpowers/specs/2026-09-22-radar-cuentas-objetivo-design.md)) | **Fase 1 hecha** (CLI, worker, MCP, esquema del panel); decisor (fase 2) y contacto (fase 3) pendientes |
 
 ## Arrancar en local
 
@@ -384,6 +385,46 @@ tres acciones: cambiar el estado de una persona, volver a investigarla y ajustar
 umbrales. No puede borrar, ni escribir dossiers, ni tocar el apagado de
 emergencia o los topes de dinero. Todo eso lo comprueba `tests/test_panel_rls.py`.
 
+## Radar de cuentas objetivo
+
+Handoff vigila una lista de empresas prospecto y detecta cuándo abren vacantes
+(spec: [`2026-09-22-radar-cuentas-objetivo-design.md`](docs/superpowers/specs/2026-09-22-radar-cuentas-objetivo-design.md)).
+Las vacantes salen de JobSpy, sin cuenta; LinkedIn con cuenta (la de Sales
+Navigator de Anthony, vía Unipile) solo se usa para resolver una vez el id de
+cada empresa.
+
+```bash
+uv run handoff cuentas agregar "Codelco" --dominio codelco.cl [--linkedin-id 16300]
+uv run handoff cuentas importar cuentas.csv      # columnas nombre,dominio[,linkedin_id]
+uv run handoff cuentas listar                    # vacantes abiertas, mejor score, último error
+uv run handoff radar                             # escanea las que toca (más de 20 h)
+uv run handoff radar --forzar                    # todas las vigiladas, ya
+uv run handoff radar --cuenta <id>               # una sola, le toque o no
+uv run handoff unipile estado                    # cuenta, uso de hoy frente a topes y horario
+```
+
+`handoff worker` pasa el radar en cada ciclo (hasta 5 cuentas por vuelta, para
+no parar la cola de research). Cada vacante es una fila de `hiring_signals`
+con un score de 0 a 10 calculado por código: nueva 3, abierta 30 días o más +2,
+re-publicada +2, tres o más vacantes en la cuenta en 30 días +2, vista en dos
+fuentes +1. Las que llevan `radar_dias_para_cerrar` (3) días sin verse se
+cierran, salvo si ese día falló algún board. Con score ≥ `radar_auto_min` (7)
+pasan solas a `pursued`. Un fallo en una cuenta queda en su `last_scan_error` y
+el radar sigue con la siguiente. La herramienta MCP `senales_empresa` devuelve
+las vacantes guardadas de una cuenta.
+
+**Topes de Unipile** (tabla `config`, muy por debajo de lo que recomienda
+Unipile): `unipile_busquedas_por_dia` 25, `unipile_perfiles_por_dia` 40, solo
+de lunes a viernes entre `unipile_hora_inicio` (8) y `unipile_hora_fin` (19)
+en `unipile_zona` (`America/New_York`), con una pausa aleatoria de 4 a 15 s
+entre llamadas. El conteo diario sale de `agent_actions` (`unipile_busqueda`).
+El cliente es de solo lectura: no hay método para invitar, escribir ni mandar
+InMail. Si Unipile dice que la cuenta no está OK (401/403, desconectada,
+checkpoint), se escribe `unipile_pausado = true`, se avisa por el webhook de
+alertas y nada toca LinkedIn hasta que una persona lo reactive (Settings del
+panel o `update config set value = 'false'::jsonb where key = 'unipile_pausado'`).
+Variables: `UNIPILE_API_KEY`, `UNIPILE_DSN`, `UNIPILE_ACCOUNT_ID`.
+
 ## Invariantes del proyecto
 
 Romper cualquiera de estas es un bug, no una preferencia:
@@ -403,7 +444,7 @@ Romper cualquiera de estas es un bug, no una preferencia:
 ## Comandos
 
 ```bash
-uv run pytest                                   # 633 tests
+uv run pytest                                   # 1021 tests
 supabase db reset                               # rehace el esquema desde cero
 docker compose -f docker-compose.searxng.yml logs -f
 ```
