@@ -181,3 +181,75 @@ def test_a_missing_job_url_becomes_empty_not_nan(conn, monkeypatch):
     )
     [posting] = jobs.buscar_ofertas("Acme")
     assert posting.url == ""
+
+
+# --- ofertas_de_cuenta (radar de cuentas) --------------------------------------
+
+
+def _row(title, company, site, url="https://x/1", location="Santiago"):
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "job_url": url,
+        "site": site,
+    }
+
+
+def test_with_a_linkedin_id_linkedin_is_asked_by_company_and_not_filtered(conn, monkeypatch):
+    """Con el id de empresa, LinkedIn ya devuelve solo esa empresa: el nombre
+    que muestra puede ser "CODELCO" o una filial y no hay que descartarlo."""
+    calls = []
+
+    def scrape(**kw):
+        calls.append(kw)
+        if kw["site_name"] == ["linkedin"]:
+            return _frame([_row("Mining Engineer", "CODELCO - Corporación", "linkedin")])
+        return _frame(
+            [
+                _row("Geólogo", "Codelco", "indeed"),
+                _row("Chofer", "Otra Empresa", "indeed"),
+            ]
+        )
+
+    monkeypatch.setattr(jobs, "_scrape", scrape)
+    result = jobs.ofertas_de_cuenta("Codelco", linkedin_company_id="16300")
+    linkedin_call = next(c for c in calls if c["site_name"] == ["linkedin"])
+    indeed_call = next(c for c in calls if c["site_name"] == ["indeed"])
+    assert linkedin_call["linkedin_company_ids"] == [16300]
+    assert "search_term" not in linkedin_call
+    assert indeed_call["search_term"] == "Codelco"
+    assert [(p.title, p.site) for p in result.postings] == [
+        ("Mining Engineer", "linkedin"),
+        ("Geólogo", "indeed"),
+    ]
+    assert result.errores == []
+
+
+def test_without_a_linkedin_id_both_boards_use_the_employer_filter(conn, monkeypatch):
+    calls = []
+
+    def scrape(**kw):
+        calls.append(kw)
+        site = kw["site_name"][0]
+        return _frame([_row("Ops", "Acme", site), _row("Ops", "Acme Rival", site)])
+
+    monkeypatch.setattr(jobs, "_scrape", scrape)
+    result = jobs.ofertas_de_cuenta("Acme")
+    assert all(c["search_term"] == "Acme" and "linkedin_company_ids" not in c for c in calls)
+    assert [p.site for p in result.postings] == ["linkedin", "indeed"]
+
+
+def test_a_failing_board_is_reported_not_swallowed(conn, monkeypatch):
+    def scrape(**kw):
+        if kw["site_name"] == ["indeed"]:
+            raise RuntimeError("indeed blocked us")
+        return _frame([_row("Ops", "Acme", "linkedin")])
+
+    monkeypatch.setattr(jobs, "_scrape", scrape)
+    result = jobs.ofertas_de_cuenta("Acme")
+    assert [p.site for p in result.postings] == ["linkedin"]
+    assert result.errores == ["indeed: RuntimeError: indeed blocked us"]
+    with conn.cursor() as cur:
+        cur.execute("select result from agent_actions where action = 'ofertas_cuenta'")
+        assert cur.fetchone()[0]["errores"] == ["indeed: RuntimeError: indeed blocked us"]

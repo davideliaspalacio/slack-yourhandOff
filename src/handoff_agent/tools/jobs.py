@@ -132,3 +132,70 @@ def buscar_ofertas(
         prospect_id=prospect_id,
     )
     return postings
+
+
+@dataclass(frozen=True)
+class OfertasCuenta:
+    """Lo que devolvieron los boards para una cuenta del radar. A diferencia de
+    buscar_ofertas, los fallos no se tragan: el radar necesita saber qué board
+    falló para no dar por cerradas las vacantes que solo ese board veía."""
+
+    postings: list[JobPosting]
+    errores: list[str]
+
+
+def ofertas_de_cuenta(
+    company: str, linkedin_company_id: str | None = None, limit: int = 50
+) -> OfertasCuenta:
+    """Vacantes abiertas de una cuenta objetivo, una consulta por board.
+
+    LinkedIn por id de empresa cuando se conoce (`linkedin_company_ids` de
+    JobSpy, la superficie pública, sin cuenta): es preciso y no necesita el
+    filtro de empleador, que descartaría "CODELCO - Corporación Nacional del
+    Cobre" al buscar "Codelco". Sin id, y siempre en Indeed, por nombre con el
+    filtro de empleador de buscar_ofertas.
+    """
+    consultas: list[tuple[str, dict, bool]] = []
+    if linkedin_company_id:
+        consultas.append(
+            (
+                "linkedin",
+                {"linkedin_company_ids": [int(linkedin_company_id)], "results_wanted": limit},
+                False,
+            )
+        )
+    else:
+        consultas.append(("linkedin", {"search_term": company, "results_wanted": limit * 4}, True))
+    consultas.append(("indeed", {"search_term": company, "results_wanted": limit * 4}, True))
+
+    postings: list[JobPosting] = []
+    errores: list[str] = []
+    escaneadas = 0
+    for site, kwargs, filtrar in consultas:
+        try:
+            frame = _scrape(site_name=[site], **kwargs)
+        except Exception as exc:  # noqa: BLE001 - un board caído no tumba la cuenta
+            errores.append(f"{site}: {type(exc).__name__}: {exc}"[:300])
+            continue
+        escaneadas += len(frame)
+        encontradas = [
+            JobPosting(
+                title=str(row.get("title", "")),
+                company=str(row.get("company", "")),
+                location=_text_or_empty(row.get("location")),
+                url=_text_or_empty(row.get("job_url")),
+                # El board es el que se consultó: el radar guarda la fuente en
+                # una columna con valores cerrados.
+                site=site,
+            )
+            for _, row in frame.iterrows()
+            if not filtrar or _matches_company(str(row.get("company", "")), company)
+        ]
+        postings.extend(encontradas[:limit])
+
+    ledger.record_action(
+        action="ofertas_cuenta",
+        payload={"company": company, "linkedin_company_id": linkedin_company_id},
+        result={"count": len(postings), "scanned": escaneadas, "errores": errores},
+    )
+    return OfertasCuenta(postings=postings, errores=errores)
