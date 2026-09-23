@@ -15,6 +15,7 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from . import ledger, untrusted
+from .accounts import decisor
 from .accounts import repo as cuentas
 from .research import worker
 from .serialize import jsonable
@@ -113,6 +114,41 @@ def senales_empresa(dominio_o_nombre: str, incluir_cerradas: bool = False) -> di
             fila["location"] = untrusted.neutralise(senal["location"])
         senales.append(fila)
     return {"cuenta": jsonable(cuenta), "senales": senales}
+
+
+@mcp.tool()
+def buscar_decisor(signal_id: str) -> dict:
+    """Busca ya quién decide la contratación de una vacante del radar y deja al
+    elegido en la cola de research.
+
+    OJO: usa la cuenta de LinkedIn (Sales Navigator) de Anthony vía Unipile,
+    con sus topes diarios y su horario, y cuesta dinero (GPT-4.1 para los
+    cargos y, después, el research del elegido). Úsalo solo cuando de verdad
+    se quiera perseguir esa vacante. Devuelve el estado (researching,
+    pospuesta, sin_linkedin_id, sin_candidatos, error, omitida, ocupada), los
+    cargos buscados y los candidatos ordenados, el elegido primero.
+    """
+    try:
+        resultado = decisor.procesar_senal(signal_id)
+    except LookupError as exc:
+        return {"estado": "no_encontrada", "detalle": str(exc), "cargos": [], "candidatos": []}
+    except worker.SYSTEM_STOPS as exc:
+        return {"estado": "detenido", "detalle": str(exc), "cargos": [], "candidatos": []}
+    candidatos = []
+    for candidato in decisor.candidatos_de_senal(resultado.signal_id):
+        fila = jsonable(candidato)
+        # Nombre y headline los escribió cada persona en LinkedIn: texto de
+        # terceros que va directo al contexto de un modelo.
+        for clave in ("full_name", "headline", "location"):
+            if candidato[clave]:
+                fila[clave] = untrusted.neutralise(candidato[clave])
+        candidatos.append(fila)
+    return {
+        "estado": resultado.estado,
+        "detalle": resultado.detalle,
+        "cargos": resultado.cargos,
+        "candidatos": candidatos,
+    }
 
 
 def main() -> None:

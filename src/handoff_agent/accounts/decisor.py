@@ -30,6 +30,7 @@ import json
 import logging
 import re
 import unicodedata
+import uuid
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -499,7 +500,10 @@ def procesar_senal(signal_id: str) -> ResultadoDecisor:
     queda como estaba y vuelve 'error'. LookupError si la señal no existe.
     """
     guards.check_kill_switch()
-    signal_id = str(signal_id)
+    try:
+        signal_id = str(uuid.UUID(str(signal_id)))
+    except ValueError as exc:
+        raise LookupError(f"no existe la señal {signal_id}") from exc
     with db.transaction() as cur:
         cur.execute(
             "select pg_try_advisory_xact_lock(hashtext(%s)) as ok", (f"decisor:{signal_id}",)
