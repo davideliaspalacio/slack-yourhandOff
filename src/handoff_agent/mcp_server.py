@@ -15,6 +15,7 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from . import ledger, untrusted
+from .accounts import repo as cuentas
 from .research import worker
 from .serialize import jsonable
 from .tools import jobs, prospects, search, web
@@ -92,6 +93,26 @@ def investigar_persona(
         "errores": list(outcome.errors),
         "dossier": jsonable(history["dossier"]),
     }
+
+
+@mcp.tool()
+def senales_empresa(dominio_o_nombre: str, incluir_cerradas: bool = False) -> dict:
+    """Vacantes que el radar ha visto en una cuenta objetivo (por dominio o
+    nombre): título, fuentes, score, estado y fechas. Solo lee lo guardado; no
+    escanea ni llama a nadie. Para escanear, `handoff radar --cuenta ID`."""
+    cuenta = cuentas.buscar_cuenta(dominio_o_nombre)
+    if cuenta is None:
+        return {"cuenta": None, "senales": [], "motivo": "no es una cuenta objetivo"}
+    senales = []
+    for senal in cuentas.senales_de_cuenta(cuenta["id"], incluir_cerradas=incluir_cerradas):
+        fila = jsonable(senal)
+        # El título y la ubicación los escribió la empresa en un job board:
+        # texto de terceros que va directo al contexto de un modelo.
+        fila["title"] = untrusted.neutralise(senal["title"])
+        if senal["location"]:
+            fila["location"] = untrusted.neutralise(senal["location"])
+        senales.append(fila)
+    return {"cuenta": jsonable(cuenta), "senales": senales}
 
 
 def main() -> None:
