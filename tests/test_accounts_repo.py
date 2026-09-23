@@ -123,3 +123,8 @@ def test_senales_de_cuenta_lists_open_ones_by_score(conn):
     add_signal(acme["id"], "c", score=9, closed=True)
     assert [s["title_key"] for s in repo.senales_de_cuenta(acme["id"])] == ["b", "a"]
     assert len(repo.senales_de_cuenta(acme["id"], incluir_cerradas=True)) == 3
+
+
+def test_listar_senales_rejects_an_unknown_status(conn):
+    with pytest.raises(ValueError):
+        repo.listar_senales(estado="whatever")

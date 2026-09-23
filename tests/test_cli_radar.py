@@ -3,7 +3,7 @@
 import pytest
 
 from handoff_agent import cli, db, guards
-from handoff_agent.accounts import radar, repo
+from handoff_agent.accounts import decisor, radar, repo
 from handoff_agent.accounts.radar import ResultadoEscaneo
 from handoff_agent.tools import unipile
 
@@ -182,3 +182,95 @@ def test_unipile_estado_when_unipile_does_not_answer(conn, unipile_env, monkeypa
     monkeypatch.setattr(unipile, "resumen_uso", lambda: USO)
     assert cli.main(["unipile", "estado"]) == 1
     assert "ConnectError" in capsys.readouterr().out
+
+
+# --- senales y decisor ---------------------------------------------------------------
+
+
+def _senal(cuenta, title, score, status="new", closed=False):
+    return db.fetch_one(
+        "insert into hiring_signals (account_id, title, title_key, score, status, closed_at) "
+        "values (%s, %s, lower(%s), %s, %s, case when %s then now() end) returning id",
+        (cuenta["id"], title, title, score, status, closed),
+    )["id"]
+
+
+def test_senales_lists_open_signals_by_score(conn, capsys):
+    acme = repo.agregar_cuenta("Acme", "acme.com")
+    beta = repo.agregar_cuenta("Beta", "beta.com")
+    _senal(acme, "Ops Lead", 5)
+    _senal(beta, "Plant Manager", 8, status="pursued")
+    _senal(acme, "Old Role", 9, closed=True)
+    assert cli.main(["senales"]) == 0
+    lineas = capsys.readouterr().out.splitlines()
+    assert len(lineas) == 2
+    assert "[ 8] Beta: Plant Manager" in lineas[0] and "pursued" in lineas[0]
+    assert "[ 5] Acme: Ops Lead" in lineas[1]
+
+
+def test_senales_filters_by_account_and_status(conn, capsys):
+    acme = repo.agregar_cuenta("Acme", "acme.com")
+    beta = repo.agregar_cuenta("Beta", "beta.com")
+    _senal(acme, "Ops Lead", 5)
+    _senal(acme, "Plant Manager", 8, status="pursued")
+    _senal(beta, "CFO", 7, status="pursued")
+    assert cli.main(["senales", "--cuenta", str(acme["id"]), "--estado", "pursued"]) == 0
+    out = capsys.readouterr().out
+    assert "Plant Manager" in out and "Ops Lead" not in out and "CFO" not in out
+
+
+def test_senales_rejects_a_bad_account_id(conn, capsys):
+    assert cli.main(["senales", "--cuenta", "nope"]) == 1
+    assert "no existe la cuenta" in capsys.readouterr().out
+
+
+def test_senales_rejects_an_unknown_status(conn):
+    with pytest.raises(SystemExit):
+        cli.main(["senales", "--estado", "whatever"])
+
+
+def test_decisor_processes_a_signal_and_prints_the_candidates(conn, monkeypatch, capsys):
+    acme = repo.agregar_cuenta("Acme", "acme.com", "16300")
+    sid = _senal(acme, "Plant Manager", 8, status="pursued")
+
+    def procesar(signal_id):
+        db.execute(
+            "insert into decision_candidates (signal_id, linkedin_id, full_name, headline, "
+            "rank, reason, chosen, profile_url) values (%s, 'ACo1', 'Rosa Díaz', 'COO', 1, "
+            "'Title matches ''COO''', true, 'https://www.linkedin.com/in/rosa')",
+            (signal_id,),
+        )
+        return decisor.ResultadoDecisor(signal_id, "researching", cargos=["COO", "VP Operations"])
+
+    monkeypatch.setattr(decisor, "procesar_senal", procesar)
+    assert cli.main(["decisor", str(sid)]) == 0
+    out = capsys.readouterr().out
+    assert "estado: researching" in out
+    assert "cargos: COO, VP Operations" in out
+    assert "* 1. Rosa Díaz — COO" in out and "linkedin.com/in/rosa" in out
+
+
+def test_decisor_explains_why_a_signal_waits(conn, monkeypatch, capsys):
+    monkeypatch.setattr(
+        decisor,
+        "procesar_senal",
+        lambda sid: decisor.ResultadoDecisor(sid, "pospuesta", "outside LinkedIn hours"),
+    )
+    sid = "11111111-1111-1111-1111-111111111111"
+    assert cli.main(["decisor", sid]) == 1
+    assert "estado: pospuesta (outside LinkedIn hours)" in capsys.readouterr().out
+
+
+def test_decisor_for_an_unknown_signal(conn, capsys):
+    assert cli.main(["decisor", "00000000-0000-0000-0000-000000000000"]) == 1
+    assert "no existe la señal" in capsys.readouterr().out
+    assert cli.main(["decisor", "nope"]) == 1
+
+
+def test_decisor_on_a_system_stop(conn, monkeypatch, capsys):
+    def stopped(sid):
+        raise guards.MonthlyBudgetExceeded("spent $150 of $150")
+
+    monkeypatch.setattr(decisor, "procesar_senal", stopped)
+    assert cli.main(["decisor", "11111111-1111-1111-1111-111111111111"]) == 1
+    assert "detenido" in capsys.readouterr().out

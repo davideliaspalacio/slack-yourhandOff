@@ -17,7 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from . import guards, ledger, ops_alerts, serialize
-from .accounts import radar
+from .accounts import decisor, radar
 from .accounts import repo as cuentas
 from .config import load_settings
 from .delivery import digest
@@ -423,6 +423,61 @@ def cmd_unipile_estado(args) -> int:
     return 0 if sana else 1
 
 
+def _uuid(valor: str) -> str | None:
+    try:
+        return str(uuid.UUID(valor))
+    except ValueError:
+        return None
+
+
+def cmd_senales(args) -> int:
+    account_id = None
+    if args.cuenta:
+        account_id = _uuid(args.cuenta)
+        if account_id is None:
+            print(f"no existe la cuenta {args.cuenta}")
+            return 1
+    filas = cuentas.listar_senales(account_id, args.estado)
+    if not filas:
+        print("no hay señales abiertas con esos filtros")
+        return 0
+    for fila in filas:
+        print(
+            f"[{fila['score']:>2}] {fila['account_name']}: {fila['title']}   "
+            f"{fila['status']}   {fila['location'] or '—'}   id: {fila['id']}"
+        )
+    return 0
+
+
+def cmd_decisor(args) -> int:
+    signal_id = _uuid(args.signal_id)
+    if signal_id is None:
+        print(f"no existe la señal {args.signal_id}")
+        return 1
+    try:
+        resultado = decisor.procesar_senal(signal_id)
+    except LookupError as exc:
+        print(exc)
+        return 1
+    except SYSTEM_STOPS as exc:
+        print(f"detenido: {exc}")
+        return 1
+    linea = f"estado: {resultado.estado}"
+    if resultado.detalle:
+        linea += f" ({resultado.detalle})"
+    print(linea)
+    if resultado.cargos:
+        print(f"cargos: {', '.join(resultado.cargos)}")
+    for candidato in decisor.candidatos_de_senal(signal_id):
+        marca = "*" if candidato["chosen"] else " "
+        print(
+            f"{marca} {candidato['rank']}. {candidato['full_name'] or '—'} — "
+            f"{candidato['headline'] or '—'}   {candidato['reason'] or ''}   "
+            f"{candidato['profile_url'] or ''}".rstrip()
+        )
+    return 0 if resultado.estado in ("researching", "ready") else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="handoff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -490,6 +545,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--forzar", action="store_true", help="todas las vigiladas, aunque se escanearan hace poco"
     )
     radar_cmd.set_defaults(func=cmd_radar)
+
+    signals_cmd = sub.add_parser("senales", help="vacantes abiertas del radar, por score")
+    signals_cmd.add_argument("--cuenta", metavar="ID", help="solo las de esta cuenta")
+    signals_cmd.add_argument("--estado", choices=cuentas.ESTADOS_SENAL)
+    signals_cmd.set_defaults(func=cmd_senales)
+
+    decisor_cmd = sub.add_parser(
+        "decisor",
+        help="busca ya quién decide una vacante (usa el LinkedIn de Anthony y cuesta dinero)",
+    )
+    decisor_cmd.add_argument("signal_id")
+    decisor_cmd.set_defaults(func=cmd_decisor)
 
     unipile_cmd = sub.add_parser("unipile", help="la cuenta de LinkedIn vía Unipile")
     unipile_sub = unipile_cmd.add_subparsers(dest="accion", required=True)

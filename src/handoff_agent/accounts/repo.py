@@ -173,3 +173,24 @@ def senales_de_cuenta(account_id: str, incluir_cerradas: bool = False) -> list[d
         """,
         (account_id, incluir_cerradas),
     )
+
+
+ESTADOS_SENAL = ("new", "pursued", "dismissed", "snoozed", "researching", "ready", "task_created")
+
+
+def listar_senales(account_id: str | None = None, estado: str | None = None) -> list[dict]:
+    """Vacantes abiertas con el nombre de su cuenta, por score. Con `estado`,
+    solo las de ese estado; con `account_id`, solo las de esa cuenta."""
+    if estado is not None and estado not in ESTADOS_SENAL:
+        raise ValueError(f"estado desconocido: {estado!r}")
+    return db.fetch_all(
+        """
+        select s.*, a.name as account_name
+        from hiring_signals s join target_accounts a on a.id = s.account_id
+        where s.closed_at is null
+          and (%s::uuid is null or s.account_id = %s::uuid)
+          and (%s::text is null or s.status = %s::text)
+        order by s.score desc, s.last_seen_at desc
+        """,
+        (account_id, account_id, estado, estado),
+    )
