@@ -15,6 +15,9 @@ MIGRATIONS = sorted(
 
 # Orden inverso a las dependencias de clave ajena.
 TABLES_TO_CLEAN = [
+    "decision_candidates",
+    "hiring_signals",
+    "target_accounts",
     "research_jobs",
     "slack_messages",
     "member_snapshots",
@@ -48,6 +51,9 @@ ENV_THAT_MUST_NOT_LEAK = [
     "DIGEST_TO",
     "ENRICHMENT_WEBHOOK_URL",
     "PANEL_URL",
+    "UNIPILE_API_KEY",
+    "UNIPILE_DSN",
+    "UNIPILE_ACCOUNT_ID",
 ]
 
 
@@ -101,3 +107,17 @@ def conn(database_url):
                 # del pool y la suite se cae por deadlock.
                 cur.execute(f"truncate table {', '.join(present)} restart identity cascade")
         yield connection
+
+
+@pytest.fixture
+def restore_config(conn):
+    """La tabla config no se vacía entre tests (lleva los valores por defecto de
+    las migraciones). Un test que la toca la deja como estaba al acabar."""
+    with conn.cursor() as cur:
+        cur.execute("select key, value::text from config")
+        before = cur.fetchall()
+    yield conn
+    with conn.cursor() as cur:
+        cur.execute("delete from config")
+        for key, value in before:
+            cur.execute("insert into config (key, value) values (%s, %s::jsonb)", (key, value))
