@@ -1,5 +1,8 @@
 """The long-running worker: read Slack once per poll interval, drain the
-research queue in between.
+research queue in between. Once per cycle it also runs the target-account
+radar (accounts/radar.py), which only does work when an account is due, and
+the decisor (accounts/decisor.py), which finds who decides each pursued
+opening and queues their research.
 
 A dead token or a system stop raises an operational alert and the loop keeps
 running: the token may be renewed and the cap may be raised without anyone
@@ -12,7 +15,8 @@ import logging
 import time
 from collections.abc import Callable
 
-from .. import ops_alerts
+from .. import guards, ops_alerts
+from ..accounts import decisor, radar
 from ..research.worker import SYSTEM_STOPS
 from ..slack_client import SlackAuthFailed
 from . import queue
@@ -37,6 +41,55 @@ def _reclaim_stale() -> None:
         ops_alerts.alert(
             "tareas_recuperadas",
             f"{reclaimed} tarea(s) abandonada(s) devueltas a la cola",
+        )
+
+
+def _radar() -> None:
+    """Una pasada del radar de cuentas objetivo, si a alguna cuenta le toca.
+
+    Nunca tumba el ciclo: un fallo de JobSpy o de una cuenta ya queda en su
+    last_scan_error (ver accounts/radar.py), y cualquier otra cosa se registra
+    y se reintenta en la vuelta siguiente sin parar la cola de research. El
+    kill switch no es un fallo: la cola ya avisa de la parada del sistema.
+    """
+    try:
+        resultados = radar.escanear_pendientes()
+    except guards.KillSwitchActive:
+        logger.info("radar: kill switch activo, no se escanea")
+        return
+    except Exception:
+        logger.exception("radar fallido; se reintenta en el siguiente ciclo")
+        return
+    for resultado in resultados:
+        logger.info(
+            "radar %s: %d vistas, %d nuevas, %d cerradas, %d auto-pursued%s",
+            resultado.nombre,
+            resultado.vistas,
+            resultado.nuevas,
+            resultado.cerradas,
+            resultado.auto_pursued,
+            f" (error: {resultado.error})" if resultado.error else "",
+        )
+
+
+def _decisor() -> None:
+    """Una pasada del decisor sobre las vacantes pursued, protegida igual que
+    el radar: un fallo se registra y el ciclo sigue con la cola de research.
+    Las paradas del sistema no son un fallo; la cola ya avisa de ellas."""
+    try:
+        resultados = decisor.procesar_pendientes()
+    except SYSTEM_STOPS as exc:
+        logger.info("decisor: parada del sistema, no se busca: %s", exc)
+        return
+    except Exception:
+        logger.exception("decisor fallido; se reintenta en el siguiente ciclo")
+        return
+    for resultado in resultados:
+        logger.info(
+            "decisor %s: %s%s",
+            resultado.signal_id,
+            resultado.estado,
+            f" ({resultado.detalle})" if resultado.detalle else "",
         )
 
 
@@ -78,6 +131,9 @@ def run_loop(
                         logger.warning("slack: %s", error)
                 except SlackAuthFailed as exc:
                     ops_alerts.alert("slack_auth", str(exc))
+
+            _radar()
+            _decisor()
 
             try:
                 result = run_next_job(reader)

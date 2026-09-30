@@ -47,3 +47,10 @@ ul.plain { margin: 0; padding-left: 18px; }
 .two > * { min-width: 0; }
 .card a, .card li { overflow-wrap: anywhere; }
 @media (max-width: 800px) { .two { grid-template-columns: 1fr; } main { padding: 16px; } }
+/* Radar de cuentas: badges de las vacantes y errores del último escaneo. */
+.pill.signal { border-color: var(--media); color: var(--media); }
+.pill.new { border-color: var(--accent); } .pill.ready, .pill.watching { border-color: var(--baja); }
+.pill.dismissed, .pill.paused { opacity: .6; }
+.error { color: var(--alta); }
+.notice.error { color: inherit; border-left: 3px solid var(--alta); }
+details > summary { cursor: pointer; }

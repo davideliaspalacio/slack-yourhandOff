@@ -154,3 +154,11 @@ def test_config_ships_with_an_hourly_research_limit(conn):
     with conn.cursor() as cur:
         cur.execute("select value from config where key = 'research_por_hora'")
         assert cur.fetchone()[0] == 20
+
+
+def test_the_radar_is_a_valid_research_reason(conn):
+    """0013: el decisor del radar encola con motivo 'radar'."""
+    with conn.cursor() as cur:
+        cur.execute("insert into research_jobs (slack_user_id, reason) values ('li:1', 'radar')")
+    with pytest.raises(psycopg.errors.CheckViolation), conn.cursor() as cur:
+        cur.execute("insert into research_jobs (slack_user_id, reason) values ('li:2', 'otro')")

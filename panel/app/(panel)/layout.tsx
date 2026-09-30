@@ -15,6 +15,8 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     <>
       <nav>
         <span className="brand">Founders Club</span>
+        <Link href="/cuentas">Accounts</Link>
+        <Link href="/senales">Signals</Link>
         <Link href="/personas">People</Link>
         <Link href="/costes">Costs</Link>
         <Link href="/ajustes">Settings</Link>

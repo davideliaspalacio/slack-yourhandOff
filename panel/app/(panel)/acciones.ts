@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ESTADOS_EDITABLES } from "@/lib/format";
 
-// Las tres acciones del panel. RLS rechaza cualquier cosa fuera de ellas; estas
+// Las acciones del panel. RLS rechaza cualquier cosa fuera de ellas; estas
 // comprobaciones solo evitan viajes inútiles y dan mensajes claros.
 
 export async function cambiarEstado(formData: FormData) {
@@ -141,6 +141,113 @@ export async function guardarUmbral(formData: FormData) {
   await supabase.from("config")
     .update({ value, updated_at: new Date().toISOString() })
     .eq("key", key);
+  revalidatePath("/ajustes");
+}
+
+// Radar de cuentas objetivo. Todo pasa por las funciones de
+// 0012_radar_cuentas.sql, que validan y deciden; aquí solo se lee el
+// formulario y se devuelve el error de la base a la pantalla.
+
+// Vuelta a la página desde la que se pulsó el botón, con el aviso o el error
+// en la query. Solo se admiten rutas propias del radar: el campo viene del
+// navegador y no puede convertirse en un redirect a cualquier sitio.
+function volverA(formData: FormData, params: Record<string, string>): never {
+  const volver = String(formData.get("volver") ?? "");
+  const [ruta, query] = volver.split("?");
+  const base = /^\/(cuentas|senales)(\/[0-9a-f-]{36})?$/.test(ruta) ? ruta : "/cuentas";
+  const q = new URLSearchParams(query ?? "");
+  q.delete("error");
+  q.delete("aviso");
+  for (const [k, v] of Object.entries(params)) q.set(k, v);
+  redirect(`${base}${q.size ? `?${q}` : ""}`);
+}
+
+// Con el error vuelven los campos: React vacía el formulario tras la acción
+// y así no hay que reescribirlo todo por un dominio mal puesto.
+export type AgregarCuentaState = { error?: string; nombre?: string; dominio?: string; linkedin?: string };
+
+// Add account: panel_agregar_cuenta normaliza el dominio y reutiliza la
+// cuenta si ya existía; con el id que devuelve se abre su ficha.
+export async function agregarCuenta(
+  _previo: AgregarCuentaState,
+  formData: FormData,
+): Promise<AgregarCuentaState> {
+  const nombre = String(formData.get("nombre") ?? "");
+  const dominio = String(formData.get("dominio") ?? "");
+  const linkedin = String(formData.get("linkedin") ?? "");
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("panel_agregar_cuenta", {
+    p_nombre: nombre,
+    p_dominio: dominio,
+    p_linkedin_company_id: linkedin,
+  });
+  if (error) return { error: error.message, nombre, dominio, linkedin };
+  revalidatePath("/cuentas");
+  redirect(`/cuentas/${data as string}`);
+}
+
+// Pause / Resume.
+export async function estadoCuenta(formData: FormData) {
+  const id = String(formData.get("id"));
+  const estado = String(formData.get("estado"));
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_estado_cuenta", { p_id: id, p_estado: estado });
+  if (error) volverA(formData, { error: `Couldn't change the account status: ${error.message}` });
+  revalidatePath("/cuentas");
+  revalidatePath(`/cuentas/${id}`);
+  volverA(formData, {});
+}
+
+// Scan now: la base olvida el último escaneo y el siguiente ciclo del worker
+// la escanea. El panel nunca corre el radar.
+export async function escanearCuenta(formData: FormData) {
+  const id = String(formData.get("id"));
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_escanear_cuenta", { p_id: id });
+  if (error) volverA(formData, { error: `Couldn't queue the scan: ${error.message}` });
+  revalidatePath("/cuentas");
+  revalidatePath(`/cuentas/${id}`);
+  volverA(formData, { aviso: "Queued for the next cycle" });
+}
+
+const ACCIONES_SENAL_VALIDAS = ["pursue", "dismiss", "snooze"];
+
+// Pursue / Dismiss / Snooze. panel_accion_senal decide desde qué estados se
+// puede: si la señal cambió entre que se pintó la página y el clic, su error
+// llega a la pantalla.
+export async function accionSenal(formData: FormData) {
+  const id = String(formData.get("id"));
+  const accion = String(formData.get("accion"));
+  if (!ACCIONES_SENAL_VALIDAS.includes(accion)) {
+    volverA(formData, { error: `Unknown action: ${accion}` });
+  }
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_accion_senal", { p_id: id, p_accion: accion });
+  if (error) volverA(formData, { error: `Couldn't update the role: ${error.message}` });
+  revalidatePath("/senales");
+  revalidatePath("/cuentas", "layout");
+  volverA(formData, {});
+}
+
+// Choose: marca a este candidato como el decisor de su vacante y desmarca al
+// anterior.
+export async function elegirCandidato(formData: FormData) {
+  const id = String(formData.get("id"));
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_elegir_candidato", { p_id: id });
+  if (error) volverA(formData, { error: `Couldn't choose this person: ${error.message}` });
+  revalidatePath("/cuentas", "layout");
+  volverA(formData, {});
+}
+
+// unipile_pausado es un booleano, no un número: guardarUmbral no sirve. La
+// política panel_ajusta_radar (0012) es la que permite tocar esta clave.
+export async function guardarPausaUnipile(formData: FormData) {
+  const pausado = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: pausado, updated_at: new Date().toISOString() })
+    .eq("key", "unipile_pausado");
   revalidatePath("/ajustes");
 }
 

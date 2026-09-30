@@ -255,3 +255,15 @@ def test_price_enrichment_per_call_reads_the_environment(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("PRICE_ENRICHMENT_PER_CALL", "0.05")
     assert load_settings().price_enrichment_per_call == 0.05
+
+
+def test_unipile_settings_are_optional_and_the_dsn_is_trimmed(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    assert load_settings().unipile_api_key is None
+    assert load_settings().unipile_dsn is None
+    monkeypatch.setenv("UNIPILE_API_KEY", "k")
+    monkeypatch.setenv("UNIPILE_DSN", "https://api4.unipile.com:13460/")
+    monkeypatch.setenv("UNIPILE_ACCOUNT_ID", "acc")
+    settings = load_settings()
+    assert settings.unipile_dsn == "api4.unipile.com:13460"
+    assert (settings.unipile_api_key, settings.unipile_account_id) == ("k", "acc")

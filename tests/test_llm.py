@@ -75,6 +75,17 @@ def test_json_mode_asks_openai_for_a_json_object(conn, monkeypatch):
     assert fake.calls[0]["response_format"] == {"type": "json_object"}
 
 
+def test_a_json_schema_asks_openai_for_strict_structured_output(conn, monkeypatch):
+    fake = FakeOpenAI(text='{"cargos": []}')
+    monkeypatch.setattr(llm, "_client", lambda: fake)
+    schema = {"type": "object", "properties": {}, "additionalProperties": False}
+    llm.complete("dame cargos", stage="decisor_cargos", json_schema=schema)
+    assert fake.calls[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "decisor_cargos", "strict": True, "schema": schema},
+    }
+
+
 def test_llm_raises_a_clear_error_when_the_openai_key_is_missing(conn, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     llm._client.cache_clear()

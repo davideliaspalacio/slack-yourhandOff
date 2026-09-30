@@ -24,7 +24,15 @@ class FakeClock:
 
 @pytest.fixture
 def wiring(monkeypatch):
-    calls = {"watch": 0, "alerts": []}
+    calls = {"watch": 0, "alerts": [], "radar": 0, "decisor": 0}
+
+    def radar_tick(**kwargs):
+        calls["radar"] += 1
+        return []
+
+    def decisor_tick(**kwargs):
+        calls["decisor"] += 1
+        return []
 
     def watch(*args, **kwargs):
         calls["watch"] += 1
@@ -33,6 +41,10 @@ def wiring(monkeypatch):
     monkeypatch.setattr(loop, "watch_tick", watch)
     monkeypatch.setattr(loop, "resolve_pending", lambda: ResolveResult())
     monkeypatch.setattr(loop, "run_next_job", lambda reader: None)
+    # Nunca JobSpy de verdad desde el bucle en los tests.
+    monkeypatch.setattr(loop.radar, "escanear_pendientes", radar_tick)
+    # Ni OpenAI ni Unipile de verdad: el decisor también se sustituye.
+    monkeypatch.setattr(loop.decisor, "procesar_pendientes", decisor_tick)
     monkeypatch.setattr(loop.ops_alerts, "alert", lambda kind, msg: calls["alerts"].append(kind))
     return calls
 
@@ -172,3 +184,67 @@ def test_reclaim_stale_failing_at_startup_does_not_stop_the_worker(wiring, monke
     assert run(FakeClock(), max_cycles=1) == 1
     assert wiring["watch"] == 1
     assert wiring["alerts"] == []
+
+
+def test_the_radar_runs_once_per_cycle(wiring):
+    run(FakeClock(), max_cycles=4)
+    assert wiring["radar"] == 4
+
+
+def test_a_radar_failure_does_not_stop_the_research(wiring, monkeypatch):
+    """JobSpy o Postgres pueden fallar en el radar: la cola de research sigue."""
+    researched = []
+
+    def boom(**kwargs):
+        raise RuntimeError("jobspy exploded")
+
+    monkeypatch.setattr(loop.radar, "escanear_pendientes", boom)
+    monkeypatch.setattr(
+        loop, "run_next_job", lambda reader: researched.append(1) or RunResult("hecho", "U1")
+    )
+    clock = FakeClock()
+    assert run(clock, max_cycles=2) == 2
+    assert researched == [1, 1]
+    assert wiring["alerts"] == []
+
+
+def test_the_kill_switch_in_the_radar_is_not_a_failure(wiring, monkeypatch):
+    def stopped(**kwargs):
+        raise guards.KillSwitchActive("kill_switch is on")
+
+    monkeypatch.setattr(loop.radar, "escanear_pendientes", stopped)
+    assert run(FakeClock(), max_cycles=1) == 1
+    assert wiring["alerts"] == []
+
+
+def test_the_decisor_runs_once_per_cycle_after_the_radar(wiring):
+    run(FakeClock(), max_cycles=3)
+    assert wiring["decisor"] == 3
+
+
+def test_a_decisor_failure_does_not_stop_the_research(wiring, monkeypatch):
+    researched = []
+
+    def boom(**kwargs):
+        raise RuntimeError("unipile exploded")
+
+    monkeypatch.setattr(loop.decisor, "procesar_pendientes", boom)
+    monkeypatch.setattr(
+        loop, "run_next_job", lambda reader: researched.append(1) or RunResult("hecho", "U1")
+    )
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert researched == [1, 1]
+    assert wiring["alerts"] == []
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [guards.KillSwitchActive("kill_switch is on"), guards.MonthlyBudgetExceeded("$150 of $150")],
+)
+def test_a_system_stop_in_the_decisor_is_not_a_cycle_failure(wiring, monkeypatch, stop):
+    def stopped(**kwargs):
+        raise stop
+
+    monkeypatch.setattr(loop.decisor, "procesar_pendientes", stopped)
+    assert run(FakeClock(), max_cycles=1) == 1
+    assert "ciclo_fallido" not in wiring["alerts"]

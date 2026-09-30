@@ -338,3 +338,8 @@ def test_hourly_limit_falls_back_to_default_for_bad_config_values(conn):
             assert queue.hourly_limit() == queue.DEFAULT_HOURLY_LIMIT
     finally:
         db.execute("update config set value = '20'::jsonb where key = 'research_por_hora'")
+
+
+def test_the_radar_can_enqueue_research(conn):
+    assert queue.enqueue("li:ACoAA1", "radar") is True
+    assert db.fetch_one("select reason from research_jobs")["reason"] == "radar"

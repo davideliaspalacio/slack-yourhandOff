@@ -52,7 +52,11 @@ def complete(
     system: str | None = None,
     prospect_id: str | None = None,
     json_mode: bool = False,
+    json_schema: dict | None = None,
 ) -> LLMResponse:
+    """Una llamada al modelo. `json_mode` pide un objeto JSON cualquiera;
+    `json_schema` pide salida estructurada estricta con ese esquema (se nombra
+    como el stage, que ya cumple el patrón de nombres de OpenAI)."""
     guards.check_kill_switch()
     # El tope mensual solo existe si alguien lo comprueba, y esta es la única
     # puerta por la que se gasta dinero en LLM.
@@ -65,7 +69,12 @@ def complete(
     messages.append({"role": "user", "content": prompt})
 
     kwargs = {"model": settings.openai_model, "messages": messages}
-    if json_mode:
+    if json_schema is not None:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": stage, "strict": True, "schema": json_schema},
+        }
+    elif json_mode:
         kwargs["response_format"] = {"type": "json_object"}
 
     # La traza se abre antes de llamar: Langfuse mide la latencia por su duración.

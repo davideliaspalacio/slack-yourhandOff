@@ -29,7 +29,11 @@ from .. import db
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
-REASONS = ("mensaje", "miembro_nuevo", "manual")
+# 'radar' (0013): el decisor de una vacante del radar de cuentas objetivo.
+REASONS = ("mensaje", "miembro_nuevo", "manual", "radar")
+# Las personas que entran por el radar no están en Slack: su id es el de
+# LinkedIn con este prefijo (spec del radar, §4).
+PREFIJO_LINKEDIN = "li:"
 DEFAULT_HOURLY_LIMIT = 20
 STALE_AFTER_MINUTES = 30
 
