@@ -286,3 +286,20 @@ export async function borrarTokenSlack(): Promise<{ error?: string }> {
   revalidatePath("/ajustes");
   return {};
 }
+
+export type CanalesState = { error?: string; ok?: boolean };
+
+// Los canales que vigila el agente (panel_guardar_canales, 0016): el formulario
+// manda IDs separados por comas y la función normaliza (trim, mayúsculas,
+// duplicados) y valida. Vacío es válido: quita el valor del panel.
+export async function guardarCanales(
+  _previo: CanalesState,
+  formData: FormData,
+): Promise<CanalesState> {
+  const canales = String(formData.get("canales") ?? "").split(",");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_guardar_canales", { p_canales: canales });
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return { ok: true };
+}

@@ -679,3 +679,85 @@ def test_the_panel_cannot_read_secretos_directly(people):
     guardar_token(ALLOWED, SESION, GALLETA)
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         as_user(ALLOWED, "select * from secretos")
+
+
+# -- Canales que vigila el agente (0016): ids no secretos en config, escritos
+# solo por panel_guardar_canales. --
+
+
+def guardar_canales(user, canales):
+    return as_user(user, "select panel_guardar_canales(%s)", (canales,))
+
+
+def canales_guardados():
+    return db.fetch_one("select value from config where key = 'slack_channel_ids'")["value"]
+
+
+def test_the_channels_row_starts_as_an_empty_list(people):
+    assert canales_guardados() == []
+
+
+def test_a_stranger_is_denied_on_the_channels_function(people, restore_config):
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        guardar_canales(STRANGER, ["C0ABC123"])
+    with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+        guardar_canales(None, ["C0ABC123"])
+    assert canales_guardados() == []
+
+
+def test_the_channels_are_stored_and_round_trip_through_the_panel_read(people, restore_config):
+    guardar_canales(ALLOWED, ["C0ABC123", "G0DEF456"])
+    assert canales_guardados() == ["C0ABC123", "G0DEF456"]
+    # El panel lo lee directo de config, con su política de lectura.
+    rows = as_user(ALLOWED, "select value from config where key = 'slack_channel_ids'")
+    assert rows[0]["value"] == ["C0ABC123", "G0DEF456"]
+
+
+def test_an_invalid_channel_id_is_rejected_and_nothing_is_stored(people, restore_config):
+    guardar_canales(ALLOWED, ["C0ABC123"])
+    for malo in ["X0ABC123", "C0AB", "C0ABC-23", "random1"]:
+        with pytest.raises(psycopg.errors.RaiseException, match="invalid channel id"):
+            guardar_canales(ALLOWED, ["C0DEF456", malo])
+    assert canales_guardados() == ["C0ABC123"]
+
+
+def test_lowercase_and_spaces_are_normalised(people, restore_config):
+    guardar_canales(ALLOWED, ["  c0abc123 ", "g0def456"])
+    assert canales_guardados() == ["C0ABC123", "G0DEF456"]
+
+
+def test_blank_entries_are_dropped(people, restore_config):
+    guardar_canales(ALLOWED, ["", "  ", "C0ABC123", ""])
+    assert canales_guardados() == ["C0ABC123"]
+
+
+def test_duplicates_collapse_keeping_the_first_order(people, restore_config):
+    guardar_canales(ALLOWED, ["C0BBB222", "C0AAA111", "c0bbb222", "C0AAA111"])
+    assert canales_guardados() == ["C0BBB222", "C0AAA111"]
+
+
+def test_more_than_twenty_channels_are_rejected(people, restore_config):
+    guardar_canales(ALLOWED, ["C0ABC123"])
+    veintiuno = [f"C0AAA{i:03d}" for i in range(21)]
+    with pytest.raises(psycopg.errors.RaiseException, match="too many channels"):
+        guardar_canales(ALLOWED, veintiuno)
+    assert canales_guardados() == ["C0ABC123"]
+    guardar_canales(ALLOWED, veintiuno[:20])
+    assert len(canales_guardados()) == 20
+
+
+def test_an_empty_array_clears_the_list(people, restore_config):
+    guardar_canales(ALLOWED, ["C0ABC123"])
+    guardar_canales(ALLOWED, [])
+    assert canales_guardados() == []
+    guardar_canales(ALLOWED, ["C0ABC123"])
+    guardar_canales(ALLOWED, ["", " "])
+    assert canales_guardados() == []
+
+
+def test_the_channels_row_cannot_be_edited_directly_from_the_panel(people, restore_config):
+    as_user(
+        ALLOWED,
+        "update config set value = '[\"C0HACKED1\"]'::jsonb where key = 'slack_channel_ids'",
+    )
+    assert canales_guardados() == []

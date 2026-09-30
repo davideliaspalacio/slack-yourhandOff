@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from .. import guards, ops_alerts
 from ..accounts import decisor, radar
@@ -96,7 +96,7 @@ def _decisor() -> None:
 def run_loop(
     reader,
     *,
-    channels: list[str],
+    channels: Sequence[str] | Callable[[], Sequence[str]],
     lookback_hours: float,
     poll_seconds: int,
     should_stop: Callable[[], bool] = lambda: False,
@@ -119,7 +119,9 @@ def run_loop(
                 next_watch = clock() + poll_seconds
                 _reclaim_stale()
                 try:
-                    tick = watch_tick(reader, channels, lookback_hours)
+                    # Un callable se resuelve en cada sondeo (los canales del panel).
+                    current = list(channels() if callable(channels) else channels)
+                    tick = watch_tick(reader, current, lookback_hours)
                     resolved = resolve_pending()
                     logger.info(
                         "slack: %d mensajes nuevos, %d miembros nuevos; %d encolados",

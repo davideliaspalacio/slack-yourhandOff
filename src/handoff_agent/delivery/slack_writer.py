@@ -4,7 +4,7 @@ El lector del Founders Club y este escritor son clases/módulos distintos con
 tokens distintos a propósito: así "el agente nunca escribe en el Founders
 Club" es algo que impone el código, no una intención. Antes de publicar o
 actualizar una tarjeta se comprueba que el canal de destino no sea uno de los
-vigilados (`Settings.slack_channel_ids`) y que exista un token de bot propio
+vigilados (los del panel y los de `SLACK_CHANNEL_IDS`) y que exista un token de bot propio
 de Handoff — nunca se reutiliza ni se cae de vuelta al token de lectura.
 """
 
@@ -15,6 +15,7 @@ from functools import lru_cache
 
 from slack_sdk import WebClient
 
+from .. import secretos
 from ..config import Settings, load_settings
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,10 @@ def _guard_target_channel(channel: str | None, settings: Settings) -> str:
         raise SlackWriteRefused("falta el canal de destino")
     # Normalizar: espacios en blanco y comparación insensible a mayúsculas
     channel_normalized = channel.strip().upper()
-    for watched_id in settings.slack_channel_ids:
+    # La unión de las dos fuentes: un canal añadido desde el panel queda
+    # prohibido como destino, y uno que solo esté en el entorno también.
+    watched = (*secretos.slack_channel_ids(), *settings.slack_channel_ids)
+    for watched_id in watched:
         if channel_normalized == watched_id.upper():
             raise SlackWriteRefused(
                 f"{channel} es un canal vigilado del Founders Club: no se escribe allí"

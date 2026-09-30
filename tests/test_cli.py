@@ -288,7 +288,8 @@ def test_cola_prints_the_queue_counts(conn, capsys):
 def test_worker_without_channels_explains_what_is_missing(monkeypatch, capsys):
     monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
     assert cli.main(["worker"]) == 1
-    assert "SLACK_CHANNEL_IDS" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Settings del panel" in out and "SLACK_CHANNEL_IDS" in out
 
 
 def test_worker_runs_the_loop_with_the_settings(monkeypatch):
@@ -299,7 +300,8 @@ def test_worker_runs_the_loop_with_the_settings(monkeypatch):
     monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: FakeReader())
     monkeypatch.setattr(cli, "run_loop", lambda reader, **kwargs: seen.update(kwargs) or 0)
     assert cli.main(["worker"]) == 0
-    assert seen["channels"] == ["C1", "C2"]
+    # Un callable: el bucle lo resuelve en cada sondeo para seguir al panel.
+    assert list(seen["channels"]()) == ["C1", "C2"]
     assert seen["poll_seconds"] == 900
 
 

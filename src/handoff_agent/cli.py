@@ -248,8 +248,11 @@ def _slack_reader(settings):
             "o ponlo en SLACK_USER_TOKEN en .env"
         )
         return None
-    if not settings.slack_channel_ids:
-        print("falta SLACK_CHANNEL_IDS en .env (IDs de los canales a vigilar, separados por comas)")
+    if not secretos.slack_channel_ids():
+        print(
+            "faltan los canales a vigilar: añádelos en Settings del panel (Watched channels) "
+            "o pon sus IDs en SLACK_CHANNEL_IDS en .env"
+        )
         return None
     return FoundersClubReader()
 
@@ -260,7 +263,7 @@ def cmd_vigilar(args) -> int:
     if reader is None:
         return 1
     try:
-        tick = watch_tick(reader, list(settings.slack_channel_ids), settings.slack_lookback_hours)
+        tick = watch_tick(reader, list(secretos.slack_channel_ids()), settings.slack_lookback_hours)
     except SlackAuthFailed as exc:
         ops_alerts.alert("slack_auth", str(exc))
         print(f"detenido: {exc}")
@@ -302,7 +305,8 @@ def cmd_worker(args) -> int:
     try:
         run_loop(
             reader,
-            channels=list(settings.slack_channel_ids),
+            # Se resuelve en cada sondeo: un cambio en el panel no pide reiniciar.
+            channels=secretos.slack_channel_ids,
             lookback_hours=settings.slack_lookback_hours,
             poll_seconds=settings.slack_poll_seconds,
             should_stop=stop.is_set,

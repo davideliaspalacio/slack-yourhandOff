@@ -1,5 +1,6 @@
 import pytest
 
+from handoff_agent import db
 from handoff_agent.delivery import slack_writer
 
 
@@ -46,6 +47,17 @@ def test_it_refuses_to_write_in_a_founders_club_channel(bot, monkeypatch):
     with pytest.raises(slack_writer.SlackWriteRefused):
         slack_writer.post_card([{"type": "divider"}], "señal")
     assert bot.posted == []
+
+
+def test_it_refuses_a_channel_that_only_exists_in_the_panel_list(bot, restore_config):
+    """Un canal añadido desde el panel (sin SLACK_CHANNEL_IDS) también es
+    un destino prohibido."""
+    db.execute("update config set value = '[\"CHANDOFF\"]'::jsonb where key = 'slack_channel_ids'")
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.post_card([{"type": "divider"}], "señal")
+    with pytest.raises(slack_writer.SlackWriteRefused):
+        slack_writer.update_card("chandoff", "1.0", [{"type": "divider"}], "test")
+    assert bot.posted == [] and bot.updated == []
 
 
 def test_without_a_bot_token_it_refuses_instead_of_guessing(bot, monkeypatch):

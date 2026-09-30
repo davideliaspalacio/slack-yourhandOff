@@ -61,6 +61,26 @@ def run(clock, max_cycles, poll_seconds=100):
     )
 
 
+def test_a_channels_callable_is_resolved_on_every_poll(wiring, monkeypatch):
+    """Los canales del panel cambian sin reiniciar: el bucle los pide en cada sondeo."""
+    seen = []
+    monkeypatch.setattr(
+        loop, "watch_tick", lambda reader, channels, hours: seen.append(channels) or TickResult()
+    )
+    lists = iter([["C1"], ["C1", "C2"], ["C3"]])
+    clock = FakeClock()
+    loop.run_loop(
+        FakeReader(),
+        channels=lambda: next(lists),
+        lookback_hours=1,
+        poll_seconds=100,
+        sleep=clock.sleep,
+        clock=clock.clock,
+        max_cycles=10,
+    )
+    assert seen == [["C1"], ["C1", "C2"], ["C3"]]
+
+
 def test_slack_is_read_at_start_and_then_once_per_poll_interval(wiring):
     clock = FakeClock()
     run(clock, max_cycles=10)

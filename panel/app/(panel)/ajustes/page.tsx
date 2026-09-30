@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { fecha } from "@/lib/format";
 import { guardarPausaUnipile, guardarUmbral } from "../acciones";
+import { CanalesForm } from "./CanalesForm";
 import { TokenSlackForm } from "./TokenSlackForm";
 
 const EDITABLES: Record<string, string> = {
@@ -50,8 +51,12 @@ function inicioDelDia(zona: string): string {
 export default async function Ajustes() {
   const supabase = await createClient();
   const { data } = await supabase.from("config").select("key, value, updated_at")
-    .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR), "unipile_pausado", "unipile_zona"]);
+    .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR), "unipile_pausado", "unipile_zona", "slack_channel_ids"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
+  const canalesValor = valores.get("slack_channel_ids");
+  const canales = Array.isArray(canalesValor)
+    ? canalesValor.filter((c): c is string => typeof c === "string")
+    : [];
   const pausado = valores.get("unipile_pausado") === true;
   const zona = String(valores.get("unipile_zona") ?? "America/New_York");
   const desde = inicioDelDia(zona);
@@ -100,6 +105,15 @@ export default async function Ajustes() {
           </p>
         )}
         <TokenSlackForm configurado={Boolean(token?.configurado)} />
+      </section>
+      <section style={{ marginBottom: 24 }}>
+        <h2>Watched channels</h2>
+        <p>
+          {canales.length > 0
+            ? canales.join(", ")
+            : "No channels configured — the agent is not reading anything"}
+        </p>
+        <CanalesForm key={canales.join(",")} actuales={canales} />
       </section>
       <p className="notice">The emergency shutdown and the money caps aren&apos;t changed from here,
         on purpose: they&apos;re edited by hand in the database.</p>
