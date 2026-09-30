@@ -239,7 +239,7 @@ def cmd_costes(args) -> int:
     return 0
 
 
-def _slack_reader(settings):
+def _slack_reader(settings, *, exigir_canales: bool = True):
     """None, con un mensaje claro, si falta configuración de Slack."""
     # El token puede venir del panel (Settings) o del entorno; gana el del panel.
     if not secretos.slack_user_token():
@@ -249,11 +249,16 @@ def _slack_reader(settings):
         )
         return None
     if not secretos.slack_channel_ids():
-        print(
+        aviso = (
             "faltan los canales a vigilar: añádelos en Settings del panel (Watched channels) "
             "o pon sus IDs en SLACK_CHANNEL_IDS en .env"
         )
-        return None
+        # El worker no se cae por esto: los canales se ponen desde el panel y
+        # se releen en cada sondeo, así que espera en vez de dejar a Railway
+        # reiniciándolo en bucle. Los comandos de una sola pasada sí paran.
+        print(aviso)
+        if exigir_canales:
+            return None
     return FoundersClubReader()
 
 
@@ -291,7 +296,7 @@ def cmd_cola(args) -> int:
 
 def cmd_worker(args) -> int:
     settings = load_settings()
-    reader = _slack_reader(settings)
+    reader = _slack_reader(settings, exigir_canales=False)
     if reader is None:
         return 1
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

@@ -1,3 +1,4 @@
+import argparse
 import json
 import logging
 import subprocess
@@ -286,8 +287,12 @@ def test_cola_prints_the_queue_counts(conn, capsys):
 
 
 def test_worker_without_channels_explains_what_is_missing(monkeypatch, capsys):
+    """Sin canales el worker avisa, pero no se cae: se ponen desde el panel y
+    se releen en cada sondeo, así que Railway no debe reiniciarlo en bucle."""
     monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
-    assert cli.main(["worker"]) == 1
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: FakeReader())
+    monkeypatch.setattr(cli, "run_loop", lambda *a, **k: None)
+    assert cli.main(["worker"]) == 0
     out = capsys.readouterr().out
     assert "Settings del panel" in out and "SLACK_CHANNEL_IDS" in out
 
@@ -427,3 +432,9 @@ def test_a_stop_signal_wakes_the_worker_from_its_sleep(monkeypatch):
     assert cli.main(["worker"]) == 0
     assert seen["stopped"] is True
     assert seen["slept"] < 1
+
+
+def test_a_single_pass_command_still_stops_without_channels(conn, monkeypatch):
+    monkeypatch.setattr(cli.secretos, "slack_user_token", lambda: "xoxp-test")
+    monkeypatch.setattr(cli.secretos, "slack_channel_ids", lambda: ())
+    assert cli.cmd_vigilar(argparse.Namespace()) == 1
