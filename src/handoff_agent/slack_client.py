@@ -60,9 +60,12 @@ class UserProfile:
     deleted: bool
 
 
-def _web_client(token: str) -> WebClient:
+def _web_client(token: str, cookie: str | None = None) -> WebClient:
+    # Un token de sesión (xoxc-) solo lo acepta Slack junto con la cookie `d`.
+    headers = {"Cookie": f"d={cookie}"} if token.startswith("xoxc-") and cookie else None
     return WebClient(
         token=token,
+        headers=headers,
         retry_handlers=[
             *default_retry_handlers(),
             RateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES),
@@ -78,7 +81,7 @@ class FoundersClubReader:
     def __init__(self, token: str | None = None, client=None) -> None:
         self._explicit = client is not None or bool(token)
         self._client = client if client is not None else (_web_client(token) if token else None)
-        self._current_token: str | None = token or None
+        self._current_token: tuple[str, str | None] | None = None
 
     def _resolve_client(self):
         if self._explicit:
@@ -88,9 +91,17 @@ class FoundersClubReader:
             raise SlackAuthFailed(
                 "SLACK_USER_TOKEN no está configurado (ni en el panel, en Settings, ni en .env)"
             )
-        if token != self._current_token:
-            self._client = _web_client(token)
-            self._current_token = token
+        cookie = None
+        if token.startswith("xoxc-"):
+            cookie = secretos.slack_d_cookie()
+            if not cookie:
+                raise SlackAuthFailed(
+                    "El token de sesión (xoxc-) necesita la cookie d (xoxd-…): "
+                    "pégala en Settings del panel, o en SLACK_D_COOKIE en .env"
+                )
+        if (token, cookie) != self._current_token:
+            self._client = _web_client(token, cookie)
+            self._current_token = (token, cookie)
         return self._client
 
     def _call(self, method: str, **kwargs):
@@ -101,7 +112,10 @@ class FoundersClubReader:
             response = exc.response if exc.response is not None else {}
             error = response.get("error", "") if hasattr(response, "get") else ""
             if error in AUTH_ERRORS:
-                raise SlackAuthFailed(f"Slack rechazó el token: {error}") from exc
+                pista = ""
+                if error != "missing_scope":
+                    pista = " (la credencial puede haber caducado: pega una nueva en Settings del panel)"
+                raise SlackAuthFailed(f"Slack rechazó el token: {error}{pista}") from exc
             if error == "user_not_found":
                 raise SlackUserNotFound(f"{method}: {error}") from exc
             raise SlackUnavailable(f"{method}: {error or exc}") from exc

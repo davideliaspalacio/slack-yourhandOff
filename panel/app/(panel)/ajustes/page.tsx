@@ -88,10 +88,17 @@ export default async function Ajustes() {
         <h2>Founders Club reader token</h2>
         <p>
           {token?.configurado
-            ? `Configured · ends in ${token.sufijo} · updated ${fecha(token.actualizado)} ` +
+            ? `Configured (${token.tipo === "session" ? "browser session" : "app token"}) · ` +
+              `ends in ${token.sufijo} · updated ${fecha(token.actualizado)} ` +
               `by ${token.por ?? "unknown"}`
             : "Not configured — the agent cannot read the Founders Club yet."}
         </p>
+        {token?.configurado && token.tipo === "session" && (
+          <p className="notice">
+            A browser session expires every few days; paste a fresh one when the agent reports it
+            can no longer read.
+          </p>
+        )}
         <TokenSlackForm configurado={Boolean(token?.configurado)} />
       </section>
       <p className="notice">The emergency shutdown and the money caps aren&apos;t changed from here,

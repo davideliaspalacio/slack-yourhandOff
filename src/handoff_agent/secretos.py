@@ -15,14 +15,22 @@ from . import db
 from .config import load_settings
 
 SLACK_USER_TOKEN_KEY = "slack_user_token"
+SLACK_D_COOKIE_KEY = "slack_d_cookie"
+
+
+def _leer(key: str) -> str | None:
+    try:
+        row = db.fetch_one("select value from secretos where key = %s", (key,))
+    except psycopg.errors.UndefinedTable:
+        # Base anterior a la migración 0014: solo existe el entorno.
+        row = None
+    return row["value"] if row and row["value"] else None
 
 
 def slack_user_token() -> str | None:
-    try:
-        row = db.fetch_one("select value from secretos where key = %s", (SLACK_USER_TOKEN_KEY,))
-    except psycopg.errors.UndefinedTable:
-        # Base anterior a la migración 0012: solo existe el entorno.
-        row = None
-    if row and row["value"]:
-        return row["value"]
-    return load_settings().slack_user_token
+    return _leer(SLACK_USER_TOKEN_KEY) or load_settings().slack_user_token
+
+
+def slack_d_cookie() -> str | None:
+    """Cookie `d` (xoxd-…): solo hace falta con un token de sesión (xoxc-)."""
+    return _leer(SLACK_D_COOKIE_KEY) or load_settings().slack_d_cookie

@@ -151,6 +151,16 @@ insert into config (key, value) values ('research_por_hora', '20'::jsonb)
 una hora (20 si la fila no existe). Un valor que no sea un entero no negativo
 se ignora, con un aviso en el log, y se usa el valor por defecto.
 
+### Dos formas de dar acceso al Slack
+
+En Settings del panel (o en `SLACK_USER_TOKEN` y `SLACK_D_COOKIE`) caben dos
+credenciales. El **token de app** (`xoxp-…`, de una app instalada en el
+workspace) es el estable y el que conviene. La **sesión del navegador** (un
+token `xoxc-…` más el valor de la cookie `d`, `xoxd-…`) es el respaldo para
+cuando el workspace no deja instalar una app: caduca cada pocos días, y
+cuando Slack la rechaza el worker avisa con una alerta `slack_auth` para que se
+pegue una nueva. Con `xoxc-` la cookie es obligatoria; con `xoxp-` sobra.
+
 ### Montar un Slack de pruebas
 
 1. Crear un workspace de Slack de pruebas.

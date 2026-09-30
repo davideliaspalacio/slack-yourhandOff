@@ -259,16 +259,21 @@ export async function salir() {
 
 export type TokenSlackState = { error?: string; ok?: boolean };
 
-// El token del Founders Club es de solo escritura: el panel lo manda a
-// panel_guardar_token_slack (0014_token_slack.sql), que valida el prefijo y el
-// largo, y nunca puede leerlo de vuelta (solo el sufijo, con el estado).
+// La credencial del Founders Club es de solo escritura: el panel la manda a
+// panel_guardar_token_slack (0014 y 0015), que valida prefijos y largo, y nunca
+// puede leerla de vuelta (solo el tipo y el sufijo, con el estado). Un token de
+// app (xoxp-) va solo; uno de sesión (xoxc-) lleva la cookie d (xoxd-).
 export async function guardarTokenSlack(
   _previo: TokenSlackState,
   formData: FormData,
 ): Promise<TokenSlackState> {
   const token = String(formData.get("token") ?? "");
+  const cookie = String(formData.get("cookie") ?? "").trim();
   const supabase = await createClient();
-  const { error } = await supabase.rpc("panel_guardar_token_slack", { p_token: token });
+  const { error } = await supabase.rpc("panel_guardar_token_slack", {
+    p_token: token,
+    p_cookie: cookie === "" ? null : cookie,
+  });
   if (error) return { error: error.message };
   revalidatePath("/ajustes");
   return { ok: true };

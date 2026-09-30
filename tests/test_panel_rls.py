@@ -579,25 +579,40 @@ def test_an_unauthenticated_request_cannot_delete_test_data(people):
     assert simulated() is not None
 
 
-# --- token del Founders Club (0012): solo escritura desde el panel -----------
+# --- token del Founders Club (0014 y 0015): solo escritura desde el panel ----
 
 TOKEN = "xoxp-1234567890-abcdefghij-ab12"
-VACIO = {"configurado": False, "sufijo": None, "actualizado": None, "por": None}
+SESION = "xoxc-1234567890-abcdefghij-cd34"
+GALLETA = "xoxd-galleta-de-sesion"
+VACIO = {
+    "configurado": False,
+    "tipo": None,
+    "sufijo": None,
+    "actualizado": None,
+    "por": None,
+}
 
 
-def guardar_token(user, token=TOKEN):
-    return as_user(user, "select panel_guardar_token_slack(%s)", (token,))
+def guardar_token(user, token=TOKEN, cookie=None):
+    return as_user(user, "select panel_guardar_token_slack(%s, %s)", (token, cookie))
 
 
 def estado_token(user):
     return as_user(
-        user, "select configurado, sufijo, actualizado, por from panel_estado_token_slack()"
+        user,
+        "select configurado, tipo, sufijo, actualizado, por from panel_estado_token_slack()",
     )
+
+
+def filas_secretos():
+    rows = db.fetch_all("select key, value from secretos order by key")
+    return {r["key"]: r["value"] for r in rows}
 
 
 def test_a_stranger_is_denied_on_the_slack_token_functions(people):
     for sql, params in [
         ("select panel_guardar_token_slack(%s)", (TOKEN,)),
+        ("select panel_guardar_token_slack(%s, %s)", (SESION, GALLETA)),
         ("select * from panel_estado_token_slack()", ()),
         ("select panel_borrar_token_slack()", ()),
     ]:
@@ -606,35 +621,61 @@ def test_a_stranger_is_denied_on_the_slack_token_functions(people):
 
 
 @pytest.mark.parametrize(
-    ("token", "message"),
+    ("token", "cookie", "message"),
     [
-        ("xoxb-1234567890-abcdefghij-ab12", "must start with xoxp-"),
-        ("xoxp-corto", "too short"),
+        ("xoxb-1234567890-abcdefghij-ab12", None, r"must start with xoxp- or xoxc-"),
+        ("xoxp-corto", None, "too short"),
+        (TOKEN, GALLETA, r"app token \(xoxp-\) does not take a cookie"),
+        (SESION, None, r"session token \(xoxc-\) needs the d cookie"),
+        (SESION, "   ", r"session token \(xoxc-\) needs the d cookie"),
+        (SESION, "no-es-xoxd", r"session token \(xoxc-\) needs the d cookie"),
     ],
 )
-def test_a_bad_slack_token_is_rejected(people, token, message):
+def test_a_bad_slack_credential_is_rejected(people, token, cookie, message):
     with pytest.raises(psycopg.errors.RaiseException, match=message):
-        guardar_token(ALLOWED, token)
+        guardar_token(ALLOWED, token, cookie)
     assert estado_token(ALLOWED)[0]["configurado"] is False
+    assert filas_secretos() == {}
 
 
 def test_saving_the_slack_token_reports_only_its_suffix_and_who(people):
     assert estado_token(ALLOWED) == [VACIO]
     guardar_token(ALLOWED, f"  {TOKEN}  ")
     [fila] = estado_token(ALLOWED)
-    assert (fila["configurado"], fila["sufijo"], fila["por"]) == (True, "ab12", ALLOWED)
+    assert (fila["configurado"], fila["tipo"], fila["sufijo"], fila["por"]) == (
+        True,
+        "app",
+        "ab12",
+        ALLOWED,
+    )
     assert fila["actualizado"] is not None
     assert TOKEN not in repr(estado_token(ALLOWED))
-    assert db.fetch_one("select value from secretos")["value"] == TOKEN
+    assert filas_secretos() == {"slack_user_token": TOKEN}
 
 
-def test_deleting_the_slack_token_clears_it(people):
-    guardar_token(ALLOWED)
+def test_a_session_token_stores_both_rows_and_reports_session(people):
+    guardar_token(ALLOWED, f" {SESION} ", f" {GALLETA} ")
+    [fila] = estado_token(ALLOWED)
+    assert (fila["configurado"], fila["tipo"], fila["sufijo"]) == (True, "session", "cd34")
+    assert GALLETA not in repr(estado_token(ALLOWED))
+    assert filas_secretos() == {"slack_user_token": SESION, "slack_d_cookie": GALLETA}
+
+
+def test_an_app_token_replaces_a_session_and_drops_its_cookie(people):
+    guardar_token(ALLOWED, SESION, GALLETA)
+    guardar_token(ALLOWED, TOKEN)
+    assert estado_token(ALLOWED)[0]["tipo"] == "app"
+    assert filas_secretos() == {"slack_user_token": TOKEN}
+
+
+def test_deleting_the_slack_token_clears_both_rows(people):
+    guardar_token(ALLOWED, SESION, GALLETA)
     as_user(ALLOWED, "select panel_borrar_token_slack()")
     assert estado_token(ALLOWED) == [VACIO]
+    assert filas_secretos() == {}
 
 
 def test_the_panel_cannot_read_secretos_directly(people):
-    guardar_token(ALLOWED)
+    guardar_token(ALLOWED, SESION, GALLETA)
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
         as_user(ALLOWED, "select * from secretos")

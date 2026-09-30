@@ -135,7 +135,7 @@ def test_a_reader_without_token_resolves_it_at_call_time(monkeypatch):
     reader = sc.FoundersClubReader()  # no falla al construirse sin token
     seen = []
 
-    def fake_web_client(token):
+    def fake_web_client(token, cookie=None):
         seen.append(token)
         return FakeWebClient()
 
@@ -219,3 +219,43 @@ def test_an_unknown_user_is_its_own_error_but_still_slack_unavailable():
     with pytest.raises(sc.SlackUserNotFound) as caught:
         sc.FoundersClubReader(client=fake).user_profile("UGONE")
     assert isinstance(caught.value, sc.SlackUnavailable)
+
+
+def _capturar_web_client(monkeypatch, token, cookie):
+    """Resuelve el cliente real del lector con esas credenciales y lo devuelve."""
+    monkeypatch.setattr(sc.secretos, "slack_user_token", lambda: token)
+    monkeypatch.setattr(sc.secretos, "slack_d_cookie", lambda: cookie)
+    return sc.FoundersClubReader()._resolve_client()
+
+
+def test_a_session_token_sends_the_d_cookie_header(monkeypatch):
+    client = _capturar_web_client(monkeypatch, "xoxc-1234567890-abcdef", "xoxd-galleta")
+    assert client.token == "xoxc-1234567890-abcdef"
+    assert client.headers["Cookie"] == "d=xoxd-galleta"
+
+
+def test_a_session_token_without_the_cookie_is_an_auth_failure(monkeypatch):
+    monkeypatch.setattr(sc.secretos, "slack_user_token", lambda: "xoxc-1234567890-abcdef")
+    monkeypatch.setattr(sc.secretos, "slack_d_cookie", lambda: None)
+    with pytest.raises(sc.SlackAuthFailed, match="cookie d"):
+        sc.FoundersClubReader().owner_id()
+
+
+def test_an_app_token_sends_no_cookie_even_if_one_is_stored(monkeypatch):
+    client = _capturar_web_client(monkeypatch, "xoxp-1234567890-abcdef", "xoxd-sobra")
+    assert "Cookie" not in client.headers
+
+
+def test_a_refreshed_cookie_rebuilds_the_client(monkeypatch):
+    cookies = iter(["xoxd-vieja", "xoxd-nueva"])
+    monkeypatch.setattr(sc.secretos, "slack_user_token", lambda: "xoxc-1234567890-abcdef")
+    monkeypatch.setattr(sc.secretos, "slack_d_cookie", lambda: next(cookies))
+    reader = sc.FoundersClubReader()
+    assert reader._resolve_client().headers["Cookie"] == "d=xoxd-vieja"
+    assert reader._resolve_client().headers["Cookie"] == "d=xoxd-nueva"
+
+
+def test_an_invalid_auth_alert_says_the_credential_may_have_expired():
+    fake = FakeWebClient(error=SlackApiError("x", {"ok": False, "error": "invalid_auth"}))
+    with pytest.raises(sc.SlackAuthFailed, match="caducado.*Settings del panel"):
+        sc.FoundersClubReader(client=fake).owner_id()
