@@ -265,7 +265,7 @@ def test_vigilar_reads_once_and_resolves(conn, monkeypatch, capsys):
     monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
     fake = FakeReader()
     fake.post("C1", "U1", "hola", "9999999999.000001")
-    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: fake)
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: fake)
     monkeypatch.setattr(cli, "watch_tick", lambda reader, channels, lookback_hours: cli_tick())
     assert cli.main(["vigilar"]) == 0
     assert "mensajes nuevos" in capsys.readouterr().out
@@ -296,7 +296,7 @@ def test_worker_runs_the_loop_with_the_settings(monkeypatch):
     monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1,C2")
     monkeypatch.setenv("SLACK_POLL_SECONDS", "900")
     seen = {}
-    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: FakeReader())
     monkeypatch.setattr(cli, "run_loop", lambda reader, **kwargs: seen.update(kwargs) or 0)
     assert cli.main(["worker"]) == 0
     assert seen["channels"] == ["C1", "C2"]
@@ -308,7 +308,7 @@ def test_worker_leaves_the_httpx_logger_at_warning(monkeypatch):
     alert webhook URL is a credential -- it must never reach the logs."""
     monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
     monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
-    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: FakeReader())
     monkeypatch.setattr(cli, "run_loop", lambda reader, **kwargs: 0)
     assert cli.main(["worker"]) == 0
     assert logging.getLogger("httpx").level == logging.WARNING
@@ -321,7 +321,7 @@ def test_worker_restores_the_previous_signal_handlers_when_the_loop_returns(monk
 
     monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
     monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
-    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: FakeReader())
     monkeypatch.setattr(cli, "run_loop", lambda reader, **kwargs: 0)
 
     previous_int = signal.getsignal(signal.SIGINT)
@@ -338,7 +338,7 @@ def test_worker_restores_the_previous_signal_handlers_when_the_loop_raises(monke
 
     monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
     monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
-    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: FakeReader())
 
     def boom(reader, **kwargs):
         raise RuntimeError("el bucle se rompió")
@@ -410,7 +410,7 @@ def test_a_stop_signal_wakes_the_worker_from_its_sleep(monkeypatch):
 
     monkeypatch.setenv("SLACK_USER_TOKEN", "xoxp-test")
     monkeypatch.setenv("SLACK_CHANNEL_IDS", "C1")
-    monkeypatch.setattr(cli, "FoundersClubReader", lambda token: FakeReader())
+    monkeypatch.setattr(cli, "FoundersClubReader", lambda *a, **k: FakeReader())
     seen = {}
 
     def fake_loop(reader, **kwargs):

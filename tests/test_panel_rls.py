@@ -577,3 +577,64 @@ def test_an_unauthenticated_request_cannot_delete_test_data(people):
     with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
         borrar(None)
     assert simulated() is not None
+
+
+# --- token del Founders Club (0012): solo escritura desde el panel -----------
+
+TOKEN = "xoxp-1234567890-abcdefghij-ab12"
+VACIO = {"configurado": False, "sufijo": None, "actualizado": None, "por": None}
+
+
+def guardar_token(user, token=TOKEN):
+    return as_user(user, "select panel_guardar_token_slack(%s)", (token,))
+
+
+def estado_token(user):
+    return as_user(
+        user, "select configurado, sufijo, actualizado, por from panel_estado_token_slack()"
+    )
+
+
+def test_a_stranger_is_denied_on_the_slack_token_functions(people):
+    for sql, params in [
+        ("select panel_guardar_token_slack(%s)", (TOKEN,)),
+        ("select * from panel_estado_token_slack()", ()),
+        ("select panel_borrar_token_slack()", ()),
+    ]:
+        with pytest.raises(psycopg.errors.RaiseException, match="not authorized"):
+            as_user(STRANGER, sql, params)
+
+
+@pytest.mark.parametrize(
+    ("token", "message"),
+    [
+        ("xoxb-1234567890-abcdefghij-ab12", "must start with xoxp-"),
+        ("xoxp-corto", "too short"),
+    ],
+)
+def test_a_bad_slack_token_is_rejected(people, token, message):
+    with pytest.raises(psycopg.errors.RaiseException, match=message):
+        guardar_token(ALLOWED, token)
+    assert estado_token(ALLOWED)[0]["configurado"] is False
+
+
+def test_saving_the_slack_token_reports_only_its_suffix_and_who(people):
+    assert estado_token(ALLOWED) == [VACIO]
+    guardar_token(ALLOWED, f"  {TOKEN}  ")
+    [fila] = estado_token(ALLOWED)
+    assert (fila["configurado"], fila["sufijo"], fila["por"]) == (True, "ab12", ALLOWED)
+    assert fila["actualizado"] is not None
+    assert TOKEN not in repr(estado_token(ALLOWED))
+    assert db.fetch_one("select value from secretos")["value"] == TOKEN
+
+
+def test_deleting_the_slack_token_clears_it(people):
+    guardar_token(ALLOWED)
+    as_user(ALLOWED, "select panel_borrar_token_slack()")
+    assert estado_token(ALLOWED) == [VACIO]
+
+
+def test_the_panel_cannot_read_secretos_directly(people):
+    guardar_token(ALLOWED)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(ALLOWED, "select * from secretos")

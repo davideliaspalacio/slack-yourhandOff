@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
+import { fecha } from "@/lib/format";
 import { guardarUmbral } from "../acciones";
+import { TokenSlackForm } from "./TokenSlackForm";
 
 const EDITABLES: Record<string, string> = {
   banda_alta_min: "Minimum fit score for the high band (card + SMS)",
@@ -17,9 +19,23 @@ export default async function Ajustes() {
     .in("key", Object.keys(EDITABLES));
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
 
+  // panel_estado_token_slack nunca devuelve el token: solo si hay uno y sus 4 últimos.
+  const { data: estado } = await supabase.rpc("panel_estado_token_slack");
+  const token = Array.isArray(estado) ? estado[0] : estado;
+
   return (
     <>
       <h1>Settings</h1>
+      <section style={{ marginBottom: 24 }}>
+        <h2>Founders Club reader token</h2>
+        <p>
+          {token?.configurado
+            ? `Configured · ends in ${token.sufijo} · updated ${fecha(token.actualizado)} ` +
+              `by ${token.por ?? "unknown"}`
+            : "Not configured — the agent cannot read the Founders Club yet."}
+        </p>
+        <TokenSlackForm configurado={Boolean(token?.configurado)} />
+      </section>
       <p className="notice">The emergency shutdown and the money caps aren&apos;t changed from here,
         on purpose: they&apos;re edited by hand in the database.</p>
       <table>

@@ -149,3 +149,28 @@ export async function salir() {
   await supabase.auth.signOut();
   redirect("/login");
 }
+
+export type TokenSlackState = { error?: string; ok?: boolean };
+
+// El token del Founders Club es de solo escritura: el panel lo manda a
+// panel_guardar_token_slack (0012_token_slack.sql), que valida el prefijo y el
+// largo, y nunca puede leerlo de vuelta (solo el sufijo, con el estado).
+export async function guardarTokenSlack(
+  _previo: TokenSlackState,
+  formData: FormData,
+): Promise<TokenSlackState> {
+  const token = String(formData.get("token") ?? "");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_guardar_token_slack", { p_token: token });
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return { ok: true };
+}
+
+export async function borrarTokenSlack(): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_borrar_token_slack");
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return {};
+}

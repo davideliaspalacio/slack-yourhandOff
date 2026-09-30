@@ -123,9 +123,26 @@ def test_other_slack_errors_are_retryable():
         sc.FoundersClubReader(client=fake).members("C1")
 
 
-def test_a_missing_token_is_an_auth_failure():
+def test_a_missing_token_is_an_auth_failure(monkeypatch):
+    monkeypatch.setattr(sc.secretos, "slack_user_token", lambda: None)
     with pytest.raises(sc.SlackAuthFailed, match="SLACK_USER_TOKEN"):
-        sc.FoundersClubReader(token=None)
+        sc.FoundersClubReader().owner_id()
+
+
+def test_a_reader_without_token_resolves_it_at_call_time(monkeypatch):
+    tokens = iter(["xoxp-primero", "xoxp-segundo"])
+    monkeypatch.setattr(sc.secretos, "slack_user_token", lambda: next(tokens))
+    reader = sc.FoundersClubReader()  # no falla al construirse sin token
+    seen = []
+
+    def fake_web_client(token):
+        seen.append(token)
+        return FakeWebClient()
+
+    monkeypatch.setattr(sc, "_web_client", fake_web_client)
+    assert reader.owner_id() == "UOWNER"
+    assert reader.owner_id() == "UOWNER"
+    assert seen == ["xoxp-primero", "xoxp-segundo"]
 
 
 @pytest.mark.parametrize(

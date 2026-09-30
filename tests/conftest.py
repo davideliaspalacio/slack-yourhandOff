@@ -25,6 +25,7 @@ TABLES_TO_CLEAN = [
     "cost_events",
     "dossiers",
     "prospects",
+    "secretos",
 ]
 
 ENV_THAT_MUST_NOT_LEAK = [

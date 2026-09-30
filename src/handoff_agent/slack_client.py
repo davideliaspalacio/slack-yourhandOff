@@ -17,6 +17,8 @@ from slack_sdk.errors import SlackApiError
 from slack_sdk.http_retry import default_retry_handlers
 from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
 
+from . import secretos
+
 logger = logging.getLogger(__name__)
 
 # No se arreglan reintentando: hace falta una persona (token nuevo o más scopes).
@@ -58,23 +60,43 @@ class UserProfile:
     deleted: bool
 
 
+def _web_client(token: str) -> WebClient:
+    return WebClient(
+        token=token,
+        retry_handlers=[
+            *default_retry_handlers(),
+            RateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES),
+        ],
+    )
+
+
 class FoundersClubReader:
+    """Con `client=` o `token=` explícitos se usa ese. Sin ninguno, el token se
+    resuelve en cada llamada (panel primero, entorno de respaldo) para que uno
+    nuevo pegado en el panel surta efecto en el siguiente sondeo, sin reiniciar."""
+
     def __init__(self, token: str | None = None, client=None) -> None:
-        if client is None:
-            if not token:
-                raise SlackAuthFailed("SLACK_USER_TOKEN no está configurado")
-            client = WebClient(
-                token=token,
-                retry_handlers=[
-                    *default_retry_handlers(),
-                    RateLimitErrorRetryHandler(max_retry_count=RATE_LIMIT_RETRIES),
-                ],
+        self._explicit = client is not None or bool(token)
+        self._client = client if client is not None else (_web_client(token) if token else None)
+        self._current_token: str | None = token or None
+
+    def _resolve_client(self):
+        if self._explicit:
+            return self._client
+        token = secretos.slack_user_token()
+        if not token:
+            raise SlackAuthFailed(
+                "SLACK_USER_TOKEN no está configurado (ni en el panel, en Settings, ni en .env)"
             )
-        self._client = client
+        if token != self._current_token:
+            self._client = _web_client(token)
+            self._current_token = token
+        return self._client
 
     def _call(self, method: str, **kwargs):
+        client = self._resolve_client()
         try:
-            return getattr(self._client, method)(**kwargs)
+            return getattr(client, method)(**kwargs)
         except SlackApiError as exc:
             response = exc.response if exc.response is not None else {}
             error = response.get("error", "") if hasattr(response, "get") else ""

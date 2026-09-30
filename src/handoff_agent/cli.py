@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from . import guards, ledger, ops_alerts, serialize
+from . import guards, ledger, ops_alerts, secretos, serialize
 from .config import load_settings
 from .delivery import digest
 from .ingest import queue
@@ -238,13 +238,17 @@ def cmd_costes(args) -> int:
 
 def _slack_reader(settings):
     """None, con un mensaje claro, si falta configuración de Slack."""
-    if not settings.slack_user_token:
-        print("falta SLACK_USER_TOKEN en .env (token de usuario xoxp del Founders Club)")
+    # El token puede venir del panel (Settings) o del entorno; gana el del panel.
+    if not secretos.slack_user_token():
+        print(
+            "falta el token del Founders Club (xoxp): pégalo en Settings del panel "
+            "o ponlo en SLACK_USER_TOKEN en .env"
+        )
         return None
     if not settings.slack_channel_ids:
         print("falta SLACK_CHANNEL_IDS en .env (IDs de los canales a vigilar, separados por comas)")
         return None
-    return FoundersClubReader(settings.slack_user_token)
+    return FoundersClubReader()
 
 
 def cmd_vigilar(args) -> int:

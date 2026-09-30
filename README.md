@@ -131,7 +131,7 @@ uv run handoff worker    # vigila y procesa sin parar; Ctrl+C para detener
 
 | Variable | Hace falta para | Dónde se saca |
 |---|---|---|
-| `SLACK_USER_TOKEN` | Leer el Slack del Founders Club | api.slack.com/apps → OAuth & Permissions, User OAuth Token |
+| `SLACK_USER_TOKEN` | Leer el Slack del Founders Club (opcional: el panel puede guardarlo, y el valor del panel gana) | api.slack.com/apps → OAuth & Permissions, User OAuth Token |
 | `SLACK_CHANNEL_IDS` | Qué canales vigilar (IDs separados por comas) | el ID de cada canal, empieza por `C` |
 | `SLACK_LOOKBACK_HOURS` | Cuánto mira hacia atrás la primera lectura de un canal | por defecto 1 |
 | `SLACK_POLL_SECONDS` | Cada cuánto vuelve a leer `handoff worker` | por defecto 3600 |
@@ -195,7 +195,7 @@ Las migraciones no se aplican al desplegar: se suben con `supabase db push`.
 |---|---|---|
 | `DATABASE_URL` | Sí | Cadena **Session pooler** de Supabase Cloud (*Connect* en el panel). La conexión directa no funciona en redes solo IPv4. |
 | `OPENAI_API_KEY` | Sí | Clave de producción, no la de desarrollo. |
-| `SLACK_USER_TOKEN` | Sí | Token `xoxp` de solo lectura. Sin él, el worker explica qué falta y sale. |
+| `SLACK_USER_TOKEN` | No | Token `xoxp` de solo lectura. Opcional: se puede pegar en Settings del panel, y el valor del panel gana sobre este. Sin ninguno de los dos, el worker explica qué falta y sale. |
 | `SLACK_CHANNEL_IDS` | Sí | IDs de canal separados por comas. |
 | `SERPER_API_KEY` | Sí, salvo que se despliegue SearXNG | `SEARXNG_URL` apunta por defecto a `127.0.0.1`, que en Railway no existe: sin Serper no hay búsqueda. |
 | `HANDOFF_ALERT_WEBHOOK_URL` | Recomendada | Sin ella los avisos solo quedan en los logs. |
