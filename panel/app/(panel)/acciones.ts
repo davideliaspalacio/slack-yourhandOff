@@ -153,7 +153,7 @@ export async function salir() {
 export type TokenSlackState = { error?: string; ok?: boolean };
 
 // El token del Founders Club es de solo escritura: el panel lo manda a
-// panel_guardar_token_slack (0012_token_slack.sql), que valida el prefijo y el
+// panel_guardar_token_slack (0014_token_slack.sql), que valida el prefijo y el
 // largo, y nunca puede leerlo de vuelta (solo el sufijo, con el estado).
 export async function guardarTokenSlack(
   _previo: TokenSlackState,
