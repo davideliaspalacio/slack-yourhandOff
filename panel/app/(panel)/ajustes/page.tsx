@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { fecha } from "@/lib/format";
+import { fecha, minutosDesde } from "@/lib/format";
 import { guardarPausaUnipile, guardarUmbral } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { TokenSlackForm } from "./TokenSlackForm";
@@ -22,6 +22,15 @@ const EDITABLES_RADAR: Record<string, string> = {
   radar_horas_entre_escaneos: "Hours between scans of the same account",
   unipile_busquedas_por_dia: "Maximum LinkedIn (Unipile) searches per day",
   unipile_perfiles_por_dia: "Maximum LinkedIn (Unipile) profile lookups per day",
+};
+
+// Latido del lector de Slack (0018_estado_lector.sql): lo escribe el worker en
+// cada sondeo. Pasado este tiempo sin latido, "ok" ya no es de fiar.
+const LATIDO_CADUCADO_MIN = 15;
+
+type Latido = {
+  ok?: boolean; en?: string; usuario?: string; equipo?: string; canales?: number;
+  error?: string; detalle?: string;
 };
 
 // Medianoche de hoy en la zona de Unipile, como instante UTC: el mismo "hoy"
@@ -51,12 +60,21 @@ function inicioDelDia(zona: string): string {
 export default async function Ajustes() {
   const supabase = await createClient();
   const { data } = await supabase.from("config").select("key, value, updated_at")
-    .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR), "unipile_pausado", "unipile_zona", "slack_channel_ids"]);
+    .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR), "unipile_pausado", "unipile_zona", "slack_channel_ids",
+      "lector_estado"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
   const canalesValor = valores.get("slack_channel_ids");
   const canales = Array.isArray(canalesValor)
     ? canalesValor.filter((c): c is string => typeof c === "string")
     : [];
+  const latidoValor = valores.get("lector_estado");
+  const latido: Latido | null =
+    latidoValor && typeof latidoValor === "object" && !Array.isArray(latidoValor) &&
+    typeof (latidoValor as Latido).en === "string"
+      ? (latidoValor as Latido)
+      : null;
+  const latidoCaducado = latido?.ok === true && latido.en !== undefined &&
+    minutosDesde(latido.en) > LATIDO_CADUCADO_MIN;
   const pausado = valores.get("unipile_pausado") === true;
   const zona = String(valores.get("unipile_zona") ?? "America/New_York");
   const desde = inicioDelDia(zona);
@@ -102,6 +120,23 @@ export default async function Ajustes() {
           <p className="notice">
             A browser session expires every few days; paste a fresh one when the agent reports it
             can no longer read.
+          </p>
+        )}
+        {!latido ? (
+          <p className="muted">The worker has not polled yet.</p>
+        ) : latido.ok ? (
+          <p>
+            Last successful read: {fecha(latido.en)}
+            {latido.equipo ? ` · workspace ${latido.equipo}` : ""}
+            {typeof latido.canales === "number"
+              ? ` · ${latido.canales} ${latido.canales === 1 ? "channel" : "channels"}`
+              : ""}
+            {latidoCaducado && " (stale — the worker may be down)"}
+          </p>
+        ) : (
+          <p className="notice error">
+            Reading failed {fecha(latido.en)} — {latido.error ?? "unknown error"}. If the session
+            expired, paste a fresh token and cookie.
           </p>
         )}
         <TokenSlackForm configurado={Boolean(token?.configurado)} />

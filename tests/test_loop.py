@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from handoff_agent import guards
@@ -7,6 +9,9 @@ from handoff_agent.ingest.resolver import ResolveResult
 from handoff_agent.ingest.watcher import TickResult
 from handoff_agent.slack_client import SlackAuthFailed
 from tests.slack_fakes import FakeReader
+
+REAL_REGISTRAR_OK = loop.estado_lector.registrar_ok
+REAL_REGISTRAR_FALLO = loop.estado_lector.registrar_fallo
 
 
 class FakeClock:
@@ -24,7 +29,7 @@ class FakeClock:
 
 @pytest.fixture
 def wiring(monkeypatch):
-    calls = {"watch": 0, "alerts": [], "radar": 0, "decisor": 0}
+    calls = {"watch": 0, "alerts": [], "radar": 0, "decisor": 0, "ok": [], "fallos": []}
 
     def radar_tick(**kwargs):
         calls["radar"] += 1
@@ -46,6 +51,9 @@ def wiring(monkeypatch):
     # Ni OpenAI ni Unipile de verdad: el decisor también se sustituye.
     monkeypatch.setattr(loop.decisor, "procesar_pendientes", decisor_tick)
     monkeypatch.setattr(loop.ops_alerts, "alert", lambda kind, msg: calls["alerts"].append(kind))
+    # El latido no escribe en la base desde estos tests: se anota lo que se habría escrito.
+    monkeypatch.setattr(loop.estado_lector, "registrar_ok", lambda *a: calls["ok"].append(a))
+    monkeypatch.setattr(loop.estado_lector, "registrar_fallo", lambda e: calls["fallos"].append(e))
     return calls
 
 
@@ -268,3 +276,54 @@ def test_a_system_stop_in_the_decisor_is_not_a_cycle_failure(wiring, monkeypatch
     monkeypatch.setattr(loop.decisor, "procesar_pendientes", stopped)
     assert run(FakeClock(), max_cycles=1) == 1
     assert "ciclo_fallido" not in wiring["alerts"]
+
+
+# -- latido del lector (estado_lector) --
+
+
+def test_a_successful_poll_writes_the_heartbeat_with_user_team_and_channels(wiring, monkeypatch):
+    monkeypatch.setattr(
+        loop,
+        "watch_tick",
+        lambda *a: TickResult(user_id="UANTHONY", team="Handoff", channels_read=3),
+    )
+    run(FakeClock(), max_cycles=1)
+    assert wiring["ok"] == [("UANTHONY", "Handoff", 3)]
+    assert wiring["fallos"] == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        SlackAuthFailed("invalid_auth"),
+        UnicodeEncodeError("latin-1", "…", 0, 1, "ordinal not in range"),
+    ],
+)
+def test_a_failing_poll_writes_the_heartbeat_and_still_follows_the_usual_path(
+    wiring, monkeypatch, error
+):
+    def boom(*a):
+        raise error
+
+    monkeypatch.setattr(loop, "watch_tick", boom)
+    run(FakeClock(), max_cycles=1)
+    assert wiring["fallos"] == [error]
+    assert wiring["ok"] == []
+    # SlackAuthFailed sigue avisando; lo demás, por la vía del ciclo fallido.
+    expected = "slack_auth" if isinstance(error, SlackAuthFailed) else "ciclo_fallido"
+    assert wiring["alerts"] == [expected]
+
+
+def test_a_heartbeat_write_that_raises_does_not_break_the_loop(wiring, monkeypatch):
+    # Con el escritor real y la base rota: el sondeo, la cola y el radar siguen.
+    monkeypatch.setattr(loop.estado_lector, "registrar_ok", REAL_REGISTRAR_OK)
+    monkeypatch.setattr(loop.estado_lector, "registrar_fallo", REAL_REGISTRAR_FALLO)
+
+    def broken(*a, **k):
+        raise RuntimeError("base caída")
+
+    # Solo el módulo del latido ve la base rota; el resto del bucle no la toca.
+    monkeypatch.setattr(loop.estado_lector, "db", SimpleNamespace(execute=broken))
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert wiring["alerts"] == []
+    assert wiring["radar"] == 2

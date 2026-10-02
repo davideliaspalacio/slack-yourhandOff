@@ -14,10 +14,13 @@ class FakeReader:
         self.history_calls: list[tuple[str, str]] = []
 
     # --- la misma superficie que FoundersClubReader ---
-    def owner_id(self) -> str:
+    def identity(self) -> tuple[str, str]:
         if self.auth_error:
             raise self.auth_error
-        return self.owner
+        return self.owner, "Handoff"
+
+    def owner_id(self) -> str:
+        return self.identity()[0]
 
     def history(self, channel: str, oldest: str) -> list[dict]:
         self.history_calls.append((channel, oldest))

@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 
-from .. import guards, ops_alerts
+from .. import estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
 from ..research.worker import SYSTEM_STOPS
 from ..slack_client import SlackAuthFailed
@@ -121,7 +121,14 @@ def run_loop(
                 try:
                     # Un callable se resuelve en cada sondeo (los canales del panel).
                     current = list(channels() if callable(channels) else channels)
-                    tick = watch_tick(reader, current, lookback_hours)
+                    try:
+                        tick = watch_tick(reader, current, lookback_hours)
+                    except Exception as exc:
+                        # El latido va aparte del aviso: lo lee el panel, no el equipo
+                        # de operaciones. Se vuelve a lanzar tal cual.
+                        estado_lector.registrar_fallo(exc)
+                        raise
+                    estado_lector.registrar_ok(tick.user_id, tick.team, tick.channels_read)
                     resolved = resolve_pending()
                     logger.info(
                         "slack: %d mensajes nuevos, %d miembros nuevos; %d encolados",

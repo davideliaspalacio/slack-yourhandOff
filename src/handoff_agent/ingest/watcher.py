@@ -41,6 +41,9 @@ class TickResult:
     messages_new: int = 0
     messages_ignored: int = 0
     members_new: int = 0
+    user_id: str = ""
+    team: str = ""
+    channels_read: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -119,7 +122,8 @@ def watch_tick(
 ) -> TickResult:
     """Read every channel once. SlackAuthFailed propagates: it needs a person."""
     result = TickResult()
-    owner_id = reader.owner_id()
+    owner_id, result.team = reader.identity()
+    result.user_id = owner_id
     for channel in channels:
         try:
             history = reader.history(channel, oldest=_oldest(channel, lookback_hours, now))
@@ -138,6 +142,7 @@ def watch_tick(
                     else:
                         result.messages_ignored += 1
             _diff_members(reader, channel, owner_id, result)
+            result.channels_read += 1
         except SlackUnavailable as exc:
             result.errors.append(f"{channel}: {exc}")
     return result

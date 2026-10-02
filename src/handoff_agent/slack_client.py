@@ -126,9 +126,14 @@ class FoundersClubReader:
                 f"{method}: sin conexión con Slack: {type(exc).__name__}: {exc}"
             ) from exc
 
+    def identity(self) -> tuple[str, str]:
+        """(user_id, team) del token, de una sola llamada a auth.test."""
+        response = self._call("auth_test")
+        return response["user_id"], response.get("team") or ""
+
     def owner_id(self) -> str:
         """The member whose token this is (Anthony, in production)."""
-        return self._call("auth_test")["user_id"]
+        return self.identity()[0]
 
     def history(self, channel: str, oldest: str) -> list[dict]:
         messages: list[dict] = []

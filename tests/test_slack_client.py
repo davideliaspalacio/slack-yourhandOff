@@ -42,7 +42,7 @@ class FakeWebClient:
 
     def auth_test(self, **kwargs):
         self._record("auth_test", kwargs)
-        return {"ok": True, "user_id": "UOWNER"}
+        return {"ok": True, "user_id": "UOWNER", "team": "Handoff"}
 
     def conversations_history(self, **kwargs):
         self._record("conversations_history", kwargs)
@@ -64,7 +64,13 @@ class FakeWebClient:
 def test_the_reader_only_exposes_reads():
     """El agente nunca escribe en el Founders Club: la superficie queda fijada."""
     public = {name for name in dir(sc.FoundersClubReader) if not name.startswith("_")}
-    assert public == {"owner_id", "history", "members", "user_profile", "permalink"}
+    assert public == {"identity", "owner_id", "history", "members", "user_profile", "permalink"}
+
+
+def test_identity_returns_user_and_team_and_owner_id_still_works():
+    reader = sc.FoundersClubReader(client=FakeWebClient())
+    assert reader.identity() == ("UOWNER", "Handoff")
+    assert reader.owner_id() == "UOWNER"
 
 
 def test_history_follows_cursors_across_pages():

@@ -7,7 +7,7 @@ Cada subcomando dispara el mismo código de producción que corre en real —
 `delivery.digest`, el receptor de botones de `web/app.py` — nunca una copia
 simplificada. Lo único que cambia es de dónde sale el "perfil de Slack": en
 vez de `FoundersClubReader` (que sí llama a Slack), `OfflineReader` da la
-misma superficie (`owner_id`, `history`, `members`, `user_profile`,
+misma superficie (`identity`, `owner_id`, `history`, `members`, `user_profile`,
 `permalink`) a partir de lo que ya hay en la base y de lo que se pasó por
 línea de comandos. Nunca importa `slack_sdk`.
 
@@ -125,6 +125,9 @@ class OfflineReader:
         self._members[channel] = set(user_ids)
 
     # --- la misma superficie que FoundersClubReader ---
+
+    def identity(self) -> tuple[str, str]:
+        return self._owner_id, "Simulado"
 
     def owner_id(self) -> str:
         return self._owner_id

@@ -88,6 +88,10 @@ export const hace = (iso: string | null | undefined) => {
   return "just now";
 };
 
+// Minutos enteros desde una fecha (el latido del lector de Slack, en Ajustes).
+export const minutosDesde = (iso: string) =>
+  Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+
 // Días enteros desde una fecha: cuánto lleva abierta una vacante.
 export const diasDesde = (iso: string) =>
   Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
