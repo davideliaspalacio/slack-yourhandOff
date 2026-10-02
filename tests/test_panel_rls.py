@@ -761,3 +761,12 @@ def test_the_channels_row_cannot_be_edited_directly_from_the_panel(people, resto
         "update config set value = '[\"C0HACKED1\"]'::jsonb where key = 'slack_channel_ids'",
     )
     assert canales_guardados() == []
+
+
+def test_a_truncated_credential_is_refused(people):
+    """Copiar de la vista recortada de Chrome trae "…" en medio: con eso el
+    worker reventaba al montar la cabecera Cookie y no se recuperaba solo."""
+    with pytest.raises(psycopg.errors.RaiseException, match="truncated"):
+        as_user(ALLOWED, "select panel_guardar_token_slack('xoxc-123456789012345', 'xoxd-a…b')")
+    with pytest.raises(psycopg.errors.RaiseException, match="truncated"):
+        as_user(ALLOWED, "select panel_guardar_token_slack('xoxc-abc…defghijklmnop', 'xoxd-abc')")
