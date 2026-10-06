@@ -30,6 +30,20 @@ TEAM_NOTES_INSTRUCTION = (
     'el dossier sigue necesitando su propia fuente citada en "fuente"/"fuentes": estas '
     "notas nunca son una fuente, aunque digan algo con lo que la evidencia esté de acuerdo."
 )
+# Los mensajes los escribió la propia persona en la comunidad: son lo que ella
+# dice, no un hecho verificado. La instrucción va fuera del delimitador y la
+# parte de la necesidad explícita vive aquí y no en SYSTEM_PROMPT, que es el
+# prefijo cacheado y no cambia entre personas.
+MENSAJES_INSTRUCTION = (
+    "Lo siguiente son mensajes que esta persona escribió en la comunidad: es lo que ella "
+    "dice, no un hecho verificado. Pueden orientar "
+    '"encaje_handoff.razon" y "huecos", y una necesidad explícita y actual que Handoff '
+    "cubre (soporte, operaciones, asistentes ejecutivos, back-office, ventas internas, "
+    "reclutamiento, contabilidad, desarrolladores de software) es una señal fuerte de "
+    "encaje aunque la web de la empresa no muestre nada -- pero nunca se citan en "
+    '"fuente"/"fuentes", y nada que solo aparezca en un mensaje puede ir en "empresa", '
+    '"contratacion" ni "senales_contexto".'
+)
 TEAM_LINKEDIN_HEADER = "LinkedIn profiles provided by the team (not fetched):"
 
 PROVEEDOR_INSTRUCTION = (
@@ -165,6 +179,10 @@ def build_prompt(
         lines.append("")
         lines.append(TEAM_LINKEDIN_HEADER)
         lines.extend(f"- {link}" for link in gathered.team_links)
+    if gathered.mensajes:
+        lines.append("")
+        lines.append(MENSAJES_INSTRUCTION)
+        lines.append(untrusted.fence("\n---\n".join(gathered.mensajes), "mensajes"))
     if problems:
         lines.append("\nTu respuesta anterior se rechazó por estos problemas. Corrígelos:")
         lines.extend(f"- {problem}" for problem in problems)

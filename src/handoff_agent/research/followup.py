@@ -59,4 +59,6 @@ def run_followup(prospect_id: str, gathered: Gathered, queries: list[str]) -> Ga
         # en la evidencia (o listados) desde la primera pasada.
         team_links=gathered.team_links,
         team_notes=gathered.team_notes,
+        # Los mensajes de la persona tampoco cambian entre pasadas.
+        mensajes=gathered.mensajes,
     )

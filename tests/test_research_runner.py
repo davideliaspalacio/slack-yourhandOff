@@ -29,6 +29,7 @@ def stub_research(monkeypatch, error=None):
         force=False,
         extra_links=(),
         notes=None,
+        mensajes=(),
     ):
         seen.append(
             {
@@ -38,6 +39,7 @@ def stub_research(monkeypatch, error=None):
                 "slack_user_id": slack_user_id,
                 "extra_links": extra_links,
                 "notes": notes,
+                "mensajes": mensajes,
             }
         )
         if error:
@@ -68,6 +70,7 @@ def test_a_job_is_researched_with_what_the_profile_tells_us(conn, reader, monkey
             "slack_user_id": "U1",
             "extra_links": (),
             "notes": None,
+            "mensajes": (),
         }
     ]
     assert job()["status"] == "hecho"
@@ -167,6 +170,7 @@ def test_a_manual_job_forces_research_but_a_mensaje_job_does_not(conn, reader, m
         force=False,
         extra_links=(),
         notes=None,
+        mensajes=(),
     ):
         seen_force.append(force)
         return ResearchOutcome("pid", slack_user_id, "investigado", 1, Decimal("0.02"), None)
@@ -406,6 +410,7 @@ def test_without_a_slack_profile_it_researches_with_what_is_stored(conn, reader,
             "slack_user_id": "UGONE",
             "extra_links": (),
             "notes": None,
+            "mensajes": (),
         }
     ]
     assert job()["status"] == "hecho"
@@ -479,3 +484,42 @@ def test_a_stored_domain_is_not_trusted_for_slack_people(conn, monkeypatch):
     seen = stub_research(monkeypatch)
     runner.run_next_job(FakeReader())
     assert seen[0]["domain"] is None
+
+
+def say(user: str, ts_ago_hours: float, text: str, status: str = "pendiente_scoring") -> None:
+    """Un mensaje guardado hace `ts_ago_hours` horas."""
+    ahora = db.fetch_one("select extract(epoch from now()) as t")["t"]
+    ts = float(ahora) - ts_ago_hours * 3600
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text, status) "
+        "values ('C1', %s, %s, %s, %s)",
+        (f"{ts:.6f}", user, text, status),
+    )
+
+
+def test_the_last_five_recent_messages_go_to_the_research_oldest_first(conn, reader, monkeypatch):
+    for n in range(7):  # 7 mensajes en 7 horas: se quedan los 5 más recientes
+        say("U1", 7 - n, f"msg {n}")
+    say("U1", 1.5, "ruido", status="ignorado")
+    say("U1", 49, "demasiado viejo")
+    say("U2", 1, "de otra persona")
+    say("U1", 0.5, "   ")  # sin texto: no cuenta
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["mensajes"] == ("msg 2", "msg 3", "msg 4", "msg 5", "msg 6")
+
+
+def test_a_person_without_messages_passes_an_empty_tuple(conn, reader, monkeypatch):
+    queue.enqueue("U1", "miembro_nuevo")
+    seen = stub_research(monkeypatch)
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen[0]["mensajes"] == ()
+
+
+def test_a_very_long_message_is_trimmed(conn, reader, monkeypatch):
+    say("U1", 1, "x" * 5_000)
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+    runner.run_next_job(reader)
+    assert len(seen[0]["mensajes"][0]) == runner.MAX_CHARS_MENSAJE

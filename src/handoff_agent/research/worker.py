@@ -146,6 +146,9 @@ def research_person(
     # al modelo como orientación, nunca como fuente.
     extra_links: Sequence[str] = (),
     notes: str | None = None,
+    # Lo que la persona escribió en la comunidad (del más antiguo al más
+    # reciente): contexto para la síntesis, nunca una fuente.
+    mensajes: Sequence[str] = (),
 ) -> ResearchOutcome:
     if not (full_name or company):
         raise ValueError("hace falta al menos un nombre o una empresa")
@@ -179,7 +182,15 @@ def research_person(
     gathered = None
     try:
         with budget:
-            gathered = gather(pid, full_name, company, domain, extra_links=extra_links, notes=notes)
+            gathered = gather(
+                pid,
+                full_name,
+                company,
+                domain,
+                extra_links=extra_links,
+                notes=notes,
+                mensajes=mensajes,
+            )
             result = synthesize(pid, full_name, company, gathered, budget=budget)
             # Desde aquí hay un dossier válido y pagado: todo camino lo guarda.
             first_result, first_gathered = result, gathered

@@ -691,3 +691,18 @@ def test_no_extra_links_or_notes_leave_defaults_empty(monkeypatch):
     result = g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com")
     assert result.team_links == []
     assert result.team_notes is None
+
+
+def test_messages_are_carried_into_the_result(monkeypatch):
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    result = g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com", mensajes=["first", "second"])
+    assert result.mensajes == ("first", "second")
+
+
+def test_no_messages_leave_an_empty_tuple(monkeypatch):
+    monkeypatch.setattr(g.search, "buscar_web", fake_search())
+    monkeypatch.setattr(g.web, "leer_sitio", fake_page())
+    monkeypatch.setattr(g.jobs, "buscar_ofertas", lambda company, limit=20, prospect_id=None: [])
+    assert g.gather("pid", "Ada Ruiz", "Acme", domain="acme.com").mensajes == ()

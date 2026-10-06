@@ -28,6 +28,19 @@ class ResolveResult:
     failed: int = 0
 
 
+def _not_before(user_id: str):
+    """Cuándo se puede reclamar el research disparado por un mensaje: el ts del
+    último mensaje de la persona más la espera configurada. Así el research lee
+    el hilo entero y no solo el primer mensaje. Si ese instante ya pasó (el
+    lector llegó tarde), la tarea se puede reclamar enseguida."""
+    row = db.fetch_one(
+        "select to_timestamp(max(ts::numeric)) + %s * interval '1 second' as listo "
+        "from slack_messages where user_id = %s and status <> 'ignorado'",
+        (queue.message_wait_seconds(), user_id),
+    )
+    return row["listo"] if row else None
+
+
 def resolve_pending(limit: int = BATCH) -> ResolveResult:
     result = ResolveResult()
     # Two concurrent runs are safe because queue.enqueue de-duplicates open jobs
@@ -55,8 +68,10 @@ def resolve_pending(limit: int = BATCH) -> ResolveResult:
                 status = "archivado"
                 result.archived += 1
             else:
+                # Si ya hay una tarea abierta, enqueue no crea otra: los mensajes
+                # que lleguen mientras espera los lee el research al ejecutarse.
                 if (person is None or person["state"] in RESEARCH_AGAIN) and queue.enqueue(
-                    row["user_id"], "mensaje"
+                    row["user_id"], "mensaje", not_before=_not_before(row["user_id"])
                 ):
                     result.enqueued += 1
                 status = "pendiente_scoring"

@@ -19,7 +19,7 @@ from tests.test_gather import fake_page, fake_search
 from tests.test_synthesize import ScriptedOpenAI
 
 
-def stub_gather(pid, full_name, company, domain=None, extra_links=(), notes=None):
+def stub_gather(pid, full_name, company, domain=None, extra_links=(), notes=None, mensajes=()):
     return Gathered("acme.com", [Evidence("home", "https://acme.com/", "Acme", "t")], [], [])
 
 
@@ -207,7 +207,7 @@ def test_a_followup_crash_keeps_the_first_dossier(conn, pipeline):
 
 
 def gather_with(errors, attempted, answered):
-    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None):
+    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None, mensajes=()):
         return Gathered(
             "acme.com",
             [Evidence("home", "https://acme.com/", "Acme", "t")],
@@ -288,7 +288,9 @@ def test_a_person_discarded_mid_run_stays_discarded(conn, pipeline):
 
 
 def test_stored_sources_record_their_provenance(conn, pipeline):
-    def gather_with_a_job(pid, full_name, company, domain=None, extra_links=(), notes=None):
+    def gather_with_a_job(
+        pid, full_name, company, domain=None, extra_links=(), notes=None, mensajes=()
+    ):
         return Gathered(
             "acme.com",
             [Evidence("home", "https://acme.com/", "Acme", "t")],
@@ -556,7 +558,7 @@ def test_a_first_pass_stop_saves_nothing_and_says_so(conn, pipeline):
 
 
 def gather_with_provider(proveedor):
-    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None):
+    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None, mensajes=()):
         return Gathered(
             "acme.com",
             [Evidence("home", "https://acme.com/", "Acme", "t")],
@@ -604,7 +606,7 @@ def test_store_omits_datos_proveedor_when_there_is_none(conn, pipeline):
 
 
 def gather_with_unconfirmed_domain(unconfirmed_domain):
-    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None):
+    def fake(pid, full_name, company, domain=None, extra_links=(), notes=None, mensajes=()):
         return Gathered(
             None,
             [Evidence("home", "https://acme.com/", "Acme", "t")],
@@ -668,3 +670,16 @@ def test_a_discarded_guess_does_not_overwrite_the_stored_company_domain(conn, pi
         "select company_domain from prospects where id = %s", (first.prospect_id,)
     )
     assert person["company_domain"] == "acme.com"
+
+
+def test_the_messages_reach_gather(conn, pipeline):
+    seen = {}
+
+    def gather_spy(pid, full_name, company, domain=None, extra_links=(), notes=None, mensajes=()):
+        seen["mensajes"] = mensajes
+        return stub_gather(pid, full_name, company)
+
+    pipeline.setattr(w, "gather", gather_spy)
+    pipeline.setattr(w, "synthesize", synth_returning(make_dossier()))
+    w.research_person("Ada Ruiz", "Acme", mensajes=("we need an EA",))
+    assert seen["mensajes"] == ("we need an EA",)

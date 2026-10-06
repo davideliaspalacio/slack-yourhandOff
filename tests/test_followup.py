@@ -141,3 +141,14 @@ def test_run_followup_keeps_no_team_links_or_notes_as_empty(monkeypatch):
     enriched = f.run_followup("pid", base(), ["x"])
     assert enriched.team_links == []
     assert enriched.team_notes is None
+
+
+def test_run_followup_carries_the_messages_unchanged(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    start = Gathered("acme.com", [], [], [], mensajes=("hiring 2 CS reps", "and an EA"))
+    assert f.run_followup("pid", start, ["x"]).mensajes == ("hiring 2 CS reps", "and an EA")
+
+
+def test_run_followup_keeps_no_messages_as_empty(monkeypatch):
+    monkeypatch.setattr(f.search, "buscar_web", lambda q, limit=5, prospect_id=None: [])
+    assert f.run_followup("pid", base(), ["x"]).mensajes == ()

@@ -1,5 +1,6 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -343,3 +344,33 @@ def test_hourly_limit_falls_back_to_default_for_bad_config_values(conn):
 def test_the_radar_can_enqueue_research(conn):
     assert queue.enqueue("li:ACoAA1", "radar") is True
     assert db.fetch_one("select reason from research_jobs")["reason"] == "radar"
+
+
+def test_a_job_with_not_before_is_not_claimable_until_then(conn):
+    soon = datetime.now(UTC) + timedelta(hours=1)
+    assert queue.enqueue("U1", "mensaje", not_before=soon) is True
+    assert queue.claim_next() is None
+    db.execute("update research_jobs set not_before = now() - interval '1 second'")
+    assert queue.claim_next()["slack_user_id"] == "U1"
+
+
+@pytest.mark.parametrize("reason", ["miembro_nuevo", "manual", "radar", "mensaje"])
+def test_a_job_without_not_before_is_claimable_at_once(conn, reason):
+    queue.enqueue("U1", reason)
+    assert db.fetch_one("select not_before from research_jobs")["not_before"] is None
+    assert queue.claim_next()["slack_user_id"] == "U1"
+
+
+def test_message_wait_defaults_to_sixty_seconds(conn):
+    assert queue.message_wait_seconds() == 60
+
+
+@pytest.mark.parametrize("bad", ["true", "-5", "1.5", '"x"', "null"])
+def test_message_wait_ignores_invalid_config(restore_config, bad):
+    db.execute("update config set value = %s::jsonb where key = 'espera_mensajes_segundos'", (bad,))
+    assert queue.message_wait_seconds() == 60
+
+
+def test_message_wait_reads_the_config_value(restore_config):
+    db.execute("update config set value = '0'::jsonb where key = 'espera_mensajes_segundos'")
+    assert queue.message_wait_seconds() == 0

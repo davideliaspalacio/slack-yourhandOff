@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 
 from .. import db
 
@@ -35,19 +36,26 @@ REASONS = ("mensaje", "miembro_nuevo", "manual", "radar")
 # LinkedIn con este prefijo (spec del radar, §4).
 PREFIJO_LINKEDIN = "li:"
 DEFAULT_HOURLY_LIMIT = 20
+# Espera (migración 0019) entre el último mensaje de una persona y su research.
+# Es un suelo: el lector de Slack ya sondea cada ~2 min, no se suma a eso.
+DEFAULT_MESSAGE_WAIT_SECONDS = 60
 STALE_AFTER_MINUTES = 30
 
 
-def enqueue(slack_user_id: str, reason: str) -> bool:
-    """Queue research for a person. False if they already have an open job."""
+def enqueue(slack_user_id: str, reason: str, not_before: datetime | None = None) -> bool:
+    """Queue research for a person. False if they already have an open job.
+
+    `not_before` (opcional) retrasa cuándo se puede reclamar; sin él, la tarea
+    se reclama enseguida, como siempre.
+    """
     if reason not in REASONS:
         raise ValueError(f"motivo desconocido: {reason!r}")
     inserted = db.execute(
         """
-        insert into research_jobs (slack_user_id, reason) values (%s, %s)
+        insert into research_jobs (slack_user_id, reason, not_before) values (%s, %s, %s)
         on conflict (slack_user_id) where status in ('pendiente', 'en_curso') do nothing
         """,
-        (slack_user_id, reason),
+        (slack_user_id, reason, not_before),
     )
     return inserted == 1
 
@@ -208,6 +216,23 @@ def hourly_limit() -> int:
         return value
     logger.warning("hourly_limit: valor de config inválido: %r", value)
     return DEFAULT_HOURLY_LIMIT
+
+
+def message_wait_seconds() -> int:
+    """Segundos que se esperan tras el último mensaje antes de investigar.
+
+    Misma desconfianza que hourly_limit: config.value es jsonb, y solo un int
+    real, no booleano y no negativo se acepta; lo demás avisa y usa el valor
+    por defecto.
+    """
+    row = db.fetch_one("select value from config where key = 'espera_mensajes_segundos'")
+    if row is None:
+        return DEFAULT_MESSAGE_WAIT_SECONDS
+    value = row["value"]
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    logger.warning("message_wait_seconds: valor de config inválido: %r", value)
+    return DEFAULT_MESSAGE_WAIT_SECONDS
 
 
 def status_counts() -> dict[str, int]:

@@ -60,6 +60,35 @@ def _prospect_overrides(slack_user_id: str) -> dict | None:
     )
 
 
+# Los mensajes de la persona que entran como contexto del research: como mucho
+# los últimos 5, de las últimas 48 h, y cada uno recortado (un mensaje pegado
+# de un documento no debe inflar el prompt).
+MAX_MENSAJES = 5
+HORAS_MENSAJES = 48
+MAX_CHARS_MENSAJE = 2_000
+
+
+def _person_messages(slack_user_id: str) -> tuple[str, ...]:
+    """Lo que esta persona escribió hace poco en la comunidad, del más antiguo
+    al más reciente. Los ignorados (ruido del lector) y los mensajes sin texto
+    no cuentan. Sin mensajes devuelve () y el research queda como siempre."""
+    rows = db.fetch_all(
+        """
+        select left(text, %s) as text from (
+            select text, ts from slack_messages
+            where user_id = %s and status <> 'ignorado'
+              and btrim(coalesce(text, '')) <> ''
+              and ts::numeric > extract(epoch from now()) - %s * 3600
+            order by ts::numeric desc
+            limit %s
+        ) recientes
+        order by ts::numeric
+        """,
+        (MAX_CHARS_MENSAJE, slack_user_id, HORAS_MENSAJES, MAX_MENSAJES),
+    )
+    return tuple(row["text"] for row in rows)
+
+
 @dataclass(frozen=True)
 class RunResult:
     # limitado | hecho | omitido | reintento | fallido | detenido | descartado
@@ -153,6 +182,7 @@ def run_next_job(reader) -> RunResult | None:
             force=(job["reason"] == "manual"),
             extra_links=extra_links,
             notes=notes,
+            mensajes=_person_messages(uid),
         )
     except worker.SYSTEM_STOPS:
         queue.release(job)

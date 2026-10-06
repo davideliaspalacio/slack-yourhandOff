@@ -105,6 +105,9 @@ class Gathered:
     # Notas libres del equipo sobre esta persona o empresa (`research_notes`,
     # mismo panel): orientan la síntesis, nunca son una fuente citable.
     team_notes: str | None = None
+    # Lo que la persona escribió en la comunidad (más antiguo primero). Es lo
+    # que ella dice, no un hecho verificado: orienta la síntesis, no se cita.
+    mensajes: tuple[str, ...] = ()
 
     @property
     def sources(self) -> set[str]:
@@ -318,6 +321,7 @@ def gather(
     domain: str | None = None,
     extra_links: Sequence[str] = (),
     notes: str | None = None,
+    mensajes: Sequence[str] = (),
 ) -> Gathered:
     evidence: list[Evidence] = []
     errors: list[str] = []
@@ -398,4 +402,5 @@ def gather(
         unconfirmed_domain=unconfirmed_domain,
         team_links=team_links,
         team_notes=notes,
+        mensajes=tuple(mensajes),
     )
