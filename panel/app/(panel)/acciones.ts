@@ -18,6 +18,7 @@ export async function cambiarEstado(formData: FormData) {
     .eq("id", id);
   revalidatePath(`/personas/${id}`);
   revalidatePath("/personas");
+  revalidatePath("/");
 }
 
 export async function volverAInvestigar(formData: FormData) {

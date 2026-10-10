@@ -25,7 +25,7 @@ export default function Login() {
       return;
     }
     // La sesión ya está en las cookies: el proxy la lee en la siguiente petición.
-    router.replace("/personas");
+    router.replace("/");
     router.refresh();
   }
 

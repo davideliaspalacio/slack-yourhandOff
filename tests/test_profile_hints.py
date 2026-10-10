@@ -192,3 +192,36 @@ def test_a_work_email_gives_the_company_domain(email, domain):
 )
 def test_formally_treated_like_formerly_in_both_positions(title):
     assert ph.company_from_title(title) is None
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # A pasted link is not a company: neither the full URL nor a share fragment.
+        "Founder @ youtube.com/watch?v=x&si=abc",
+        "CEO | https://acme.com",
+        "Founder @ ingweim?si=BA7PZTSDjA24hupw",
+        "CEO at www.acme.com",
+        # A bare domain or handle names a website or a profile, not the company.
+        "Founder @ acme.com",
+        "CEO | acme.io",
+        "Founder @ @acme",
+        # A long unbroken string is never a company name.
+        "CEO @ " + "a" * 45,
+    ],
+)
+def test_a_link_or_handle_is_not_a_company(title):
+    assert ph.company_from_title(title) is None
+
+
+@pytest.mark.parametrize(
+    ("title", "company"),
+    [
+        ("CTO @ Acme", "Acme"),
+        ("CTO @ Acme | youtube.com/watch?v=x", "Acme"),
+        ("Founder at Acme & Sons", "Acme & Sons"),
+        ("CEO @ Acme Inc.", "Acme Inc"),
+    ],
+)
+def test_a_real_company_survives_the_link_guard(title, company):
+    assert ph.company_from_title(title) == company

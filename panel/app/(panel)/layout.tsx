@@ -15,13 +15,16 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     <>
       <nav>
         <span className="brand">Founders Club</span>
-        <Link href="/cuentas">Accounts</Link>
-        <Link href="/senales">Signals</Link>
-        <Link href="/personas">People</Link>
-        <Link href="/costes">Costs</Link>
-        <Link href="/ajustes">Settings</Link>
-        <Link href="/pruebas">Test mode</Link>
-        <span className="muted">{user.email}</span>
+        <div className="links">
+          <Link href="/">Today</Link>
+          <Link href="/personas">People</Link>
+          <Link href="/senales">Signals</Link>
+          <Link href="/cuentas">Accounts</Link>
+          <Link href="/costes">Costs</Link>
+          <Link href="/ajustes">Settings</Link>
+          <Link href="/pruebas">Test mode</Link>
+        </div>
+        <span className="muted who">{user.email}</span>
         <form action={salir}><button type="submit">Sign out</button></form>
       </nav>
       <main>

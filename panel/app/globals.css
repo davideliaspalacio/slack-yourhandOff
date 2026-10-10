@@ -1,19 +1,24 @@
 :root {
   --bg: #f6f5f3; --card: #ffffff; --text: #1c1c1c; --muted: #6b6b6b; --line: #e3e1dd;
-  --accent: #1a5fb4; --alta: #a51d2d; --media: #c64600; --baja: #26a269; --warn: #fbebd4;
+  --accent: #1a5fb4; --on-accent: #fff; --alta: #a51d2d; --media: #c64600; --baja: #26a269; --warn: #fbebd4;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #141414; --card: #1e1e1e; --text: #ececec; --muted: #9a9a9a; --line: #2f2f2f;
-          --accent: #78aeed; --warn: #3a2b17; }
+          --accent: #78aeed; --on-accent: #0f2238; --alta: #ff7b86; --media: #ff9a52; --warn: #3a2b17; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
        font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-nav { display: flex; gap: 20px; align-items: center; padding: 14px 28px;
+nav { display: flex; flex-wrap: wrap; gap: 4px 16px; align-items: center; padding: 8px 28px;
       border-bottom: 1px solid var(--line); background: var(--card); }
 nav .brand { font-weight: 700; margin-right: auto; }
+/* Los enlaces envuelven en vez de salirse de la pantalla, y cada uno mide ≥ 40px
+   para poder pulsarse con el pulgar. */
+nav .links { display: flex; flex-wrap: wrap; gap: 0 4px; }
+nav .links a { display: inline-flex; align-items: center; min-height: 40px; padding: 0 8px; }
+nav button { min-height: 40px; white-space: nowrap; }
 main { max-width: 1100px; margin: 0 auto; padding: 28px; }
 h1 { font-size: 22px; margin: 0 0 18px; }
 h2 { font-size: 16px; margin: 26px 0 10px; }
@@ -35,10 +40,12 @@ th { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spa
 .filters a { padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px;
              background: var(--card); color: var(--text); }
 .filters a.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.filters a.all { font-weight: 600; }
+.filters a.all.on { background: var(--accent); color: var(--on-accent); }
 form.inline { display: inline-flex; gap: 8px; align-items: center; }
 button, select, input, textarea { font: inherit; padding: 6px 12px; border-radius: 8px;
                         border: 1px solid var(--line); background: var(--card); color: var(--text); }
-button { cursor: pointer; } button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button { cursor: pointer; } button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .notice { background: var(--warn); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
 ul.plain { margin: 0; padding-left: 18px; }
 .two { display: grid; gap: 16px; grid-template-columns: 2fr 1fr; }
@@ -47,6 +54,35 @@ ul.plain { margin: 0; padding-left: 18px; }
 .two > * { min-width: 0; }
 .card a, .card li { overflow-wrap: anywhere; }
 @media (max-width: 800px) { .two { grid-template-columns: 1fr; } main { padding: 16px; } }
+/* Tarjetas de personas: la pantalla Today y la lista en el móvil. */
+.cards { display: grid; gap: 12px; }
+.card.person { display: grid; gap: 6px; }
+.card.person .head { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; }
+.card.person .name { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+.card.person .why { margin: 4px 0; }
+.card.person .actions { display: flex; gap: 10px; margin-top: 6px; }
+.card.person .actions button { flex: 0 0 150px; min-height: 44px; }
+.card.person .pill { flex: none; white-space: nowrap; }
+a.card.person.tap { color: inherit; min-height: 64px; }
+a.card.person.tap:hover { text-decoration: none; border-color: var(--accent); }
+.card.intro p { margin: 0 0 8px; } .card.intro p:last-child { margin: 0; }
+.more { margin: 18px 0 0; }
+.only-narrow { display: none; }
+@media (max-width: 700px) {
+  nav { padding: 8px 16px; }
+  nav .who { display: none; }
+  nav .links { order: 3; flex-basis: 100%; }
+  .only-wide { display: none; }
+  .only-narrow { display: grid; }
+  /* Una sola fila de chips que se desliza, en vez de varias que empujan la lista. */
+  .filters.scroll { flex-wrap: nowrap; overflow-x: auto; gap: 8px; padding-bottom: 6px;
+                    margin-right: -16px; padding-right: 16px; }
+  .filters.scroll a { flex: none; white-space: nowrap; padding: 8px 14px; }
+  form.inline { flex-wrap: wrap; }
+  .card.person .actions button { flex: 1; }
+  button, select { min-height: 40px; }
+  td { overflow-wrap: anywhere; }
+}
 /* Radar de cuentas: badges de las vacantes y errores del último escaneo. */
 .pill.signal { border-color: var(--media); color: var(--media); }
 .pill.new { border-color: var(--accent); } .pill.ready, .pill.watching { border-color: var(--baja); }

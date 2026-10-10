@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { bandLabel, estadoLabel, jobStatusLabel, usd } from "@/lib/format";
+import { bandLabel, empresaVisible, estadoLabel, jobStatusLabel, usd } from "@/lib/format";
 import { refrescarPruebas } from "../acciones";
 import { SimularForm } from "./SimularForm";
 import { BorrarSimuladosButton } from "./BorrarSimuladosButton";
@@ -135,7 +135,7 @@ export default async function Pruebas() {
             return (
               <tr key={p.id}>
                 <td><Link href={`/personas/${p.id}`}>{p.full_name ?? p.slack_user_id}</Link></td>
-                <td>{p.company_name ?? <span className="muted">—</span>}</td>
+                <td>{empresaVisible(p.company_name) ?? <span className="muted">—</span>}</td>
                 <td><span className={`pill ${p.state}`}>{estadoLabel(p.state)}</span></td>
                 <td>
                   {job

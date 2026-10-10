@@ -149,3 +149,28 @@ export const ACCIONES_SENAL: Record<string, readonly ("pursue" | "dismiss" | "sn
   pursued: ["dismiss", "snooze"],
   dismissed: ["pursue", "snooze"],
 };
+
+// Un nombre de empresa que en realidad es un trozo de enlace pegado en el
+// título de Slack ("ingweim?si=BA7P…"). Es solo para mostrar: se enseña "—" y
+// el dato guardado no se toca. No se rechaza "&" suelto para no esconder
+// nombres legítimos como "AT&T"; una query string ya cae por el "=" o el "?".
+export const empresaVisible = (nombre: string | null | undefined): string | null => {
+  const n = nombre?.trim();
+  if (!n) return null;
+  if (n.includes("://") || /[?=]/.test(n) || n.toLowerCase().startsWith("www.")) return null;
+  if (!/\s/.test(n) && n.length > 40) return null;
+  return n;
+};
+
+// El motivo del encaje, recortado para una tarjeta: corta en el último espacio
+// que cabe y añade "…". Sin romper una palabra por la mitad.
+export const recortar = (texto: string | null | undefined, max = 140): string => {
+  const t = (texto ?? "").replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const corte = t.slice(0, max);
+  const espacio = corte.lastIndexOf(" ");
+  return `${(espacio > max * 0.6 ? corte.slice(0, espacio) : corte).replace(/[\s.,;:]+$/, "")}…`;
+};
+
+// Marca de tiempo (ms) de hace N días: el corte de "investigada hace poco".
+export const haceDias = (dias: number) => Date.now() - dias * 86400000;

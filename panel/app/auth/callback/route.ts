@@ -13,5 +13,5 @@ export async function GET(request: NextRequest) {
     console.error("auth/callback: could not exchange the code:", error.message);
     return redirectTo(request, "/login?error=enlace");
   }
-  return redirectTo(request, "/personas");
+  return redirectTo(request, "/");
 }

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { ESTADOS_EDITABLES, accionLabel, bandLabel, estadoLabel, fecha, jobStatusLabel, reasonLabel, usd } from "@/lib/format";
+import { ESTADOS_EDITABLES, accionLabel, bandLabel, empresaVisible, estadoLabel, fecha, jobStatusLabel, reasonLabel, usd } from "@/lib/format";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
 import { AyudarResearchForm } from "./AyudarResearchForm";
 
@@ -99,7 +99,7 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
               <p>{d.resumen}</p>
               <h2>Company</h2>
               <p>
-                <b>{d.empresa?.nombre ?? p.company_name ?? "—"}</b>
+                <b>{empresaVisible(d.empresa?.nombre) ?? empresaVisible(p.company_name) ?? "—"}</b>
                 {d.empresa?.dominio && <> · {d.empresa.dominio}</>}
                 {d.empresa?.sector && <> · {d.empresa.sector}</>}
                 {d.empresa?.empleados_aprox && <> · ~{d.empresa.empleados_aprox} people</>}
@@ -169,7 +169,7 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
               Company:{" "}
               {p.company_name_override
                 ? <>{p.company_name_override} <span className="muted">(set manually)</span></>
-                : p.company_name ?? <span className="muted">No company on file.</span>}
+                : empresaVisible(p.company_name) ?? <span className="muted">No company on file.</span>}
             </p>
             {d.empresa_no_confirmada?.dominio_adivinado && (
               <p className="notice">

@@ -119,6 +119,23 @@ def _has_prev_employer_marker_before_position(text: str) -> bool:
     return bool(_WORD_IS_PREV_EMPLOYER.match(last_word.casefold()))
 
 
+# A pasted link or a handle is not a company: "youtube.com/watch?v=x&si=abc",
+# "https://acme.com", "ingweim?si=BA7P...", "@acme". Checked on the raw candidate,
+# before step 4 splits on "/" and "&". A lone "&" stays allowed ("Acme & Sons").
+_URLISH = re.compile(r"://|[?=/@]")
+# A single token that reads like a domain ("acme.com", "www.acme.io"), not a name.
+_DOMAIN_LIKE = re.compile(r"^[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}$", re.IGNORECASE)
+MAX_UNBROKEN_CHARS = 40
+
+
+def _looks_like_link_or_handle(candidate: str) -> bool:
+    if _URLISH.search(candidate):
+        return True
+    if re.search(r"\s", candidate):
+        return False
+    return len(candidate) > MAX_UNBROKEN_CHARS or bool(_DOMAIN_LIKE.match(candidate))
+
+
 def company_from_title(title: str) -> str | None:
     if not title:
         return None
@@ -176,6 +193,9 @@ def company_from_title(title: str) -> str | None:
             candidate = segment
 
     candidate = candidate.strip()
+
+    if _looks_like_link_or_handle(candidate):
+        return None
 
     # Step 3: Reject previous-employer markers (as word-boundary patterns)
     # Use the module-level pattern built from _PREV_EMPLOYER_MARKERS
