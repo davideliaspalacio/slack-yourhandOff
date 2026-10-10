@@ -252,6 +252,17 @@ export async function guardarPausaUnipile(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// exigir_evidencia también es un booleano. La política panel_ajusta_evidencia
+// (0020) es la que permite tocar esta clave, y solo con true o false.
+export async function guardarExigirEvidencia(formData: FormData) {
+  const exigir = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: exigir, updated_at: new Date().toISOString() })
+    .eq("key", "exigir_evidencia");
+  revalidatePath("/ajustes");
+}
+
 export async function salir() {
   const supabase = await createClient();
   await supabase.auth.signOut();

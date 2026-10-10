@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from handoff_agent import db, ledger
 from handoff_agent.delivery import deliver
 from handoff_agent.tools import prospects
@@ -351,3 +353,47 @@ def test_post_fails_and_delete_fails_records_both_actions_and_reservation_surviv
         "select count(*) as n from deliveries where prospect_id = %s", (person["id"],)
     )
     assert reservation["n"] == 1
+
+
+# -- exigir_evidencia (0020): sin prueba no hay tarjeta, por alta que sea la nota
+
+
+def _person_with_fit(score, evidencia):
+    person = prospects.upsert_prospect("U1", full_name="Ada Ruiz")
+    db.execute("update prospects set state = 'investigado' where id = %s", (person["id"],))
+    fit = {"puntuacion": score, "evidencia": evidencia, "razon": "r"}
+    prospects.save_dossier(person["id"], {**DOSSIER, "encaje_handoff": fit}, [])
+    return person
+
+
+@pytest.mark.parametrize("score", [2, 3])
+def test_a_score_without_evidence_waits_for_the_digest(conn, monkeypatch, score):
+    called = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: called.append(1))
+    person = _person_with_fit(score, "ninguna")
+    assert deliver.deliver_for(person["id"], FakeReader()) == "baja"
+    assert called == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+
+
+@pytest.mark.parametrize(
+    ("score", "evidencia", "band"),
+    [
+        (3, "vacantes", "alta"),
+        (3, "necesidad_declarada", "alta"),
+        (2, "equipo_relevante", "media"),
+        (2, "vacantes", "media"),
+    ],
+)
+def test_a_score_with_evidence_gets_its_card_like_before(conn, monkeypatch, score, evidencia, band):
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
+    person = _person_with_fit(score, evidencia)
+    assert deliver.deliver_for(person["id"], FakeReader()) == band
+    assert db.fetch_one("select band from deliveries")["band"] == band
+
+
+def test_a_dossier_stored_before_the_field_existed_still_gets_its_card(conn, monkeypatch):
+    """Las fichas ya guardadas no llevan `evidencia`: se entregan como siempre."""
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
+    person = a_person(score=2)
+    assert deliver.deliver_for(person["id"], FakeReader()) == "media"

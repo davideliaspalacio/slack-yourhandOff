@@ -118,3 +118,66 @@ def test_an_unconfirmed_company_does_not_change_media_or_baja(conn):
 
 def test_a_confirmed_company_keeps_alta(conn):
     assert bands.band_for(dossier(3)) == "alta"
+
+
+# --- evidencia "ninguna": una nota sin pruebas no pasa de "baja" -------------
+
+
+def con_evidencia(score, evidencia):
+    return {"encaje_handoff": {"puntuacion": score, "evidencia": evidencia, "razon": "r"}}
+
+
+@pytest.mark.parametrize("score", [2, 3])
+def test_a_score_without_evidence_is_capped_at_baja(conn, score):
+    assert bands.band_for(con_evidencia(score, "ninguna")) == "baja"
+
+
+@pytest.mark.parametrize("evidencia", ["vacantes", "necesidad_declarada", "equipo_relevante"])
+@pytest.mark.parametrize(("score", "expected"), [(3, "alta"), (2, "media"), (1, "baja"), (0, None)])
+def test_real_evidence_scores_exactly_like_before(conn, evidencia, score, expected):
+    """Lo que tiene prueba no cambia: misma banda que una ficha sin el campo."""
+    assert bands.band_for(con_evidencia(score, evidencia)) == expected
+    assert bands.band_for(dossier(score)) == expected
+
+
+@pytest.mark.parametrize(("score", "expected"), [(1, "baja"), (0, None)])
+def test_no_evidence_never_lifts_a_low_score(conn, score, expected):
+    """Es un tope, no un suelo: un 0 sin evidencia sigue sin banda."""
+    assert bands.band_for(con_evidencia(score, "ninguna")) == expected
+
+
+@pytest.mark.parametrize(("score", "expected"), [(3, "alta"), (2, "media"), (1, "baja"), (0, None)])
+def test_a_stored_dossier_without_the_field_keeps_its_band(conn, score, expected):
+    """Las fichas guardadas antes del campo no lo traen: nada cambia para ellas."""
+    assert "evidencia" not in dossier(score)["encaje_handoff"]
+    assert bands.band_for(dossier(score)) == expected
+
+
+@pytest.mark.parametrize(("score", "expected"), [(3, "alta"), (2, "media"), (1, "baja"), (0, None)])
+def test_with_the_lock_off_the_band_comes_from_the_score_alone(restore_config, score, expected):
+    db.execute("update config set value = 'false'::jsonb where key = 'exigir_evidencia'")
+    assert bands.band_for(con_evidencia(score, "ninguna")) == expected
+
+
+def test_the_lock_is_on_by_default_and_survives_a_missing_or_broken_key(restore_config):
+    assert db.fetch_one("select value from config where key = 'exigir_evidencia'")["value"] is True
+    db.execute("update config set value = '0'::jsonb where key = 'exigir_evidencia'")
+    assert bands.band_for(con_evidencia(3, "ninguna")) == "baja"
+    db.execute("delete from config where key = 'exigir_evidencia'")
+    assert bands.band_for(con_evidencia(3, "ninguna")) == "baja"
+
+
+def test_no_evidence_wins_over_an_unconfirmed_company(conn):
+    payload = {
+        **con_evidencia(3, "ninguna"),
+        "empresa_no_confirmada": {"dominio_adivinado": "handoff.ai"},
+    }
+    assert bands.band_for(payload) == "baja"
+
+
+def test_a_silenced_score_is_not_resurrected_by_the_cap(restore_config):
+    """Con banda_baja_min por encima de todo, tampoco lo sin evidencia entra."""
+    db.execute("update config set value = '4'::jsonb where key = 'banda_baja_min'")
+    db.execute("update config set value = '4'::jsonb where key = 'banda_media_min'")
+    db.execute("update config set value = '4'::jsonb where key = 'banda_alta_min'")
+    assert bands.band_for(con_evidencia(3, "ninguna")) is None

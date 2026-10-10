@@ -26,7 +26,11 @@ def make_dossier(**overrides) -> dict:
             "fuentes": ["https://jobs.example/1"],
         },
         "senales_contexto": [{"hecho": "Contrata soporte", "fuente": "https://acme.com/careers"}],
-        "encaje_handoff": {"puntuacion": 2, "razon": "Contrata soporte, que Handoff cubre."},
+        "encaje_handoff": {
+            "puntuacion": 2,
+            "evidencia": "vacantes",
+            "razon": "Contrata soporte, que Handoff cubre.",
+        },
         "huecos": [],
         "busquedas_sugeridas": [],
         "resumen": "CEO de una SaaS de 60 personas que contrata soporte.",
@@ -171,3 +175,37 @@ def test_hiring_facts_need_sources(facts):
     assert validate_dossier(make_dossier(contratacion=contratacion), SOURCES) == []
     problems = validate_dossier(make_dossier(contratacion={**contratacion, **facts}), SOURCES)
     assert any("contratacion" in p for p in problems), problems
+
+
+# --- encaje_handoff.evidencia: de dónde sale la nota, con lista cerrada ------
+
+
+@pytest.mark.parametrize(
+    "evidencia", ["vacantes", "necesidad_declarada", "equipo_relevante", "ninguna"]
+)
+def test_every_declared_evidence_value_is_accepted(evidencia):
+    data = make_dossier(encaje_handoff={"puntuacion": 2, "evidencia": evidencia, "razon": "x"})
+    assert validate_dossier(data, SOURCES) == []
+
+
+def test_a_dossier_without_the_evidence_field_is_rejected():
+    data = make_dossier(encaje_handoff={"puntuacion": 2, "razon": "x"})
+    problems = validate_dossier(data, SOURCES)
+    assert any("encaje_handoff.evidencia" in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    "invented", ["sector", "probable", "Vacantes", "", " ninguna", None, 2, True, ["vacantes"]]
+)
+def test_an_invented_evidence_value_is_rejected(invented):
+    data = make_dossier(encaje_handoff={"puntuacion": 2, "evidencia": invented, "razon": "x"})
+    problems = validate_dossier(data, SOURCES)
+    assert any("encaje_handoff.evidencia" in p for p in problems), invented
+
+
+def test_the_evidence_problem_names_the_allowed_values():
+    """El problema vuelve al modelo en el reintento: tiene que decirle qué vale."""
+    data = make_dossier(encaje_handoff={"puntuacion": 2, "evidencia": "sector", "razon": "x"})
+    (problem,) = validate_dossier(data, SOURCES)
+    for allowed in ("vacantes", "necesidad_declarada", "equipo_relevante", "ninguna"):
+        assert allowed in problem

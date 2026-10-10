@@ -25,6 +25,11 @@ OBJECT_SECTIONS = ("persona", "empresa", "contratacion", "encaje_handoff")
 LIST_SECTIONS = ("senales_contexto", "huecos")
 # nombre y dominio pueden venir de la entrada; el resto hay que haberlo leído.
 COMPANY_FACTS = ("sector", "empleados_aprox", "ubicacion", "descripcion")
+# De dónde sale la nota de encaje. Lista cerrada: delivery/bands.py decide con
+# ella si una ficha puede interrumpir, así que un valor inventado no se
+# interpreta, se rechaza. "ninguna" es una respuesta válida y honesta.
+SIN_EVIDENCIA = "ninguna"
+EVIDENCIAS = ("vacantes", "necesidad_declarada", "equipo_relevante", SIN_EVIDENCIA)
 
 
 class DossierInvalid(ValueError):
@@ -125,6 +130,10 @@ def validate_dossier(data: dict, allowed_sources: set[str]) -> list[str]:
     score = data["encaje_handoff"].get("puntuacion")
     if type(score) is not int or not 0 <= score <= 3:
         problems.append("encaje_handoff.puntuacion debe ser un entero de 0 a 3")
+
+    evidence = data["encaje_handoff"].get("evidencia")
+    if not isinstance(evidence, str) or evidence not in EVIDENCIAS:
+        problems.append(f"encaje_handoff.evidencia debe ser uno de: {', '.join(EVIDENCIAS)}")
 
     if not isinstance(data["resumen"], str) or not data["resumen"].strip():
         problems.append("el resumen está vacío")

@@ -430,3 +430,29 @@ def test_a_failed_send_can_be_retried(conn, monkeypatch):
     calls = sent(monkeypatch)
     assert digest.send_daily(TODAY) == "enviado"
     assert len(calls) == 1
+
+
+# -- exigir_evidencia (0020): lo que no tiene prueba baja al email diario --
+
+
+def _with_fit(score, evidencia):
+    person = prospects.upsert_prospect("U1", full_name="Ada Ruiz")
+    fit = {"puntuacion": score, "evidencia": evidencia, "razon": "r"}
+    prospects.save_dossier(person["id"], {**DOSSIER, "encaje_handoff": fit}, [])
+    _set_created_at(person["id"], IN_WINDOW)
+
+
+@pytest.mark.parametrize("score", [2, 3])
+def test_a_score_without_evidence_is_listed_as_a_low_signal(conn, score):
+    _with_fit(score, "ninguna")
+    _, body = digest.build(TODAY)
+    assert "Ada Ruiz" in body
+    assert "Señales de banda baja: 1" in body
+
+
+@pytest.mark.parametrize("evidencia", ["vacantes", "necesidad_declarada", "equipo_relevante"])
+def test_a_score_with_evidence_stays_out_of_the_digest_like_before(conn, evidencia):
+    _with_fit(3, evidencia)
+    _, body = digest.build(TODAY)
+    assert "Ada Ruiz" not in body
+    assert "Señales de banda baja: 0" in body

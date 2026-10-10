@@ -3,6 +3,15 @@
 The system prompt is long and never changes between people, and it goes first:
 OpenAI caches a repeated prefix and bills it at a quarter of the price. We
 measured 72% off a repeated call. Everything that varies goes last.
+
+Cambio puntual del prefijo (2026-10-10): la regla 4 exige evidencia para cada
+nota y el formato gana "encaje_handoff.evidencia". Antes el 2 era "claro" sin
+pedir pruebas y el modelo lo rellenaba razonando por sector ("likely has needs
+in support... no direct evidence of current open roles"), y esa suposición
+salió publicada como tarjeta. Editar SYSTEM_PROMPT invalida la caché una vez:
+la primera llamada tras el despliegue se paga entera y la siguiente ya vuelve
+a encontrar el prefijo. No es motivo para tocarlo a menudo: lo que cambie
+entre personas sigue yendo al final, en el prompt de usuario.
 """
 
 from __future__ import annotations
@@ -74,9 +83,24 @@ Reglas, sin excepción:
    atributo origen. Nunca inventes una URL ni cites una que no aparezca.
 3. Si un dato no está en la evidencia, pon null y añade a "huecos" qué falta.
    Un null honesto vale más que una estimación sin fuente.
-4. "encaje_handoff.puntuacion" es un entero de 0 a 3: 0 sin encaje, 1 débil,
-   2 claro, 3 fuerte (contratan ahora mismo roles que Handoff cubre). Explica el
-   porqué en "razon" en una o dos frases.
+4. "encaje_handoff.puntuacion" es un entero de 0 a 3 y cada nota exige su
+   prueba. "encaje_handoff.evidencia" declara de dónde sale, con uno de estos
+   cuatro valores exactos:
+   - 3: hay vacantes abiertas que Handoff cubre (evidencia "vacantes"), o la
+     propia persona pide en sus mensajes, de forma explícita y actual, algo que
+     Handoff cubre (evidencia "necesidad_declarada").
+   - 2: sin vacantes hoy, pero con evidencia concreta y con fuente de que la
+     necesidad existe: un equipo de soporte u operaciones de tamaño real,
+     contrataciones recientes, o una ronda de inversión con crecimiento
+     (evidencia "equipo_relevante").
+   - 1: perfil relevante para Handoff sin ninguna evidencia de lo anterior
+     (evidencia "ninguna").
+   - 0: no encaja (evidencia "ninguna").
+   Prohibido justificar la nota con lo que la empresa "probablemente",
+   "seguramente" o "likely" necesita por su sector, su tamaño o el cargo de la
+   persona: eso es una suposición, no una prueba. Sin prueba, baja la nota,
+   pon evidencia "ninguna" y anota en "huecos" qué faltaría para subirla.
+   Explica el porqué en "razon" en una o dos frases, nombrando la prueba.
 5. "roles_deslocalizables" son las vacantes que un equipo remoto en LATAM puede
    cubrir: soporte, operaciones, ventas internas, asistentes, desarrollo,
    contabilidad, reclutamiento. No lo son las presenciales ni las de dirección.
@@ -105,7 +129,11 @@ Formato exacto de salida:
     "roles_deslocalizables": [str], "fuentes": [url]
   },
   "senales_contexto": [{"hecho": str, "fuente": url}],
-  "encaje_handoff": {"puntuacion": 0|1|2|3, "razon": str},
+  "encaje_handoff": {
+    "puntuacion": 0|1|2|3,
+    "evidencia": "vacantes"|"necesidad_declarada"|"equipo_relevante"|"ninguna",
+    "razon": str
+  },
   "huecos": [str],
   "busquedas_sugeridas": [str],
   "resumen": str

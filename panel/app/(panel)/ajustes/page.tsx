@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { fecha, minutosDesde } from "@/lib/format";
-import { guardarPausaUnipile, guardarUmbral } from "../acciones";
+import { guardarExigirEvidencia, guardarPausaUnipile, guardarUmbral } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { TokenSlackForm } from "./TokenSlackForm";
 
@@ -61,7 +61,7 @@ export default async function Ajustes() {
   const supabase = await createClient();
   const { data } = await supabase.from("config").select("key, value, updated_at")
     .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR), "unipile_pausado", "unipile_zona", "slack_channel_ids",
-      "lector_estado"]);
+      "lector_estado", "exigir_evidencia"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
   const canalesValor = valores.get("slack_channel_ids");
   const canales = Array.isArray(canalesValor)
@@ -76,6 +76,9 @@ export default async function Ajustes() {
   const latidoCaducado = latido?.ok === true && latido.en !== undefined &&
     minutosDesde(latido.en) > LATIDO_CADUCADO_MIN;
   const pausado = valores.get("unipile_pausado") === true;
+  // Activado salvo que la base diga false: el mismo valor por defecto que usa
+  // el worker (delivery/bands.py) cuando la clave falta o no es un booleano.
+  const exigirEvidencia = valores.get("exigir_evidencia") !== false;
   const zona = String(valores.get("unipile_zona") ?? "America/New_York");
   const desde = inicioDelDia(zona);
 
@@ -155,6 +158,19 @@ export default async function Ajustes() {
       <table>
         <tbody>
           {Object.entries(EDITABLES).map(fila)}
+          <tr>
+            <td>Require evidence for a card. When on, a fit score with no concrete evidence
+              behind it (no open roles, no need stated by the person, no relevant team) stays
+              in the daily email whatever the score: no card, no SMS.
+              <div className="muted" style={{ fontSize: 12 }}>exigir_evidencia</div></td>
+            <td>
+              <form action={guardarExigirEvidencia} className="inline">
+                <input type="hidden" name="value" value={exigirEvidencia ? "false" : "true"} />
+                <span>{exigirEvidencia ? "On" : "Off"}</span>
+                <button type="submit">{exigirEvidencia ? "Turn off" : "Turn on"}</button>
+              </form>
+            </td>
+          </tr>
         </tbody>
       </table>
 

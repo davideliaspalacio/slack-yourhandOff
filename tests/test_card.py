@@ -298,10 +298,76 @@ def test_missing_empresa_still_falls_back_to_the_person_record():
     assert "Acme" in text
 
 
-def test_missing_contratacion_produces_no_vacantes_line():
+def test_missing_contratacion_says_no_open_roles_were_found():
     dossier = {**DOSSIER, "contratacion": None}
     text = blocks_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
-    assert "open roles" not in text
+    assert "Open roles: none found" in text
+
+
+def _header_text(blocks):
+    return blocks[0]["text"]["text"]
+
+
+def test_the_card_shows_the_open_roles_count_with_the_roles():
+    header = _header_text(card.build(PERSON, DOSSIER, "alta", MESSAGE, None))
+    assert header.splitlines()[-1] == "Open roles: 6 — support, ops"
+
+
+def test_the_open_roles_count_stands_alone_without_listed_roles():
+    dossier = {**DOSSIER, "contratacion": {"vacantes_abiertas": 4, "roles_deslocalizables": []}}
+    header = _header_text(card.build(PERSON, dossier, "alta", MESSAGE, None))
+    assert header.splitlines()[-1] == "Open roles: 4"
+
+
+def test_the_open_roles_line_appears_exactly_once():
+    text = blocks_text(card.build(PERSON, DOSSIER, "alta", MESSAGE, None))
+    assert text.lower().count("open roles") == 1
+
+
+def test_without_open_roles_the_card_says_none_found():
+    """Antes no aparecía nada y la tarjeta se leía como si hubiera contrataciones."""
+    for hiring in (
+        {"vacantes_abiertas": None, "roles": [], "roles_deslocalizables": []},
+        {"vacantes_abiertas": 0, "roles_deslocalizables": []},
+        {"vacantes_abiertas": -2},
+        {"vacantes_abiertas": True},
+        {"vacantes_abiertas": "4"},
+        {"vacantes_abiertas": 2.0},
+        # Roles sin un recuento real no cuentan como vacantes encontradas.
+        {"vacantes_abiertas": None, "roles_deslocalizables": ["support"]},
+        {},
+        "not a dict",
+    ):
+        dossier = {**DOSSIER, "contratacion": hiring}
+        header = _header_text(card.build(PERSON, dossier, "media", MESSAGE, None))
+        assert header.splitlines()[-1] == "Open roles: none found", hiring
+        assert "support" not in header
+
+
+def test_a_dossier_with_nothing_still_shows_the_hiring_line():
+    person = {**PERSON, "full_name": None, "company_name": None}
+    header = _header_text(
+        card.build(person, {"persona": None, "empresa": None}, "alta", None, None)
+    )
+    assert header.splitlines()[-1] == "Open roles: none found"
+
+
+def test_hostile_roles_stay_escaped_and_capped_in_the_hiring_line():
+    dossier = {
+        **DOSSIER,
+        "contratacion": {
+            "vacantes_abiertas": 10**40,
+            "roles_deslocalizables": ["<!channel>&" * 500, None, 7, "<@U1>" * 500],
+        },
+    }
+    blocks = card.build(PERSON, dossier, "alta", MESSAGE, None)
+    line = _header_text(blocks).splitlines()[-1]
+    prefix = "Open roles: " + "1" + "0" * (card.NUM_CHARS - 1) + " — "
+    assert line.startswith(prefix)
+    assert len(line) <= len(prefix) + card.ROLES_CHARS
+    assert "<" not in line and ">" not in line
+    assert not re.search(r"&(?!amp;|lt;|gt;)", line)
+    _assert_card_under_limits_no_syntax_leak(blocks)
 
 
 def test_empty_senales_contexto_produces_no_signal_bullets():
@@ -394,6 +460,20 @@ def test_a_fully_hostile_card_never_leaks_syntax_or_breaks_a_block_limit(monkeyp
 
     blocks = card.build(person, dossier, "alta", message, "https://slack.com/p1")
     _assert_card_under_limits_no_syntax_leak(blocks)
+    # Un recuento hostil no es un número: la línea de contratación dice que no
+    # se encontraron, y los roles hostiles ni se asoman.
+    assert blocks[0]["text"]["text"].splitlines()[-1] == "Open roles: none found"
+
+    # Y con un recuento de verdad, para que los roles hostiles sí se rendericen:
+    # la línea de contratación es la que más crece dentro de la cabecera.
+    dossier["contratacion"]["vacantes_abiertas"] = 10**40
+    dossier["contratacion"]["roles_deslocalizables"] = [hostile_text, 7, None, hostile_text]
+    blocks = card.build(person, dossier, "alta", message, "https://slack.com/p1")
+    _assert_card_under_limits_no_syntax_leak(blocks)
+    hiring_line = blocks[0]["text"]["text"].splitlines()[-1]
+    assert hiring_line.startswith("Open roles: 1")
+    assert "&lt;!channel&gt;" in hiring_line
+    assert len(blocks[0]["text"]["text"]) <= 801  # la aritmética del peor caso de card.py
 
 
 PROVEEDOR = {

@@ -313,8 +313,13 @@ def test_the_messages_instruction_keeps_them_out_of_sources_and_facts():
 
 
 def test_the_system_prompt_is_untouched_by_messages():
-    """El prefijo cacheado no menciona los mensajes: la regla vive en el prompt de usuario."""
-    assert "mensajes" not in s.SYSTEM_PROMPT
+    """El prefijo cacheado es el mismo con o sin mensajes: cómo tratarlos
+    (MENSAJES_INSTRUCTION) vive en el prompt de usuario. Desde la regla 4 con
+    evidencia el prefijo sí nombra los mensajes, pero solo como origen de una
+    "necesidad_declarada": es texto fijo, igual para todas las personas."""
+    assert s.MENSAJES_INSTRUCTION not in s.SYSTEM_PROMPT
+    assert "no un hecho verificado" not in s.SYSTEM_PROMPT
+    assert s.SYSTEM_PROMPT.count("mensajes") == 1
 
 
 def test_messages_text_cannot_close_the_fence():
@@ -375,3 +380,62 @@ def test_a_dossier_citing_the_messages_as_a_source_is_rejected(conn, monkeypatch
             Gathered(domain="acme.com", evidence=[], jobs=[], mensajes=("We need support",)),
         )
     assert any("mensajes" in p for p in info.value.problems)
+
+
+# --- Regla 4: cada nota de encaje exige su prueba ----------------------------
+
+
+def test_the_scoring_rule_ties_every_score_to_its_evidence():
+    prompt = s.SYSTEM_PROMPT
+    assert "cada nota exige su" in prompt
+    assert "3: hay vacantes abiertas que Handoff cubre" in prompt
+    assert "pide en sus mensajes, de forma explícita y actual" in prompt
+    assert "2: sin vacantes hoy, pero con evidencia concreta y con fuente" in prompt
+    assert "1: perfil relevante para Handoff sin ninguna evidencia" in prompt
+    assert "0: no encaja" in prompt
+    # El 2 ya no es "claro" a secas: esa palabra sin prueba fue la causa.
+    assert "2 claro" not in prompt
+
+
+def test_the_scoring_rule_forbids_guessing_what_the_company_probably_needs():
+    prompt = s.SYSTEM_PROMPT
+    assert "Prohibido justificar la nota" in prompt
+    for guess in ('"probablemente"', '"likely"'):
+        assert guess in prompt
+    assert "Sin prueba, baja la nota" in prompt
+    assert 'anota en "huecos"' in prompt
+
+
+def test_the_output_format_declares_the_closed_evidence_values():
+    from handoff_agent.dossier import EVIDENCIAS
+
+    declared = '"evidencia": ' + "|".join(f'"{value}"' for value in EVIDENCIAS)
+    assert declared in s.SYSTEM_PROMPT
+    # Y la regla nombra cada valor, no solo el formato.
+    for value in EVIDENCIAS:
+        assert f'evidencia "{value}"' in s.SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("bad", [None, "sector"])
+def test_a_missing_or_invented_evidence_gets_one_retry_with_the_reason(conn, monkeypatch, bad):
+    fit = {"puntuacion": 2, "razon": "x"} | ({} if bad is None else {"evidencia": bad})
+    rejected = json.loads(grounded()) | {"encaje_handoff": fit}
+    fake = ScriptedOpenAI(json.dumps(rejected), grounded())
+    monkeypatch.setattr(llm, "_client", lambda: fake)
+    result = s.synthesize(real_pid(), "Ada Ruiz", "Acme", gathered())
+    assert result.attempts == 2
+    assert result.dossier["encaje_handoff"]["evidencia"] == "vacantes"
+    retry = fake.calls[1]["messages"][-1]["content"]
+    assert "encaje_handoff.evidencia debe ser uno de" in retry
+    assert "necesidad_declarada" in retry
+
+
+def test_an_invented_evidence_twice_raises_and_nothing_is_returned(conn, monkeypatch):
+    rejected = json.dumps(
+        json.loads(grounded())
+        | {"encaje_handoff": {"puntuacion": 3, "evidencia": "sector", "razon": "x"}}
+    )
+    monkeypatch.setattr(llm, "_client", lambda: ScriptedOpenAI(rejected, rejected))
+    with pytest.raises(DossierInvalid) as info:
+        s.synthesize(real_pid(), "Ada Ruiz", "Acme", gathered())
+    assert any("encaje_handoff.evidencia" in p for p in info.value.problems)

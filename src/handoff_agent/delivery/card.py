@@ -98,9 +98,12 @@ PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success"
 #   "*" + NAME_CHARS + "*"                          2 + 160          =  162
 #   " — " + ROLE_CHARS + ", " + COMPANY_CHARS    3 + 160 + 2 + 160   =  325
 #   " (~" + NUM_CHARS + " people)"                  3 + 20 + 8       =   31
+#   salto de línea                                                        1
+#   "Open roles: " + NUM_CHARS + " — " + ROLES_CHARS
+#   (o "Open roles: none found", más corta)      12 + 20 + 3 + 200   =  235
 #                                                                --------------
-#                                                                total    565
-# 565 < 3000 con margen de sobra.
+#                                                                total    801
+# 801 < 3000 con margen de sobra.
 #
 # Aritmética del peor caso para la sección "*Why it matters*" (tope de Slack:
 # 3000 caracteres por bloque `section`):
@@ -108,12 +111,11 @@ PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success"
 #   razón:            "· " + RAZON_CHARS                  2 + 400 =  402
 #   3 señales:        "· <" + FUENTE_CHARS + "|"
 #                      + HECHO_CHARS + ">"     3 × (5 + 200 + 240) = 1335
-#   contratación:     "· " + NUM_CHARS + " open roles: "
-#                      + ROLES_CHARS                 2 + 20 + 13 + 200 =  235
-#   4 saltos de línea entre 5 líneas                                4
+#   3 saltos de línea entre 4 líneas                                3
 #                                                          --------------
-#                                                          total  1993
-# 1993 < 3000 con margen de sobra.
+#                                                          total  1757
+# 1757 < 3000 con margen de sobra. (La línea de contratación ya no vive aquí:
+# va en la cabecera, ver _open_roles_line.)
 #
 # Aritmética del peor caso para el bloque `context` del resumen (tope de
 # Slack: 2000 caracteres por bloque `context`): RESUMEN_CHARS = 1900 < 2000.
@@ -205,6 +207,32 @@ def _headline(person: dict, dossier: dict, band: str) -> str:
     bits = [b for b in (role, company) if b]
     tail = f" (~{size} people)" if size else ""
     return f"*{name}*" + (f" — {', '.join(bits)}{tail}" if bits else "")
+
+
+def _open_roles_line(dossier: dict) -> str:
+    """La situación de contratación, siempre a la vista en la cabecera.
+
+    Antes solo había línea cuando había vacantes: sin ellas la tarjeta callaba
+    y quien la leía daba por hecho que la nota de encaje venía de contrataciones
+    abiertas. Ahora el "no hay" también se dice. Cualquier cosa que no sea un
+    `int` positivo de verdad (null, 0, un bool, un string con pinta de número)
+    cuenta como "no se encontraron", igual que `_safe_number` trata un campo
+    numérico inválido como si faltara.
+    """
+    hiring = dossier.get("contratacion")
+    if not isinstance(hiring, dict):
+        return "Open roles: none found"
+    count = hiring.get("vacantes_abiertas")
+    if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+        return "Open roles: none found"
+    listed = hiring.get("roles_deslocalizables")
+    roles_joined = ", ".join(
+        _escape_mrkdwn(r)
+        for r in (listed if isinstance(listed, list) else [])
+        if isinstance(r, str)
+    )
+    roles = _trim_escaped(roles_joined, ROLES_CHARS)
+    return f"Open roles: {_safe_number(count, NUM_CHARS)}" + (f" — {roles}" if roles else "")
 
 
 def _proveedor_int(value: object) -> int | None:
@@ -338,12 +366,14 @@ def build(
     permalink: str | None,
 ) -> list[dict]:
     fit = dossier.get("encaje_handoff") or {}
-    hiring = dossier.get("contratacion") or {}
     score = _safe_number(fit.get("puntuacion"), NUM_CHARS)
     score_bit = f" · fit {score}/3" if score else ""
     band_label = BAND_LABELS.get(band, band.upper())
-    header = f"{EMOJI.get(band, '')} *{band_label} SIGNAL*{score_bit}\n" + _headline(
-        person, dossier, band
+    header = (
+        f"{EMOJI.get(band, '')} *{band_label} SIGNAL*{score_bit}\n"
+        + _headline(person, dossier, band)
+        + "\n"
+        + _open_roles_line(dossier)
     )
     blocks: list[dict] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": header}},
@@ -373,13 +403,6 @@ def build(
             reasons.append(f"· <{_escape_and_cap(fuente, FUENTE_CHARS)}|{hecho}>")
         else:
             reasons.append(f"· {hecho}")
-    vacantes = _safe_number(hiring.get("vacantes_abiertas"), NUM_CHARS)
-    if vacantes:
-        roles_joined = ", ".join(
-            _escape_mrkdwn(r) for r in (hiring.get("roles_deslocalizables") or [])
-        )
-        roles = _trim_escaped(roles_joined, ROLES_CHARS)
-        reasons.append(f"· {vacantes} open roles" + (f": {roles}" if roles else ""))
     if reasons:
         blocks.append(
             {

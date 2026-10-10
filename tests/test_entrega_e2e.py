@@ -16,6 +16,7 @@ receptor).
 import json
 from datetime import datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from handoff_agent import db, llm
@@ -34,8 +35,11 @@ from tests.test_web_buttons import CHANNEL, SECRET, press
 PATCHED_PERMALINK = "https://acme.slack.com/archives/CHANDOFF/p1700000000000100"
 
 
-def alta_dossier() -> str:
-    """Un dossier con encaje 3/3: banda alta, tarjeta y SMS."""
+def dossier_json(puntuacion: int, evidencia: str | None, razon: str) -> str:
+    """Lo que devolvería la síntesis. `evidencia=None` es una ficha sin el campo."""
+    fit = {"puntuacion": puntuacion, "razon": razon}
+    if evidencia is not None:
+        fit["evidencia"] = evidencia
     return json.dumps(
         make_dossier(
             persona={"nombre": "Ada Ruiz", "cargo": "CEO", "fuente": LINKEDIN},
@@ -47,10 +51,15 @@ def alta_dossier() -> str:
                 "fuentes": [],
             },
             senales_contexto=[{"hecho": "Contrata soporte", "fuente": HOME}],
-            encaje_handoff={"puntuacion": 3, "razon": "Contrata soporte ahora mismo"},
+            encaje_handoff=fit,
             busquedas_sugeridas=[],
         )
     )
+
+
+def alta_dossier() -> str:
+    """Un dossier con encaje 3/3 y su prueba: banda alta, tarjeta y SMS."""
+    return dossier_json(3, "necesidad_declarada", "Contrata soporte ahora mismo")
 
 
 def state_of(person_id) -> str:
@@ -151,3 +160,192 @@ def test_a_message_becomes_a_card_and_an_sms_then_a_discard_stops_both(conn, mon
     subject, body = digest.build(day)
     assert "Ada Ruiz" not in subject
     assert "Ada Ruiz" not in body
+
+
+# --- Una nota de encaje sin pruebas no interrumpe (exigir_evidencia, 0020) ---
+
+# La razón, palabra por palabra, de la ficha que se publicó como tarjeta 2/3 y
+# el CEO rechazó: una suposición por sector.
+RAZON_SUPUESTA = (
+    "The company likely has needs in support, operations, or back office, "
+    "though there is no direct evidence of current open roles"
+)
+
+
+def run_pipeline(monkeypatch, *answers: str):
+    """Del mensaje a la entrega, con todo lo externo falseado y Twilio
+    "configurado". Devuelve la persona, las tarjetas y los SMS que salieron, el
+    resultado del job y el lector, por si el test quiere volver a investigar."""
+    reader = FakeReader()
+    reader.set_members("C1", "U1")
+    reader.add_profile("U1", "Ada Ruiz", title="CEO @ Acme", email="ada@acme.com")
+    reader.post("C1", "U1", "Our support queue is out of control", f"{NOW - 60:.6f}")
+
+    fake_tools(monkeypatch)
+    scripted = ScriptedOpenAI(*answers)
+    monkeypatch.setattr(llm, "_client", lambda: scripted)
+
+    monkeypatch.setenv("TWILIO_ACCOUNT_SID", "ACtest")
+    monkeypatch.setenv("TWILIO_AUTH_TOKEN", "not-a-real-token")
+    monkeypatch.setenv("TWILIO_FROM", "+15550000000")
+    monkeypatch.setenv("TWILIO_TO", "+15551111111")
+    sms_calls = []
+    monkeypatch.setattr(sms, "_send", lambda to, body: sms_calls.append((to, body)) or "SM123")
+    monkeypatch.setattr(sms, "_within_hours", lambda now: True)
+    monkeypatch.setattr(slack_writer, "card_permalink", lambda channel, ts: PATCHED_PERMALINK)
+    posted = []
+    monkeypatch.setattr(
+        slack_writer, "post_card", lambda blocks, text: posted.append(blocks) or ("CHANDOFF", "1.1")
+    )
+
+    watch_tick(reader, ["C1"], lookback_hours=1, now=lambda: NOW)
+    resolve_pending()
+    outcome = run_next_job(reader)
+    person = db.fetch_one("select * from prospects where slack_user_id = 'U1'")
+    return person, posted, sms_calls, outcome, reader
+
+
+def digest_today() -> str:
+    _subject, body = digest.build(datetime.now(tz=digest._zone()).date())
+    return body
+
+
+def stored_fit(person) -> dict:
+    row = db.fetch_one(
+        "select content from dossiers where prospect_id = %s order by version desc limit 1",
+        (person["id"],),
+    )
+    return row["content"]["encaje_handoff"]
+
+
+def test_a_top_score_without_evidence_gets_no_card_and_no_sms_but_reaches_the_digest(
+    conn, monkeypatch
+):
+    person, posted, sms_calls, outcome, _ = run_pipeline(
+        monkeypatch, dossier_json(3, "ninguna", "Strong profile for Handoff")
+    )
+    # El research se hizo y la ficha se guardó tal cual, con su 3: el candado
+    # no reescribe la nota, solo decide que no interrumpe.
+    assert outcome.status == "hecho"
+    assert person["state"] == "investigado"
+    assert stored_fit(person) == {
+        "puntuacion": 3,
+        "evidencia": "ninguna",
+        "razon": "Strong profile for Handoff",
+    }
+    assert posted == []
+    assert sms_calls == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    body = digest_today()
+    assert "Ada Ruiz" in body
+    assert "Señales de banda baja: 1" in body
+
+
+def test_the_real_case_a_guessed_fit_2_no_longer_publishes_a_card(restore_config, monkeypatch):
+    """Regresión del caso real: encaje 2, sin vacantes, razón "likely has
+    needs... no direct evidence" y evidencia "ninguna".
+
+    Primero con el candado apagado, que es el código de antes: la misma ficha
+    publica tarjeta. Luego encendido, que es como queda: no publica nada y la
+    persona pasa al email diario."""
+    db.execute("update config set value = 'false'::jsonb where key = 'exigir_evidencia'")
+    ficha = dossier_json(2, "ninguna", RAZON_SUPUESTA)
+    person, posted, sms_calls, _, reader = run_pipeline(monkeypatch, ficha, ficha)
+    assert len(posted) == 1, "sin el candado esta ficha publicaba tarjeta: ese era el fallo"
+    header = posted[0][0]["text"]["text"]
+    assert "MEDIUM SIGNAL" in header and "fit 2/3" in header
+    assert "Open roles: none found" in header
+    assert "Ada Ruiz" not in digest_today()
+
+    # La misma ficha, investigada otra vez con el candado puesto.
+    db.execute("update config set value = 'true'::jsonb where key = 'exigir_evidencia'")
+    assert queue.enqueue(person["slack_user_id"], "manual") is True
+    assert run_next_job(reader).status == "hecho"
+    assert db.fetch_one("select max(version) as v from dossiers")["v"] == 2
+    assert stored_fit(person)["razon"] == RAZON_SUPUESTA
+    assert len(posted) == 1, "con el candado, la ficha nueva no publica otra tarjeta"
+    assert sms_calls == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 1
+    assert "Ada Ruiz" in digest_today()
+
+
+def test_the_real_case_with_the_lock_on_from_the_start_publishes_nothing(conn, monkeypatch):
+    person, posted, sms_calls, _, _ = run_pipeline(
+        monkeypatch, dossier_json(2, "ninguna", RAZON_SUPUESTA)
+    )
+    assert stored_fit(person)["puntuacion"] == 2
+    assert posted == []
+    assert sms_calls == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    assert "Ada Ruiz" in digest_today()
+
+
+def test_with_real_evidence_everything_publishes_like_before(conn, monkeypatch):
+    """Vacantes o necesidad pedida: tarjeta y SMS con 3, solo tarjeta con 2.
+    Con equipo_relevante, lo mismo. Nada de esto pasa por el email diario."""
+    cases = [
+        (3, "vacantes", {("slack", "alta"), ("sms", "alta")}),
+        (3, "necesidad_declarada", {("slack", "alta"), ("sms", "alta")}),
+        (3, "equipo_relevante", {("slack", "alta"), ("sms", "alta")}),
+        (2, "vacantes", {("slack", "media")}),
+        (2, "necesidad_declarada", {("slack", "media")}),
+        (2, "equipo_relevante", {("slack", "media")}),
+    ]
+    for puntuacion, evidencia, expected in cases:
+        with monkeypatch.context() as patch:
+            _, posted, sms_calls, _, _ = run_pipeline(
+                patch, dossier_json(puntuacion, evidencia, "Hiring support right now")
+            )
+            rows = db.fetch_all("select kind, band from deliveries")
+            assert {(r["kind"], r["band"]) for r in rows} == expected, (puntuacion, evidencia)
+            assert len(posted) == 1, (puntuacion, evidencia)
+            assert len(sms_calls) == (1 if puntuacion == 3 else 0), (puntuacion, evidencia)
+            assert "Ada Ruiz" not in digest_today()
+        # Cada caso arranca limpio: misma persona, mismo mensaje, otra ficha.
+        db.execute(
+            "truncate table deliveries, research_jobs, slack_messages, member_snapshots, "
+            "dossiers, prospects, agent_actions, llm_calls, cost_events restart identity cascade"
+        )
+
+
+@pytest.mark.parametrize(
+    ("puntuacion", "expected"),
+    [(3, {("slack", "alta"), ("sms", "alta")}), (2, {("slack", "media")})],
+)
+def test_with_the_lock_off_no_evidence_delivers_exactly_like_today(
+    restore_config, monkeypatch, puntuacion, expected
+):
+    db.execute("update config set value = 'false'::jsonb where key = 'exigir_evidencia'")
+    _, posted, sms_calls, _, _ = run_pipeline(
+        monkeypatch, dossier_json(puntuacion, "ninguna", RAZON_SUPUESTA)
+    )
+    rows = db.fetch_all("select kind, band from deliveries")
+    assert {(r["kind"], r["band"]) for r in rows} == expected
+    assert len(posted) == 1
+    assert len(sms_calls) == (1 if puntuacion == 3 else 0)
+
+
+@pytest.mark.parametrize("evidencia", [None, "sector_guess"])
+def test_a_dossier_without_a_valid_evidence_field_is_rejected_and_retried(
+    conn, monkeypatch, evidencia
+):
+    """Sin el campo, o con un valor inventado, la respuesta no entra: se
+    reintenta con el motivo y la segunda, ya válida, es la que se guarda."""
+    person, posted, _, outcome, _ = run_pipeline(
+        monkeypatch,
+        dossier_json(3, evidencia, "Hiring support right now"),
+        dossier_json(3, "vacantes", "Hiring support right now"),
+    )
+    assert outcome.status == "hecho"
+    assert stored_fit(person)["evidencia"] == "vacantes"
+    assert db.fetch_one("select count(*) as n from llm_calls")["n"] == 2
+    assert len(posted) == 1
+
+
+def test_a_dossier_that_never_declares_its_evidence_is_never_stored(conn, monkeypatch):
+    bad = dossier_json(3, None, "Hiring support right now")
+    person, posted, sms_calls, _, _ = run_pipeline(monkeypatch, bad, bad)
+    assert db.fetch_one("select count(*) as n from dossiers")["n"] == 0
+    assert person["state"] == "incompleto"
+    assert posted == []
+    assert sms_calls == []

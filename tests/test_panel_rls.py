@@ -770,3 +770,49 @@ def test_a_truncated_credential_is_refused(people):
         as_user(ALLOWED, "select panel_guardar_token_slack('xoxc-123456789012345', 'xoxd-a…b')")
     with pytest.raises(psycopg.errors.RaiseException, match="truncated"):
         as_user(ALLOWED, "select panel_guardar_token_slack('xoxc-abc…defghijklmnop', 'xoxd-abc')")
+
+
+# -- exigir_evidencia (0020): un interruptor booleano editable desde Settings --
+
+
+def _exigir_evidencia():
+    return db.fetch_one("select value from config where key = 'exigir_evidencia'")["value"]
+
+
+def test_the_evidence_lock_ships_turned_on(conn):
+    assert _exigir_evidencia() is True
+
+
+def test_an_allowed_user_can_turn_the_evidence_lock_off_and_on(people, restore_config):
+    as_user(ALLOWED, "update config set value = 'false'::jsonb where key = 'exigir_evidencia'")
+    assert _exigir_evidencia() is False
+    as_user(ALLOWED, "update config set value = 'true'::jsonb where key = 'exigir_evidencia'")
+    assert _exigir_evidencia() is True
+
+
+@pytest.mark.parametrize("value", ["0", "1", '"false"', "null", "[]", "{}"])
+def test_the_evidence_lock_only_takes_a_boolean(people, restore_config, value):
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(
+            ALLOWED,
+            "update config set value = %s::jsonb where key = 'exigir_evidencia'",
+            (value,),
+        )
+    assert _exigir_evidencia() is True
+
+
+def test_a_stranger_cannot_turn_the_evidence_lock_off(people, restore_config):
+    as_user(STRANGER, "update config set value = 'false'::jsonb where key = 'exigir_evidencia'")
+    assert _exigir_evidencia() is True
+
+
+def test_the_evidence_policy_does_not_widen_the_allowlist(people, restore_config):
+    """La política nueva abre una sola clave: el kill switch y los topes de
+    dinero siguen fuera, y un booleano no cuela en otra clave."""
+    for key in ("kill_switch", "espera_mensajes_segundos", "zona_horaria"):
+        before = db.fetch_one("select value from config where key = %s", (key,))["value"]
+        as_user(ALLOWED, "update config set value = 'true'::jsonb where key = %s", (key,))
+        assert db.fetch_one("select value from config where key = %s", (key,))["value"] == before
+    # Y tampoco se puede renombrar otra fila para que pase por la política.
+    as_user(ALLOWED, "update config set value = '3'::jsonb where key = 'banda_media_min'")
+    assert db.fetch_one("select value from config where key = 'banda_media_min'")["value"] == 3
