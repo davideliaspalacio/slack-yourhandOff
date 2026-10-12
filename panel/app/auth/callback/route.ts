@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { redirectTo } from "@/lib/redirect";
+import { rutaSegura } from "@/lib/ruta";
 
 // Aquí aterriza el enlace del correo: se canjea el código por una sesión.
 export async function GET(request: NextRequest) {
@@ -13,5 +14,5 @@ export async function GET(request: NextRequest) {
     console.error("auth/callback: could not exchange the code:", error.message);
     return redirectTo(request, "/login?error=enlace");
   }
-  return redirectTo(request, "/");
+  return redirectTo(request, rutaSegura(request.nextUrl.searchParams.get("next")));
 }

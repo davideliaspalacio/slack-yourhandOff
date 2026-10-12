@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { empresaVisible, hace, haceDias, recortar } from "@/lib/format";
+import {
+  DIAS_SENAL_RECIENTE, empresaVisible, hace, haceDias, recortar, tipoSenalLabel,
+} from "@/lib/format";
 import { cambiarEstado } from "./acciones";
 
 // La pantalla de entrada: qué mirar hoy. Las personas con encaje 2 o 3 que el
@@ -36,6 +38,21 @@ export default async function Hoy() {
     .sort((a, b) => b.d.created_at.localeCompare(a.d.created_at))
     .slice(0, MAXIMO);
 
+  // Quién de la lista pidió ayuda en Slack esta semana: no es solo un research más.
+  // La más reciente por persona (la consulta ya viene ordenada de más nueva a más vieja).
+  const pidio = new Map<string, string>();
+  if (candidatos.length) {
+    const { data: senales } = await supabase.from("message_signals")
+      .select("prospect_id, tipo")
+      .in("prospect_id", candidatos.map(({ p }) => p.id))
+      .eq("detectada", true)
+      .gte("created_at", new Date(haceDias(DIAS_SENAL_RECIENTE)).toISOString())
+      .order("created_at", { ascending: false });
+    for (const s of senales ?? []) {
+      if (s.prospect_id && !pidio.has(s.prospect_id)) pidio.set(s.prospect_id, s.tipo ?? "");
+    }
+  }
+
   return (
     <>
       <h1>Today</h1>
@@ -68,6 +85,13 @@ export default async function Hoy() {
                 </Link>
                 <span className={`pill fit-${d.puntuacion}`}>Fit {d.puntuacion}/3</span>
               </div>
+              {pidio.has(p.id) && (
+                <div>
+                  <span className="pill asked">
+                    asked: {tipoSenalLabel(pidio.get(p.id) || null).toLowerCase()}
+                  </span>
+                </div>
+              )}
               <div className="muted">{empresa ?? "—"} · researched {hace(d.created_at)}</div>
               {d.razon && <p className="why">{recortar(d.razon)}</p>}
               <form action={cambiarEstado} className="actions">

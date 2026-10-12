@@ -174,3 +174,39 @@ export const recortar = (texto: string | null | undefined, max = 140): string =>
 
 // Marca de tiempo (ms) de hace N días: el corte de "investigada hace poco".
 export const haceDias = (dias: number) => Date.now() - dias * 86400000;
+
+// message_signals.tipo (supabase/migrations/0021_senales_mensaje.sql).
+const TIPO_SENAL_LABELS: Record<string, string> = {
+  contratacion: "Hiring",
+  soporte: "Support",
+  operaciones: "Operations",
+  asistente: "Assistant",
+  back_office: "Back office",
+  ventas: "Sales",
+  reclutamiento: "Recruiting",
+  contabilidad: "Accounting",
+  desarrollo: "Development",
+};
+export const tipoSenalLabel = (tipo: string | null) =>
+  tipo ? (TIPO_SENAL_LABELS[tipo] ?? tipo.replace(/_/g, " ")) : "—";
+
+// message_signals.alerta_motivo (signals/alertas.py): por qué no se publicó.
+const MOTIVO_ALERTA_LABELS: Record<string, string> = {
+  too_old: "message too old",
+  discarded: "person was discarded",
+  same_person_window: "already alerted for this person recently",
+  test_mode: "test person",
+  publish_failed: "Slack publish failed",
+};
+
+// message_signals.alerta_estado: null y 'reservada' son "todavía no salió".
+export const alertaLabel = (estado: string | null, motivo: string | null) => {
+  if (estado === "publicada") return "Alert posted in Slack";
+  if (estado === "omitida") {
+    return `No alert sent${motivo ? `: ${MOTIVO_ALERTA_LABELS[motivo] ?? motivo}` : ""}`;
+  }
+  return "Alert pending";
+};
+
+// Una señal detectada cuenta como "pidió algo" en Today durante esta ventana.
+export const DIAS_SENAL_RECIENTE = 7;

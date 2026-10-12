@@ -90,3 +90,11 @@ a.card.person.tap:hover { text-decoration: none; border-color: var(--accent); }
 .error { color: var(--alta); }
 .notice.error { color: inherit; border-left: 3px solid var(--alta); }
 details > summary { cursor: pointer; }
+/* Lo que la persona pidió en Slack (ficha y Today). La cita es de un tercero. */
+.pill.asked { border-color: var(--media); color: var(--media); font-weight: 600; }
+.card.asked blockquote { margin: 6px 0 0; padding-left: 12px; border-left: 3px solid var(--line);
+                         white-space: pre-wrap; overflow-wrap: anywhere; }
+.card.asked { margin-bottom: 16px; }
+.card.asked ul.plain { list-style: none; padding-left: 0; }
+.card.asked li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.card.asked li:last-child { border-bottom: 0; }

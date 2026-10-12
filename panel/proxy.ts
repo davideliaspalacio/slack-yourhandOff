@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { redirectTo } from "./lib/redirect";
+import { rutaSegura } from "./lib/ruta";
 
 // Renueva la sesión en cada petición y manda al login a quien no la tiene.
 // Es una comprobación rápida, no la seguridad: quien decide qué se ve es RLS.
@@ -32,7 +33,11 @@ export async function proxy(request: NextRequest) {
   const { data } = await supabase.auth.getUser();
   const isPublic = path.startsWith("/login") || path.startsWith("/auth");
   if (!data.user && !isPublic) {
-    return redirectTo(request, "/login");
+    // Se guarda adónde iba (un enlace de Slack a una ficha) para volver tras entrar.
+    const destino = rutaSegura(path + request.nextUrl.search);
+    return redirectTo(
+      request, destino === "/" ? "/login" : `/login?next=${encodeURIComponent(destino)}`,
+    );
   }
   return response;
 }

@@ -1,8 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
-import { ESTADOS_EDITABLES, accionLabel, bandLabel, empresaVisible, estadoLabel, fecha, jobStatusLabel, reasonLabel, usd } from "@/lib/format";
+import { acceso } from "@/lib/acceso";
+import {
+  ESTADOS_EDITABLES, accionLabel, alertaLabel, bandLabel, empresaVisible, estadoLabel, fecha,
+  jobStatusLabel, reasonLabel, tipoSenalLabel, usd,
+} from "@/lib/format";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
+import { SinAcceso } from "../../SinAcceso";
 import { AyudarResearchForm } from "./AyudarResearchForm";
 
 type Senal = { hecho?: string; fuente?: string };
@@ -57,11 +61,14 @@ type Fuente = string | { url: string; kind?: string; title?: string };
 
 export default async function Persona(props: PageProps<"/personas/[id]">) {
   const { id } = await props.params;
-  const supabase = await createClient();
+  const { supabase, user, allowed } = await acceso();
+  // RLS devuelve vacío tanto si la persona no existe como si quien mira no está
+  // en panel_users: solo en el primer caso es un 404.
+  if (!allowed) return <SinAcceso email={user?.email} />;
   const { data: p } = await supabase.from("prospects").select("*").eq("id", id).maybeSingle();
   if (!p) notFound();
 
-  const [dossier, mensajes, entregas, acciones, cola, llm, otros] = await Promise.all([
+  const [dossier, mensajes, entregas, acciones, cola, llm, otros, pedidos] = await Promise.all([
     supabase.from("dossiers").select("version, content, sources, created_at")
       .eq("prospect_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("slack_messages").select("channel_id, ts, text, status, created_at")
@@ -74,6 +81,11 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
       .eq("slack_user_id", p.slack_user_id).order("created_at", { ascending: false }).limit(10),
     supabase.from("llm_calls").select("cost_usd").eq("prospect_id", id),
     supabase.from("cost_events").select("cost_usd").eq("prospect_id", id),
+    // Lo que la persona pidió en Slack (signals/): solo las detectadas.
+    supabase.from("message_signals")
+      .select("id, created_at, tipo, cita, alerta_estado, alerta_motivo")
+      .eq("prospect_id", id).eq("detectada", true)
+      .order("created_at", { ascending: false }).limit(10),
   ]);
 
   const d = (dossier.data?.content ?? {}) as Dossier;
@@ -87,6 +99,22 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
       <p><Link href="/personas">← People</Link></p>
       <h1>{p.full_name ?? p.slack_user_id}
         {d.persona?.cargo && <span className="muted"> — {d.persona.cargo}</span>}</h1>
+
+      {(pedidos.data ?? []).length > 0 && (
+        <div className="card asked">
+          <h2 style={{ marginTop: 0 }}>What they asked</h2>
+          <ul className="plain">
+            {pedidos.data!.map((s) => (
+              <li key={s.id}>
+                <span className="pill signal">{tipoSenalLabel(s.tipo)}</span>{" "}
+                <span className="muted">{fecha(s.created_at)} · {alertaLabel(s.alerta_estado, s.alerta_motivo)}</span>
+                {/* La cita es texto de un tercero: siempre como texto, nunca HTML ni enlace. */}
+                <blockquote>“{s.cita}”</blockquote>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="two">
         <div className="card">

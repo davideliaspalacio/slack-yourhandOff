@@ -1,15 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { acceso } from "@/lib/acceso";
+import { SinAcceso } from "./SinAcceso";
 import { salir } from "./acciones";
 
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { user, allowed } = await acceso();
   if (!user) redirect("/login");
-
-  // Iniciar sesión no basta: la base solo enseña datos a los correos autorizados.
-  const { data: allowed } = await supabase.rpc("is_panel_user");
+  // Iniciar sesión no basta: la base solo enseña datos a los correos autorizados
+  // (`allowed`). Cada ficha que puede dar 404 lo comprueba también por su cuenta.
 
   return (
     <>
@@ -28,13 +27,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         <form action={salir}><button type="submit">Sign out</button></form>
       </nav>
       <main>
-        {allowed ? children : (
-          <div className="card">
-            <h1>No access</h1>
-            <p>Your account ({user.email}) isn&apos;t authorized to view this panel.
-              Ask David to add it.</p>
-          </div>
-        )}
+        {allowed ? children : <SinAcceso email={user.email} />}
       </main>
     </>
   );

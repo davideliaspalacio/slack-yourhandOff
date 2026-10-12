@@ -1,51 +1,9 @@
-"use client";
+import { rutaSegura } from "@/lib/ruta";
+import { LoginForm } from "./LoginForm";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-
-// Correo y contraseña. No hay registro abierto: las cuentas se crean a mano en
-// Supabase (Authentication → Users → Add user), y aun así solo entra quien
-// esté en panel_users. Así nadie puede darse de alta con el correo de otro.
-export default function Login() {
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [state, setState] = useState<"idle" | "sending" | "error">("idle");
-
-  async function signIn(event: React.FormEvent) {
-    event.preventDefault();
-    setState("sending");
-    const { error } = await createClient().auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    });
-    if (error) {
-      setState("error");
-      return;
-    }
-    // La sesión ya está en las cookies: el proxy la lee en la siguiente petición.
-    router.replace("/");
-    router.refresh();
-  }
-
-  return (
-    <main style={{ maxWidth: 420, marginTop: "12vh" }}>
-      <div className="card">
-        <h1>Founders Club — Panel</h1>
-        <form onSubmit={signIn} style={{ display: "grid", gap: 12 }}>
-          <label htmlFor="email" className="muted">Email</label>
-          <input id="email" type="email" required autoComplete="username" value={email}
-                 onChange={(e) => setEmail(e.target.value)} placeholder="name@yourhandoff.com" />
-          <label htmlFor="password" className="muted">Password</label>
-          <input id="password" type="password" required autoComplete="current-password"
-                 value={password} onChange={(e) => setPassword(e.target.value)} />
-          <button className="primary" type="submit" disabled={state === "sending"}>
-            {state === "sending" ? "Signing in…" : "Sign in"}
-          </button>
-          {state === "error" && <p className="muted">Incorrect email or password.</p>}
-        </form>
-      </div>
-    </main>
-  );
+// `?next=` lo pone el proxy cuando alguien abre un enlace del panel (por ejemplo
+// el botón "Open in panel" de Slack) sin sesión: tras entrar se vuelve ahí.
+export default async function Login(props: PageProps<"/login">) {
+  const { next } = (await props.searchParams) as Record<string, string | undefined>;
+  return <LoginForm destino={rutaSegura(next)} />;
 }

@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { acceso } from "@/lib/acceso";
 import {
   diasDesde, estadoCuentaLabel, estadoSenalLabel, estadoSenalVisible, fecha,
   fuenteCuentaLabel, fuenteVacanteLabel, hace,
 } from "@/lib/format";
 import { elegirCandidato, escanearCuenta, estadoCuenta } from "../../acciones";
+import { SinAcceso } from "../../SinAcceso";
 import { AccionesSenal, Avisos, Badges } from "../../senales/componentes";
 
 type Senal = {
@@ -25,7 +26,9 @@ const enlace = (url?: string) => (url && /^https?:\/\//.test(url) ? url : undefi
 export default async function Cuenta(props: PageProps<"/cuentas/[id]">) {
   const { id } = await props.params;
   const { aviso, error: errorAccion } = (await props.searchParams) as Record<string, string | undefined>;
-  const supabase = await createClient();
+  const { supabase, user, allowed } = await acceso();
+  // Sin permiso RLS también devuelve vacío: eso no es un 404.
+  if (!allowed) return <SinAcceso email={user?.email} />;
   const { data: c } = await supabase.from("target_accounts").select("*").eq("id", id).maybeSingle();
   if (!c) notFound();
 
