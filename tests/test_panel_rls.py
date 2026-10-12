@@ -816,3 +816,60 @@ def test_the_evidence_policy_does_not_widen_the_allowlist(people, restore_config
     # Y tampoco se puede renombrar otra fila para que pase por la política.
     as_user(ALLOWED, "update config set value = '3'::jsonb where key = 'banda_media_min'")
     assert db.fetch_one("select value from config where key = 'banda_media_min'")["value"] == 3
+
+
+# -- señales de mensaje (0021): lectura para el panel y tres claves editables --
+
+
+def _config(key):
+    return db.fetch_one("select value from config where key = %s", (key,))["value"]
+
+
+def test_an_allowed_user_reads_message_signals_and_a_stranger_does_not(people):
+    db.execute(
+        "insert into message_signals (channel_id, ts, detectada, tipo, cita, confianza) "
+        "values ('C1', '1.0', true, 'soporte', 'hiring', 'alta')"
+    )
+    assert len(as_user(ALLOWED, "select * from message_signals")) == 1
+    assert as_user(STRANGER, "select * from message_signals") == []
+
+
+def test_the_panel_cannot_write_message_signals(people):
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(
+            ALLOWED,
+            "insert into message_signals (channel_id, ts, detectada) values ('C1', '1.0', false)",
+        )
+
+
+def test_an_allowed_user_can_edit_the_signal_settings(people, restore_config):
+    as_user(ALLOWED, "update config set value = 'false'::jsonb where key = 'senales_activas'")
+    as_user(ALLOWED, "update config set value = '9'::jsonb where key = 'alertas_por_dia'")
+    as_user(
+        ALLOWED, "update config set value = '3'::jsonb where key = 'alertas_dias_misma_persona'"
+    )
+    assert _config("senales_activas") is False
+    assert _config("alertas_por_dia") == 9
+    assert _config("alertas_dias_misma_persona") == 3
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("senales_activas", "1"),
+        ("senales_activas", '"false"'),
+        ("alertas_por_dia", "true"),
+        ("alertas_por_dia", '"9"'),
+        ("alertas_dias_misma_persona", "null"),
+    ],
+)
+def test_the_signal_settings_only_take_their_own_type(people, restore_config, key, value):
+    before = _config(key)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(ALLOWED, "update config set value = %s::jsonb where key = %s", (value, key))
+    assert _config(key) == before
+
+
+def test_a_stranger_cannot_edit_the_signal_settings(people, restore_config):
+    as_user(STRANGER, "update config set value = 'false'::jsonb where key = 'senales_activas'")
+    assert _config("senales_activas") is True

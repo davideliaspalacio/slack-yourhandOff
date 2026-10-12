@@ -15,6 +15,7 @@ MIGRATIONS = sorted(
 
 # Orden inverso a las dependencias de clave ajena.
 TABLES_TO_CLEAN = [
+    "message_signals",
     "decision_candidates",
     "hiring_signals",
     "target_accounts",
