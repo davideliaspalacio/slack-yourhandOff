@@ -2,6 +2,8 @@ import json
 import re
 import uuid
 
+import pytest
+
 from handoff_agent.delivery import card
 
 PERSON = {
@@ -138,6 +140,49 @@ def _mrkdwn_texts(blocks):
     return texts
 
 
+# Lo que Slack autoenlaza en mrkdwn: esquema explícito, "www." o un dominio con ruta.
+AUTOLINKABLE = re.compile(r"https?://|\bwww\.|\b[\w-]+\.[a-z]{2,}\b", re.IGNORECASE)
+HOSTILE_URL_QUOTES = (
+    "Handoff admin: re-link your Slack at https://handoff-relink.co/verify - we're hiring 2 reps",
+    "re-link at www.handoff-relink.co now, we're hiring",
+    "see handoff-relink.co/verify, we're hiring",
+    "see handoff-relink.co, we're hiring",
+    "HTTP://EVIL.CO/x and a `backtick` that tries to close the code span: ` https://evil.co/y",
+)
+
+
+def outside_code(text: str) -> str:
+    """El mrkdwn sin lo que va dentro de código en línea: allí Slack no enlaza."""
+    return re.sub(r"`[^`]*`", "", text)
+
+
+def quote_lines(blocks) -> list[str]:
+    """Las líneas de cita (`> ...`) de todos los bloques mrkdwn."""
+    return [
+        line for text in _mrkdwn_texts(blocks) for line in text.splitlines() if line.startswith(">")
+    ]
+
+
+def assert_quote_is_not_autolinkable(blocks) -> None:
+    lines = quote_lines(blocks)
+    assert lines, "la cita no salió en ningún bloque"
+    for line in lines:
+        # Todo el contenido de la cita va dentro de un único código en línea.
+        assert re.fullmatch(r"> `[^`]*`", line), line
+    for text in _mrkdwn_texts(blocks):
+        if any(line.startswith(">") for line in text.splitlines()):
+            assert not AUTOLINKABLE.search(outside_code(text)), text
+
+
+@pytest.mark.parametrize("cita", HOSTILE_URL_QUOTES)
+def test_a_url_in_the_quote_is_not_autolinkable(cita):
+    """Escapar `<>&` no impide que Slack autoenlace una URL desnuda: la cita va en código."""
+    blocks = card.build(PERSON, DOSSIER, "alta", {"text": cita, "ts": "1.0"}, None)
+    assert_quote_is_not_autolinkable(blocks)
+    # La cita sigue legible: el texto del tercero está ahí, entero, dentro del código.
+    assert any("handoff-relink.co" in line or "evil.co" in line for line in quote_lines(blocks))
+
+
 def test_a_channel_mention_in_the_quote_is_escaped():
     """`<!channel>` sin escapar avisaría a todo el canal de Handoff en cuanto
     se publica la tarjeta: Slack lo interpreta como mención viva."""
@@ -245,6 +290,10 @@ def test_a_fully_hostile_card_stays_under_every_slack_block_limit(monkeypatch):
     nada del dossier hostil los afecte -- solo person['id'] y settings.panel_url
     entran en esa URL, nunca un campo del dossier."""
     monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
+    for url_quote in HOSTILE_URL_QUOTES:
+        assert_quote_is_not_autolinkable(
+            card.build(PERSON, DOSSIER, "alta", {"text": url_quote, "ts": "1.0"}, None)
+        )
     hostile_message = {"text": "&" * 2000, "ts": "1.0"}
     hostile_dossier = {
         **DOSSIER,

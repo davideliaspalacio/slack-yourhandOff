@@ -21,8 +21,8 @@ Aritmética del peor caso (tope de Slack: 3000 por bloque `section`, 2000 por
 bloque `context`):
   cabecera:  "🗣️ *THEY ASKED · " + etiqueta fija (<= 16) + "*"                  ~  40
   nombre:    "\n*" + NAME_CHARS + "*" + " — " + COMPANY_CHARS                    ~ 330
-  cita:      "> " por línea sobre QUOTE_CHARS (300) caracteres ya escapados
-             (5x al escapar '&')                                                ~ 1500
+  cita:      "> `" + QUOTE_CHARS (300) caracteres escapados (5x al escapar '&') + "`"
+             (código en línea para que ninguna URL se autoenlace, ver card._quote) ~ 1505
   dossier:   "Dossier: fit " + NUM_CHARS + "/3 · " + etiqueta fija              ~  60
 Todo muy por debajo de los topes.
 """

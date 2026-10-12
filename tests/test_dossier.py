@@ -2,7 +2,12 @@ from decimal import Decimal
 
 import pytest
 
-from handoff_agent.dossier import DossierInvalid, cited_sources, validate_dossier
+from handoff_agent.dossier import (
+    DossierInvalid,
+    cited_sources,
+    normalizar_evidencia,
+    validate_dossier,
+)
 
 SOURCES = {"https://acme.com/", "https://acme.com/careers", "https://jobs.example/1"}
 
@@ -172,8 +177,10 @@ def test_hiring_facts_need_sources(facts):
         "roles_deslocalizables": [],
         "fuentes": [],
     }
-    assert validate_dossier(make_dossier(contratacion=contratacion), SOURCES) == []
-    problems = validate_dossier(make_dossier(contratacion={**contratacion, **facts}), SOURCES)
+    sin_vacantes = {"encaje_handoff": {"puntuacion": 1, "evidencia": "ninguna", "razon": "x"}}
+    assert validate_dossier(make_dossier(contratacion=contratacion, **sin_vacantes), SOURCES) == []
+    data = make_dossier(contratacion={**contratacion, **facts}, **sin_vacantes)
+    problems = validate_dossier(data, SOURCES)
     assert any("contratacion" in p for p in problems), problems
 
 
@@ -188,14 +195,27 @@ def test_every_declared_evidence_value_is_accepted(evidencia):
     assert validate_dossier(data, SOURCES) == []
 
 
-def test_a_dossier_without_the_evidence_field_is_rejected():
-    data = make_dossier(encaje_handoff={"puntuacion": 2, "razon": "x"})
-    problems = validate_dossier(data, SOURCES)
-    assert any("encaje_handoff.evidencia" in p for p in problems)
+@pytest.mark.parametrize("missing", ["omitted", None, "", "   "])
+def test_an_absent_or_empty_evidence_is_not_a_problem_and_becomes_ninguna(missing):
+    """El modelo se olvidó del campo: la ficha se guarda degradada, no se pierde."""
+    fit = {"puntuacion": 2, "razon": "x"} | ({} if missing == "omitted" else {"evidencia": missing})
+    data = make_dossier(encaje_handoff=fit)
+    assert validate_dossier(data, SOURCES) == []
+    normalizar_evidencia(data)
+    assert data["encaje_handoff"]["evidencia"] == "ninguna"
+
+
+def test_normalizing_leaves_a_present_value_alone():
+    for value in ("vacantes", "sector", " ninguna"):
+        data = make_dossier(encaje_handoff={"puntuacion": 2, "evidencia": value, "razon": "x"})
+        normalizar_evidencia(data)
+        assert data["encaje_handoff"]["evidencia"] == value
+    normalizar_evidencia("no es un dict")  # no lanza
 
 
 @pytest.mark.parametrize(
-    "invented", ["sector", "probable", "Vacantes", "", " ninguna", None, 2, True, ["vacantes"]]
+    "invented",
+    ["sector", "probable", "Vacantes", " ninguna", 2, True, ["vacantes"], {}, "loquesea"],
 )
 def test_an_invented_evidence_value_is_rejected(invented):
     data = make_dossier(encaje_handoff={"puntuacion": 2, "evidencia": invented, "razon": "x"})
@@ -209,3 +229,28 @@ def test_the_evidence_problem_names_the_allowed_values():
     (problem,) = validate_dossier(data, SOURCES)
     for allowed in ("vacantes", "necesidad_declarada", "equipo_relevante", "ninguna"):
         assert allowed in problem
+
+
+# --- evidencia "vacantes": coherencia mínima con contratacion.vacantes_abiertas ---
+
+
+@pytest.mark.parametrize("vacantes", [None, 0, -1, "3", 2.0, True, [1]])
+def test_evidence_vacantes_needs_a_positive_integer_of_open_roles(vacantes):
+    base = make_dossier()["contratacion"]
+    data = make_dossier(contratacion={**base, "vacantes_abiertas": vacantes})
+    problems = validate_dossier(data, SOURCES)
+    assert any("vacantes_abiertas" in p and "vacantes" in p for p in problems), vacantes
+
+
+def test_evidence_vacantes_with_real_openings_passes():
+    assert validate_dossier(make_dossier(), SOURCES) == []
+
+
+@pytest.mark.parametrize("evidencia", ["necesidad_declarada", "equipo_relevante", "ninguna"])
+def test_other_evidence_values_do_not_need_open_roles(evidencia):
+    base = make_dossier()["contratacion"]
+    data = make_dossier(
+        contratacion={**base, "vacantes_abiertas": None, "roles": [], "roles_deslocalizables": []},
+        encaje_handoff={"puntuacion": 2, "evidencia": evidencia, "razon": "x"},
+    )
+    assert validate_dossier(data, SOURCES) == []

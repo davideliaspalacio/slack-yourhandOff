@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from handoff_agent import guards, llm, untrusted
+from handoff_agent.delivery.bands import band_for
 from handoff_agent.dossier import DossierInvalid
 from handoff_agent.research import synthesize as s
 from handoff_agent.research.gather import Evidence, Gathered
@@ -416,11 +417,13 @@ def test_the_output_format_declares_the_closed_evidence_values():
         assert f'evidencia "{value}"' in s.SYSTEM_PROMPT
 
 
-@pytest.mark.parametrize("bad", [None, "sector"])
-def test_a_missing_or_invented_evidence_gets_one_retry_with_the_reason(conn, monkeypatch, bad):
-    fit = {"puntuacion": 2, "razon": "x"} | ({} if bad is None else {"evidencia": bad})
-    rejected = json.loads(grounded()) | {"encaje_handoff": fit}
-    fake = ScriptedOpenAI(json.dumps(rejected), grounded())
+def fit_of(**fit) -> str:
+    """Un dossier válido cuyo `encaje_handoff` es exactamente `fit`."""
+    return json.dumps(json.loads(grounded()) | {"encaje_handoff": {"puntuacion": 2, **fit}})
+
+
+def test_an_invented_evidence_gets_one_retry_with_the_reason(conn, monkeypatch):
+    fake = ScriptedOpenAI(fit_of(razon="x", evidencia="sector"), grounded())
     monkeypatch.setattr(llm, "_client", lambda: fake)
     result = s.synthesize(real_pid(), "Ada Ruiz", "Acme", gathered())
     assert result.attempts == 2
@@ -428,6 +431,30 @@ def test_a_missing_or_invented_evidence_gets_one_retry_with_the_reason(conn, mon
     retry = fake.calls[1]["messages"][-1]["content"]
     assert "encaje_handoff.evidencia debe ser uno de" in retry
     assert "necesidad_declarada" in retry
+
+
+@pytest.mark.parametrize("fit", [{"razon": "x"}, {"razon": "x", "evidencia": ""}])
+def test_a_forgotten_evidence_is_kept_as_ninguna_without_spending_a_retry(conn, monkeypatch, fit):
+    fake = ScriptedOpenAI(fit_of(**fit))
+    monkeypatch.setattr(llm, "_client", lambda: fake)
+    result = s.synthesize(real_pid(), "Ada Ruiz", "Acme", gathered())
+    assert result.attempts == 1
+    assert len(fake.calls) == 1
+    assert result.dossier["encaje_handoff"]["evidencia"] == "ninguna"
+    # Y el dossier guardado cae en banda baja, por alta que sea la nota.
+    result.dossier["encaje_handoff"]["puntuacion"] = 3
+    assert band_for(result.dossier) == "baja"
+
+
+def test_vacantes_without_open_roles_gets_one_retry_with_the_reason(conn, monkeypatch):
+    sin_vacantes = json.loads(grounded())
+    sin_vacantes["contratacion"]["vacantes_abiertas"] = None
+    sin_vacantes["encaje_handoff"] = {"puntuacion": 3, "evidencia": "vacantes", "razon": "x"}
+    fake = ScriptedOpenAI(json.dumps(sin_vacantes), grounded())
+    monkeypatch.setattr(llm, "_client", lambda: fake)
+    result = s.synthesize(real_pid(), "Ada Ruiz", "Acme", gathered())
+    assert result.attempts == 2
+    assert "vacantes_abiertas" in fake.calls[1]["messages"][-1]["content"]
 
 
 def test_an_invented_evidence_twice_raises_and_nothing_is_returned(conn, monkeypatch):

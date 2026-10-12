@@ -47,6 +47,8 @@ def grounded_dossier() -> str:
                 "fuentes": [],
             },
             senales_contexto=[{"hecho": "Contrata soporte", "fuente": HOME}],
+            # Sin vacantes que sostengan "vacantes": la prueba es lo que ella dijo.
+            encaje_handoff={"puntuacion": 2, "evidencia": "necesidad_declarada", "razon": "x"},
             busquedas_sugeridas=[],
         )
     )

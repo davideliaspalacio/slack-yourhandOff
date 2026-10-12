@@ -1,7 +1,11 @@
 """Pasa los mensajes de Slack por el detector y deja constancia de cada uno.
 
-Toma los mensajes que aún no tienen fila en `message_signals`, los más recientes
-primero, y por cada uno escribe siempre una fila (detectada o no): así no se
+Toma los mensajes que aún no tienen fila en `message_signals` y que caben en la
+edad máxima de una alerta (`alertas_edad_maxima_horas`), los más recientes
+primero. Los más viejos ni se leen ni se pagan: de nada serviría clasificar un
+mensaje cuya alerta caducaría al instante (`alertas._caducar`), y en el primer
+arranque con el histórico entero serían miles de llamadas para publicar cero
+alertas. No se marcan: la consulta los ignora para siempre. Por cada mensaje escribe siempre una fila (detectada o no): así no se
 reprocesa ni se paga dos veces. Devuelve solo las detectadas, con lo necesario
 para publicar la alerta. No publica nada ni aplica los topes de alertas
 (`alertas_por_dia`, `alertas_dias_misma_persona`): eso es del paso siguiente.
@@ -15,6 +19,7 @@ contactado es justo el momento de volver.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from .. import db, db_config, guards, ledger
 from . import detector
@@ -25,7 +30,14 @@ BATCH = 20
 ACCION_PARADA = "senales_parada"
 
 
+def edad_maxima_horas() -> int:
+    """Hasta qué edad un mensaje puede dar una alerta. Lo lee también
+    `alertas.py`, para que detectar y caducar usen siempre el mismo corte."""
+    return db_config.value("alertas_edad_maxima_horas", 24)
+
+
 def _pendientes(limit: int) -> list[dict]:
+    desde = (datetime.now(UTC) - timedelta(hours=edad_maxima_horas())).timestamp()
     return db.fetch_all(
         """
         select sm.channel_id, sm.ts, sm.user_id, sm.text, p.id::text as prospect_id
@@ -35,6 +47,7 @@ def _pendientes(limit: int) -> list[dict]:
           and sm.user_id is not null
           and btrim(coalesce(sm.text, '')) <> ''
           and (p.state is null or p.state <> 'descartado')
+          and sm.ts::numeric >= %s
           and not exists (
               select 1 from message_signals ms
               where ms.channel_id = sm.channel_id and ms.ts = sm.ts
@@ -42,7 +55,7 @@ def _pendientes(limit: int) -> list[dict]:
         order by sm.ts::numeric desc
         limit %s
         """,
-        (limit,),
+        (desde, limit),
     )
 
 

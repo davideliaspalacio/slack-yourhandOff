@@ -3,10 +3,14 @@
 import json
 import re
 
+import pytest
+
 from handoff_agent.delivery import alerta_card, card
 from tests.test_card import (
+    HOSTILE_URL_QUOTES,
     _assert_card_under_limits_no_syntax_leak,
     _mrkdwn_texts,
+    assert_quote_is_not_autolinkable,
 )
 
 PERSON = {
@@ -54,8 +58,20 @@ def test_every_signal_type_has_a_readable_english_label():
 def test_the_quote_is_a_block_quote_and_escaped():
     senal = {**SENAL, "cita": "ping <!channel> & <@U1>"}
     text = text_of(alerta_card.build(senal, PERSON, None, None))
-    assert "> ping &lt;!channel&gt; &amp; &lt;@U1&gt;" in text
+    assert "> `ping &lt;!channel&gt; &amp; &lt;@U1&gt;`" in text
     assert "<!channel>" not in text
+
+
+@pytest.mark.parametrize("cita", HOSTILE_URL_QUOTES)
+def test_a_url_in_the_quote_is_not_autolinkable(cita):
+    """Un enlace de phishing en la cita no puede llegar al CEO como enlace clicable."""
+    blocks = alerta_card.build({**SENAL, "cita": cita}, PERSON, None, None)
+    assert_quote_is_not_autolinkable(blocks)
+    assert any(
+        "handoff-relink.co" in b["text"]["text"] or "evil.co" in b["text"]["text"]
+        for b in blocks
+        if b["type"] == "section" and b["text"]["text"].startswith(">")
+    )
 
 
 def test_with_a_dossier_a_line_shows_the_fit_and_the_state():
@@ -180,6 +196,10 @@ def test_a_fully_hostile_alert_card_never_leaks_syntax_or_breaks_a_limit(monkeyp
             blocks = alerta_card.build(senal, who, dossier, "https://slack.com/p1")
             _assert_card_under_limits_no_syntax_leak(blocks)
     # Y la cita hostil de verdad cabe en su bloque.
+    for url_quote in HOSTILE_URL_QUOTES:
+        assert_quote_is_not_autolinkable(
+            alerta_card.build({**senal, "cita": url_quote}, person, None, None)
+        )
     big = alerta_card.build({**senal, "cita": "&" * 5000}, person, None, None)
     assert all(len(b["text"]["text"]) <= 3000 for b in big if b["type"] == "section")
     assert not re.search(r"&(?!amp;|lt;|gt;)", "".join(_mrkdwn_texts(big)))

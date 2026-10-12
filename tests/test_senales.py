@@ -2,12 +2,13 @@
 
 import json
 import re
+import time
 from types import SimpleNamespace
 
 import pytest
 
 from handoff_agent import db, guards, llm
-from handoff_agent.signals import detector
+from handoff_agent.signals import detector, procesar
 from handoff_agent.signals.detector import Senal
 from handoff_agent.signals.procesar import procesar_pendientes
 from handoff_agent.tools import prospects
@@ -45,6 +46,19 @@ class FakeOpenAI:
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=texto))], usage=usage
         )
+
+
+@pytest.fixture
+def edad_real():
+    """Marca de los tests que usan el límite de edad de verdad."""
+
+
+@pytest.fixture(autouse=True)
+def sin_limite_de_edad(request, monkeypatch):
+    """Casi todos los mensajes de este archivo llevan ts de juguete ("10.0", año
+    1970): se les quita el límite de edad salvo a quien pida `edad_real`."""
+    if "edad_real" not in request.fixturenames:
+        monkeypatch.setattr(procesar, "edad_maxima_horas", lambda: 10**7)
 
 
 @pytest.fixture
@@ -262,6 +276,33 @@ def test_an_author_without_a_prospect_row_is_still_read(conn, modelo):
     (senal,) = procesar_pendientes()
     assert senal["prospect_id"] is None
     assert senal["slack_user_id"] == "UNUEVO"
+
+
+def test_old_messages_are_never_classified_nor_paid_for(conn, modelo, edad_real):
+    """Primer arranque con el histórico: solo el mensaje reciente llega al LLM."""
+    persona("U1")
+    ahora = time.time()
+    for n, horas in enumerate((30, 100, 5000), start=1):
+        mensaje(f"{ahora - horas * 3600:.6f}", "U1", f"we're hiring support rep {n}")
+    reciente = f"{ahora - 3600:.6f}"
+    mensaje(reciente, "U1", "we're hiring a support rep")
+    detectadas = procesar_pendientes()
+    assert [d["ts"] for d in detectadas] == [reciente]
+    assert len(modelo.calls) == 1
+    assert db.fetch_one("select count(*) as n from llm_calls")["n"] == 1
+    # Los viejos no se marcan: la consulta los ignora, ahora y siempre.
+    assert [f["ts"] for f in filas()] == [reciente]
+    assert procesar_pendientes() == []
+    assert len(modelo.calls) == 1
+
+
+def test_the_age_limit_is_the_alerts_config_key(conn, modelo, edad_real, restore_config):
+    persona("U1")
+    antiguo = f"{time.time() - 30 * 3600:.6f}"
+    mensaje(antiguo, "U1", "we're hiring a support rep")
+    assert procesar_pendientes() == []
+    db.execute("update config set value = '48'::jsonb where key = 'alertas_edad_maxima_horas'")
+    assert [d["ts"] for d in procesar_pendientes()] == [antiguo]
 
 
 def test_signals_off_does_nothing(conn, modelo, restore_config):

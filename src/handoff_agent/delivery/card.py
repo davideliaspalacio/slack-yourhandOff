@@ -190,9 +190,24 @@ def _is_safe_link(url: str | None) -> bool:
 
 
 def _quote(text: str) -> str:
-    clean = " ".join((text or "").split())[:QUOTE_CHARS]
+    """Cita textual de un tercero como bloque de cita, sin nada clicable.
+
+    Escapar `<`, `>` y `&` no basta: una URL desnuda ("https://x.co/verify",
+    "www.x.co", "x.co/verify") sobrevive al escapado y Slack la autoenlaza, de
+    modo que quien escribe en el Slack ajeno podría colar un enlace de phishing
+    con aspecto de tarjeta nuestra ante el CEO. La cita va dentro de un código
+    en línea (`` `...` ``): Slack no autoenlaza ni interpreta formato ahí, y el
+    bloque `> ` mantiene el aspecto de cita (en monoespaciado, que además
+    distingue lo literal ajeno de lo que escribimos nosotros). Se prefirió esto
+    a `plain_text`, que obligaría a dejar de escapar y a renunciar a `> `, y a
+    insertar espacios de ancho cero, que depende de cómo detecte Slack los
+    enlaces. Un acento grave dentro del texto cerraría el código antes de
+    tiempo, así que se sustituye por un apóstrofo. Las entidades (`&lt;`) siguen
+    haciendo falta: Slack las decodifica también dentro del código.
+    """
+    clean = " ".join((text or "").split())[:QUOTE_CHARS].replace("`", "'")
     escaped = _escape_mrkdwn(clean)
-    return "\n".join(f"> {line}" for line in escaped.splitlines() or [""])
+    return "\n".join(f"> `{line}`" if line else ">" for line in escaped.splitlines() or [""])
 
 
 def _headline(person: dict, dossier: dict, band: str) -> str:

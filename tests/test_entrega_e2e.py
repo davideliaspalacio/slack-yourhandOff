@@ -45,10 +45,11 @@ def dossier_json(puntuacion: int, evidencia: str | None, razon: str) -> str:
             persona={"nombre": "Ada Ruiz", "cargo": "CEO", "fuente": LINKEDIN},
             empresa={**make_dossier()["empresa"], "fuentes": [HOME]},
             contratacion={
-                "vacantes_abiertas": None,
+                # "vacantes" exige vacantes reales (dossier.validate_dossier).
+                "vacantes_abiertas": 2 if evidencia == "vacantes" else None,
                 "roles": [],
                 "roles_deslocalizables": [],
-                "fuentes": [],
+                "fuentes": [HOME] if evidencia == "vacantes" else [],
             },
             senales_contexto=[{"hecho": "Contrata soporte", "fuente": HOME}],
             encaje_handoff=fit,
@@ -325,15 +326,12 @@ def test_with_the_lock_off_no_evidence_delivers_exactly_like_today(
     assert len(sms_calls) == (1 if puntuacion == 3 else 0)
 
 
-@pytest.mark.parametrize("evidencia", [None, "sector_guess"])
-def test_a_dossier_without_a_valid_evidence_field_is_rejected_and_retried(
-    conn, monkeypatch, evidencia
-):
-    """Sin el campo, o con un valor inventado, la respuesta no entra: se
-    reintenta con el motivo y la segunda, ya válida, es la que se guarda."""
+def test_a_dossier_with_an_invented_evidence_is_rejected_and_retried(conn, monkeypatch):
+    """Un valor presente pero fuera de la lista no entra: se reintenta con el
+    motivo y la segunda, ya válida, es la que se guarda."""
     person, posted, _, outcome, _ = run_pipeline(
         monkeypatch,
-        dossier_json(3, evidencia, "Hiring support right now"),
+        dossier_json(3, "sector_guess", "Hiring support right now"),
         dossier_json(3, "vacantes", "Hiring support right now"),
     )
     assert outcome.status == "hecho"
@@ -342,8 +340,22 @@ def test_a_dossier_without_a_valid_evidence_field_is_rejected_and_retried(
     assert len(posted) == 1
 
 
-def test_a_dossier_that_never_declares_its_evidence_is_never_stored(conn, monkeypatch):
-    bad = dossier_json(3, None, "Hiring support right now")
+def test_a_dossier_that_forgets_its_evidence_is_stored_as_ninguna_and_stays_low(conn, monkeypatch):
+    """El olvido no cuesta la ficha ni un segundo intento: se guarda con
+    "ninguna", sin tarjeta ni SMS (banda baja), pero en panel y digest."""
+    person, posted, sms_calls, outcome, _ = run_pipeline(
+        monkeypatch, dossier_json(3, None, "Hiring support right now")
+    )
+    assert outcome.status == "hecho"
+    assert person["state"] == "investigado"
+    assert stored_fit(person)["evidencia"] == "ninguna"
+    assert db.fetch_one("select count(*) as n from llm_calls")["n"] == 1
+    assert posted == [] and sms_calls == []
+    assert db.fetch_one("select count(*) as n from deliveries where kind = 'slack'")["n"] == 0
+
+
+def test_a_dossier_that_keeps_inventing_its_evidence_is_never_stored(conn, monkeypatch):
+    bad = dossier_json(3, "sector_guess", "Hiring support right now")
     person, posted, sms_calls, _, _ = run_pipeline(monkeypatch, bad, bad)
     assert db.fetch_one("select count(*) as n from dossiers")["n"] == 0
     assert person["state"] == "incompleto"

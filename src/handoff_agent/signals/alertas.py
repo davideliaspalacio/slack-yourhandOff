@@ -236,20 +236,22 @@ def _publicar(reader, ahora: datetime) -> int:
         _parada(exc)
         return 0
 
+    settings = load_settings()
+    if not (settings.handoff_bot_token and settings.handoff_channel_id):
+        # Sin bot o sin canal no hay dónde publicar. Se comprueba ANTES del
+        # detector: clasificar cuesta una llamada al LLM por mensaje y no
+        # serviría de nada. Solo un log informativo, sin fila de ledger por
+        # ciclo. Las señales ya detectadas caducan por edad cuando haya bot.
+        logger.info("alertas sin configurar (faltan HANDOFF_SLACK_*), se omite")
+        return 0
+
     try:
         procesar.procesar_pendientes()
     except Exception:
         # Un fallo del detector no impide publicar lo que ya estaba detectado.
         logger.exception("alertas: el detector falló; se publica lo pendiente")
 
-    _caducar(ahora, db_config.value("alertas_edad_maxima_horas", 24))
-
-    settings = load_settings()
-    if not (settings.handoff_bot_token and settings.handoff_channel_id):
-        # Sin bot o sin canal no hay dónde publicar: ni intento ni fallo
-        # registrado por cada señal. Las pendientes caducan por edad.
-        logger.info("alertas sin configurar (faltan HANDOFF_SLACK_*), se omite")
-        return 0
+    _caducar(ahora, procesar.edad_maxima_horas())
 
     hoy = _publicadas_desde(_inicio_del_dia(ahora))
     cupo = db_config.value("alertas_por_dia", 5) - hoy

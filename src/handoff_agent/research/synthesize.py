@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .. import guards, llm, untrusted
-from ..dossier import SOURCE_KEYS, DossierInvalid, validate_dossier
+from ..dossier import SOURCE_KEYS, DossierInvalid, normalizar_evidencia, validate_dossier
 from .gather import Gathered
 
 MAX_ATTEMPTS = 2
@@ -267,6 +267,9 @@ def synthesize(
             problems = ["la respuesta no era JSON válido"]
             continue
 
+        # Una `evidencia` olvidada se guarda como "ninguna" (banda baja) en vez
+        # de gastar el reintento y perder la ficha.
+        normalizar_evidencia(data)
         problems = validate_dossier(data, gathered.sources)
         if not problems:
             return Synthesis(dossier=_unescape_citations(data), cost_usd=spent, attempts=attempt)

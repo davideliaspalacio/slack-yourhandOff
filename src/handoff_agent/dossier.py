@@ -32,6 +32,24 @@ SIN_EVIDENCIA = "ninguna"
 EVIDENCIAS = ("vacantes", "necesidad_declarada", "equipo_relevante", SIN_EVIDENCIA)
 
 
+def _evidencia_ausente(valor: object) -> bool:
+    """Un campo omitido, nulo o vacío: el modelo se olvidó, no inventó nada."""
+    return valor is None or (isinstance(valor, str) and not valor.strip())
+
+
+def normalizar_evidencia(data: object) -> None:
+    """Pone `encaje_handoff.evidencia = "ninguna"` si falta o viene vacía.
+
+    Un olvido del modelo (la salida es `json_mode`, sin esquema estricto) no
+    debe costar la ficha entera: se degrada a la banda baja (sin tarjeta ni
+    SMS) y el dossier se guarda. Solo toca lo ausente o vacío; un valor
+    presente pero fuera de la lista sigue siendo inválido y se reintenta.
+    """
+    fit = data.get("encaje_handoff") if isinstance(data, dict) else None
+    if isinstance(fit, dict) and _evidencia_ausente(fit.get("evidencia")):
+        fit["evidencia"] = SIN_EVIDENCIA
+
+
 class DossierInvalid(ValueError):
     """The model could not produce a dossier that passes validation."""
 
@@ -132,8 +150,19 @@ def validate_dossier(data: dict, allowed_sources: set[str]) -> list[str]:
         problems.append("encaje_handoff.puntuacion debe ser un entero de 0 a 3")
 
     evidence = data["encaje_handoff"].get("evidencia")
+    if _evidencia_ausente(evidence):
+        evidence = SIN_EVIDENCIA  # ausente o vacío vale "ninguna" (ver normalizar_evidencia)
     if not isinstance(evidence, str) or evidence not in EVIDENCIAS:
         problems.append(f"encaje_handoff.evidencia debe ser uno de: {', '.join(EVIDENCIAS)}")
+    elif evidence == "vacantes":
+        # Única coherencia exigida: declarar "vacantes" sin vacantes que lo
+        # respalden es una contradicción que el modelo puede corregir.
+        open_roles = data["contratacion"].get("vacantes_abiertas")
+        if type(open_roles) is not int or open_roles <= 0:
+            problems.append(
+                'encaje_handoff.evidencia es "vacantes" pero contratacion.vacantes_abiertas '
+                "no es un entero mayor que 0"
+            )
 
     if not isinstance(data["resumen"], str) or not data["resumen"].strip():
         problems.append("el resumen está vacío")

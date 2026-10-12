@@ -309,12 +309,34 @@ def test_alerts_off_in_config_publishes_nothing(conn, slack, restore_config):
 
 
 def test_without_a_bot_configured_nothing_is_attempted_or_burned(conn, slack, monkeypatch):
+    """Sin dónde publicar ni siquiera se llama al detector (cada mensaje cuesta
+    una llamada al LLM), y tampoco se escribe una fila de ledger por ciclo."""
+    llamadas = []
+
+    def espia():
+        llamadas.append(1)
+        raise AssertionError("el detector no debe llamarse sin bot configurado")
+
+    monkeypatch.setattr(alertas.procesar, "procesar_pendientes", espia)
     monkeypatch.delenv("HANDOFF_SLACK_BOT_TOKEN")
     ts = senal()
+    acciones_antes = db.fetch_one("select count(*) as n from agent_actions")["n"]
     assert alertas.publicar_pendientes() == 0
+    assert alertas.publicar_pendientes() == 0
+    assert llamadas == []
     assert slack == []
     assert estado(ts)["alerta_estado"] is None
     assert acciones("alerta_fallida") == []
+    assert db.fetch_one("select count(*) as n from agent_actions")["n"] == acciones_antes
+
+
+def test_without_a_channel_configured_the_detector_is_not_called_either(conn, slack, monkeypatch):
+    def espia():
+        raise AssertionError("el detector no debe llamarse sin canal configurado")
+
+    monkeypatch.setattr(alertas.procesar, "procesar_pendientes", espia)
+    monkeypatch.delenv("HANDOFF_SLACK_CHANNEL_ID")
+    assert alertas.publicar_pendientes() == 0
 
 
 # -- fallos --------------------------------------------------------------------------
