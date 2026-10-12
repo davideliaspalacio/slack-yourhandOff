@@ -2,7 +2,8 @@
 research queue in between. Once per cycle it also runs the target-account
 radar (accounts/radar.py), which only does work when an account is due, and
 the decisor (accounts/decisor.py), which finds who decides each pursued
-opening and queues their research.
+opening and queues their research, and the message signals (signals/alertas.py),
+which detect what people ask for in Slack and post a light alert.
 
 A dead token or a system stop raises an operational alert and the loop keeps
 running: the token may be renewed and the cap may be raised without anyone
@@ -17,7 +18,9 @@ from collections.abc import Callable, Sequence
 
 from .. import estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
+from ..delivery import aviso_lector
 from ..research.worker import SYSTEM_STOPS
+from ..signals import alertas
 from ..slack_client import SlackAuthFailed
 from . import queue
 from .research_runner import run_next_job
@@ -93,6 +96,34 @@ def _decisor() -> None:
         )
 
 
+def _senales(reader) -> None:
+    """Una pasada de las señales en mensajes: detecta y publica las alertas.
+
+    Protegida igual que el radar y el decisor: es un extra, y un fallo aquí se
+    registra y se reintenta en la vuelta siguiente sin tocar el research.
+    `publicar_pendientes` ya gestiona por dentro las paradas del sistema y no
+    lanza; esta guarda es la segunda línea por si algo se le escapa."""
+    try:
+        publicadas = alertas.publicar_pendientes(reader)
+    except Exception:
+        logger.exception("señales fallidas; se reintenta en el siguiente ciclo")
+        return
+    if publicadas:
+        logger.info("señales: %d alerta(s) publicada(s)", publicadas)
+
+
+def _credencial_caducada(exc: SlackAuthFailed) -> None:
+    """La alerta operativa de siempre, más un aviso en el Slack de Handoff (con
+    el bot, que tiene otro token) para que se entere quien no mira el panel. El
+    aviso se frena solo (aviso_token_horas) y nunca lanza; la guarda es por si
+    acaso: avisar no puede empeorar un fallo que ya hay."""
+    ops_alerts.alert("slack_auth", str(exc))
+    try:
+        aviso_lector.avisar_credencial_caducada()
+    except Exception:
+        logger.exception("no se pudo avisar de la credencial caducada")
+
+
 def run_loop(
     reader,
     *,
@@ -139,10 +170,11 @@ def run_loop(
                     for error in tick.errors:
                         logger.warning("slack: %s", error)
                 except SlackAuthFailed as exc:
-                    ops_alerts.alert("slack_auth", str(exc))
+                    _credencial_caducada(exc)
 
             _radar()
             _decisor()
+            _senales(reader)
 
             try:
                 result = run_next_job(reader)
@@ -150,7 +182,7 @@ def run_loop(
                 ops_alerts.alert("parada_del_sistema", str(exc))
                 sleep(SYSTEM_STOP_PAUSE_SECONDS)
             except SlackAuthFailed as exc:
-                ops_alerts.alert("slack_auth", str(exc))
+                _credencial_caducada(exc)
                 sleep(IDLE_SECONDS)
             else:
                 if result is None or result.status == "limitado":

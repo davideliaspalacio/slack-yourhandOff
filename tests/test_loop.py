@@ -29,7 +29,16 @@ class FakeClock:
 
 @pytest.fixture
 def wiring(monkeypatch):
-    calls = {"watch": 0, "alerts": [], "radar": 0, "decisor": 0, "ok": [], "fallos": []}
+    calls = {
+        "watch": 0,
+        "alerts": [],
+        "radar": 0,
+        "decisor": 0,
+        "senales": [],
+        "avisos": 0,
+        "ok": [],
+        "fallos": [],
+    }
 
     def radar_tick(**kwargs):
         calls["radar"] += 1
@@ -50,6 +59,17 @@ def wiring(monkeypatch):
     monkeypatch.setattr(loop.radar, "escanear_pendientes", radar_tick)
     # Ni OpenAI ni Unipile de verdad: el decisor también se sustituye.
     monkeypatch.setattr(loop.decisor, "procesar_pendientes", decisor_tick)
+    # Ni OpenAI ni Slack de verdad: las señales y el aviso de credencial también.
+    monkeypatch.setattr(
+        loop.alertas,
+        "publicar_pendientes",
+        lambda reader=None: calls["senales"].append(reader) or 0,
+    )
+    monkeypatch.setattr(
+        loop.aviso_lector,
+        "avisar_credencial_caducada",
+        lambda: calls.__setitem__("avisos", calls["avisos"] + 1) or True,
+    )
     monkeypatch.setattr(loop.ops_alerts, "alert", lambda kind, msg: calls["alerts"].append(kind))
     # El latido no escribe en la base desde estos tests: se anota lo que se habría escrito.
     monkeypatch.setattr(loop.estado_lector, "registrar_ok", lambda *a: calls["ok"].append(a))
@@ -327,3 +347,91 @@ def test_a_heartbeat_write_that_raises_does_not_break_the_loop(wiring, monkeypat
     assert run(FakeClock(), max_cycles=2) == 2
     assert wiring["alerts"] == []
     assert wiring["radar"] == 2
+
+
+# -- señales en los mensajes --
+
+
+def test_the_signals_run_once_per_cycle_with_the_reader(wiring):
+    run(FakeClock(), max_cycles=3)
+    assert len(wiring["senales"]) == 3
+    assert all(isinstance(r, FakeReader) for r in wiring["senales"])
+
+
+def test_the_signals_run_after_the_radar_and_the_decisor(wiring, monkeypatch):
+    orden = []
+    monkeypatch.setattr(loop.radar, "escanear_pendientes", lambda **k: orden.append("radar") or [])
+    monkeypatch.setattr(
+        loop.decisor, "procesar_pendientes", lambda **k: orden.append("decisor") or []
+    )
+    monkeypatch.setattr(
+        loop.alertas, "publicar_pendientes", lambda reader=None: orden.append("senales") or 0
+    )
+    monkeypatch.setattr(loop, "run_next_job", lambda reader: orden.append("research") or None)
+    run(FakeClock(), max_cycles=1)
+    assert orden == ["radar", "decisor", "senales", "research"]
+
+
+def test_a_signals_failure_does_not_stop_the_research_or_alert(wiring, monkeypatch):
+    researched = []
+
+    def boom(reader=None):
+        raise RuntimeError("openai exploded")
+
+    monkeypatch.setattr(loop.alertas, "publicar_pendientes", boom)
+    monkeypatch.setattr(
+        loop, "run_next_job", lambda reader: researched.append(1) or RunResult("hecho", "U1")
+    )
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert researched == [1, 1]
+    assert wiring["alerts"] == []
+    assert wiring["radar"] == 2 and wiring["decisor"] == 2
+
+
+# -- aviso cuando caduca la credencial del lector --
+
+
+def test_a_dead_token_in_the_poll_also_notifies_slack(wiring, monkeypatch):
+    def watch(*args, **kwargs):
+        raise SlackAuthFailed("token_revoked")
+
+    monkeypatch.setattr(loop, "watch_tick", watch)
+    run(FakeClock(), max_cycles=1)
+    assert wiring["alerts"] == ["slack_auth"]
+    assert wiring["avisos"] == 1
+
+
+def test_a_dead_token_in_the_research_also_notifies_slack(wiring, monkeypatch):
+    def dead(reader):
+        raise SlackAuthFailed("invalid_auth")
+
+    monkeypatch.setattr(loop, "run_next_job", dead)
+    run(FakeClock(), max_cycles=1)
+    assert wiring["alerts"] == ["slack_auth"]
+    assert wiring["avisos"] == 1
+
+
+def test_a_notice_that_blows_up_does_not_break_the_loop(wiring, monkeypatch):
+    def watch(*args, **kwargs):
+        raise SlackAuthFailed("token_revoked")
+
+    def boom():
+        raise RuntimeError("slack down")
+
+    monkeypatch.setattr(loop, "watch_tick", watch)
+    monkeypatch.setattr(loop.aviso_lector, "avisar_credencial_caducada", boom)
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert wiring["alerts"] == ["slack_auth"]
+    assert "ciclo_fallido" not in wiring["alerts"]
+    assert wiring["radar"] == 2
+
+
+def test_a_healthy_poll_sends_no_notice(wiring):
+    run(FakeClock(), max_cycles=3)
+    assert wiring["avisos"] == 0
+
+
+def test_another_failure_of_the_poll_does_not_notify_about_the_credential(wiring, monkeypatch):
+    monkeypatch.setattr(loop, "watch_tick", lambda *a: (_ for _ in ()).throw(RuntimeError("db")))
+    run(FakeClock(), max_cycles=1)
+    assert wiring["avisos"] == 0

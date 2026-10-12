@@ -853,6 +853,30 @@ def test_an_allowed_user_can_edit_the_signal_settings(people, restore_config):
     assert _config("alertas_dias_misma_persona") == 3
 
 
+def test_an_allowed_user_can_edit_the_alert_age_and_notice_settings(people, restore_config):
+    """Migración 0022 amplía la lista blanca de 0021 sin quitar nada."""
+    as_user(
+        ALLOWED, "update config set value = '12'::jsonb where key = 'alertas_edad_maxima_horas'"
+    )
+    as_user(ALLOWED, "update config set value = '3'::jsonb where key = 'aviso_token_horas'")
+    assert _config("alertas_edad_maxima_horas") == 12
+    assert _config("aviso_token_horas") == 3
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("alertas_edad_maxima_horas", '"12"'),
+        ("aviso_token_horas", "true"),
+    ],
+)
+def test_the_new_alert_settings_only_take_numbers(people, restore_config, key, value):
+    before = _config(key)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(ALLOWED, "update config set value = %s::jsonb where key = %s", (value, key))
+    assert _config(key) == before
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [
