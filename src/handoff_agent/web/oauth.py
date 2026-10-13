@@ -489,7 +489,11 @@ def _redirigir(base: str, destino: str, params: dict[str, str]) -> RedirectRespo
     separador = "&" if urlsplit(destino).query else "?"
     # RFC 9207: el emisor va en toda respuesta de autorización, también en los errores.
     url = destino + separador + urlencode({**params, "iss": base})
-    return RedirectResponse(url, status_code=302, headers=CABECERAS_SIN_CACHE)
+    # 303 y no 302: esta redirección responde al POST del formulario de login, y
+    # con 302 el agente de usuario puede repetir el POST contra el callback del
+    # cliente, que solo atiende GET. Visto en producción el 2026-10-13: login
+    # correcto, redirección emitida y ni un solo canje de código.
+    return RedirectResponse(url, status_code=303, headers=CABECERAS_SIN_CACHE)
 
 
 def _error_redirigido(

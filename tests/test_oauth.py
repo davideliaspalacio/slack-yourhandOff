@@ -136,7 +136,7 @@ def entrar(cli, solicitud_id, email=ANA, password=PASSWORD):
 
 
 def codigo_de(redireccion):
-    assert redireccion.status_code == 302, redireccion.text[:400]
+    assert redireccion.status_code == 303, redireccion.text[:400]
     return dict(httpx.URL(redireccion.headers["location"]).params)
 
 
@@ -492,7 +492,7 @@ def test_trying_passwords_starts_costing_time_and_a_good_login_clears_it(cli):
     db.execute("update oauth_intentos set bloqueado_hasta = null")
     gotrue()
     pagina = autorizar(cli, cid, pkce()[1])
-    assert entrar(cli, id_de_solicitud(pagina)).status_code == 302
+    assert entrar(cli, id_de_solicitud(pagina)).status_code == 303
     assert almacen.espera_restante(f"email:{ANA}") == 0
 
 
