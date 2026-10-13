@@ -991,3 +991,39 @@ def test_a_write_from_an_oauth_connection_is_signed_with_the_persons_email(cli):
     assert firma["payload"]["email"] == ANA
     assert firma["payload"]["sufijo"] == tokens.json()["access_token"][-4:]
     assert tokens.json()["access_token"] not in json.dumps(firma, default=str)
+
+
+# -- CORS: el cliente de Claude canjea el código desde el navegador. Sin
+# preflight, /oauth/token responde 405 y el canje no llega nunca (pasó en
+# producción el 2026-10-13). --
+
+
+def test_el_preflight_de_claude_pasa(cli):
+    r = cli.options(
+        "/oauth/token",
+        headers={
+            "Origin": "https://claude.ai",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "https://claude.ai"
+
+
+def test_un_origen_cualquiera_no_recibe_permiso(cli):
+    r = cli.options(
+        "/oauth/token",
+        headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"},
+    )
+    assert "access-control-allow-origin" not in r.headers
+
+
+def test_el_401_del_mcp_expone_la_pista_al_navegador(cli):
+    r = cli.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+        headers={"Origin": "https://claude.ai"},
+    )
+    assert r.status_code == 401
+    assert "WWW-Authenticate" in r.headers.get("access-control-expose-headers", "")

@@ -29,6 +29,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
@@ -82,6 +83,23 @@ app.router.routes.append(Route("/mcp", endpoint=guardia_mcp))
 # login y tokens. Es la tercera puerta expuesta a internet, y la única con un formulario
 # de contraseña: sus propias defensas están documentadas allí.
 app.include_router(oauth.router)
+
+# El cliente de Claude canjea el código desde el navegador, así que sin CORS el
+# preflight de /oauth/token muere con 405 y el canje nunca llega (visto en
+# producción el 2026-10-13: login correcto, redirección correcta y ni una sola
+# petición al endpoint de token). Se abre solo a los dominios de Claude, solo
+# para lo que necesita, y sin credenciales de navegador: la autorización viaja
+# en la cabecera Authorization, no en cookies. `WWW-Authenticate` se expone
+# porque es lo que le dice al cliente dónde está el servidor de autorización.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https://(.*\.)?(claude\.ai|claude\.com|anthropic\.com)",
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["authorization", "content-type", "mcp-protocol-version", "mcp-session-id"],
+    expose_headers=["WWW-Authenticate", "Mcp-Session-Id", "MCP-Protocol-Version"],
+    allow_credentials=False,
+    max_age=600,
+)
 
 # "ver_original" es un botón de tipo URL: Slack manda igualmente un
 # block_actions para él, pero no representa una acción nuestra -- no está en
