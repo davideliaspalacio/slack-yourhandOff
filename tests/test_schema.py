@@ -1,6 +1,8 @@
 import psycopg
 import pytest
 
+from tests import conftest
+
 LEDGER_TABLES = ["dossiers", "llm_calls", "cost_events", "agent_actions", "config"]
 DELIVERY_TABLES = ["deliveries"]
 
@@ -103,9 +105,14 @@ def test_dossier_versions_are_unique_per_prospect(conn):
 
 
 def test_suite_runs_against_the_test_database(conn):
+    """Nunca contra la base de desarrollo. El nombre sale de conftest, que lo
+    deja cambiar con TEST_DB_NAME para correr dos sesiones a la vez, pero
+    siempre tiene que empezar por "handoff_test"."""
     with conn.cursor() as cur:
         cur.execute("select current_database()")
-        assert cur.fetchone()[0] == "handoff_test"
+        actual = cur.fetchone()[0]
+    assert actual == conftest.TEST_DB_NAME
+    assert actual.startswith("handoff_test")
 
 
 INGEST_TABLES = ["slack_messages", "member_snapshots", "research_jobs"]
