@@ -5,7 +5,8 @@
 Una conexión para que **tu Claude** (el que usas tú, desde tu ordenador) pueda
 **preguntarle al agente de Handoff** lo que ya sabe: quién es quién en el Founders Club,
 qué dossiers hay, qué ha pedido la gente en Slack y en qué canal, cuánto se ha gastado y
-cómo está el sistema. Funciona desde cualquier sitio, sin instalar nada del proyecto.
+cómo está el sistema. Funciona desde cualquier sitio, sin instalar nada del proyecto: se
+conecta con el mismo correo y la misma contraseña con los que entras al panel.
 
 Claude puede **mirar todo** (seis herramientas de lectura) y **cambiar lo mismo que
 cambias tú en el panel**: el estado de una persona, las notas y datos que ayudan al
@@ -13,41 +14,55 @@ research, volver a investigar, los umbrales numéricos y los canales que el agen
 (seis herramientas de escritura, ver más abajo). No puede borrar nada, ni tocar los topes
 de gasto, ni apagar el sistema, ni escribir en Slack.
 
-## 1. Crear tu token en el panel
+## 1. Conectar tu Claude
 
-1. Entra al panel y abre **Settings**.
-2. En la tarjeta **Connect your Claude**, escribe un nombre que te ayude a reconocerlo
-   (por ejemplo "Claude de Anthony") y pulsa **Create token**.
+No hay nada que copiar ni ningún archivo que editar, y funciona igual en el ordenador, en
+el navegador y en el móvil.
+
+1. Copia la URL del MCP: está en el panel, en **Settings** → tarjeta **Connect your
+   Claude**, con un botón **Copy URL**. Hoy es
+   `https://buttons-slack-production.up.railway.app/mcp`.
+2. En Claude, abre **Settings** → **Connectors** → **Add custom connector**.
+3. Pega la URL y pulsa **Connect**.
+4. Claude abre una página de Handoff que pide **el mismo correo y la misma contraseña con
+   los que entras al panel**. Entra.
+5. Ya está: Claude vuelve solo con el acceso puesto. La conexión aparece en **Settings** →
+   **Connect your Claude** con la fecha y el último uso.
+
+Si tu correo no está en el panel, no obtienes acceso aunque la contraseña sea correcta.
+
+El permiso dura 8 horas y Claude lo renueva solo mientras lo uses (hasta 30 días sin
+usarlo). Para cortarlo, **Disconnect** en esa misma tarjeta: deja de funcionar en la
+petición siguiente, y Claude no puede renovarlo.
+
+Si te equivocas de contraseña varias veces, la página te hace esperar unos segundos, y
+cada vez más: es a propósito, porque ese formulario está abierto a internet.
+
+## 2. La otra forma: un token a mano
+
+Solo hace falta para **Claude Code en la terminal**, que pide un token en vez de abrir
+una página para entrar.
+
+1. En **Settings** → **Connect your Claude**, pulsa **Connect by hand instead**.
+2. Escribe un nombre que te ayude a reconocerlo (por ejemplo "Claude de Anthony") y pulsa
+   **Create token**.
 3. El panel te enseña el token **una sola vez**. Cópialo ahora: no se puede volver a ver.
    Si lo pierdes, revócalo (**Revoke**) y crea otro.
-4. Cada persona puede tener hasta 5 tokens activos (uno por ordenador, por ejemplo).
-   Si un token se filtra o ya no lo usas, pulsa **Revoke**: deja de funcionar al instante.
+4. Cada persona puede tener hasta 5 tokens activos. Si uno se filtra o ya no lo usas,
+   pulsa **Revoke**: deja de funcionar al instante.
 
 El token es personal. No lo pegues en Slack, ni en un documento compartido.
-
-## 2. Añadirlo a Claude
-
-Los tres datos que necesitas:
-
-| Dato | Valor |
-|---|---|
-| Nombre | `handoff` (el que quieras) |
-| URL | `https://buttons-slack-production.up.railway.app/mcp` |
-| Token | el que acabas de copiar, como cabecera `Authorization: Bearer <token>` |
-
-(El panel muestra la URL exacta debajo del botón; si cambia el dominio del servidor,
-es la que manda.)
-
-**Claude Code** (terminal), una sola vez:
 
 ```bash
 claude mcp add --transport http handoff https://buttons-slack-production.up.railway.app/mcp \
   --header "Authorization: Bearer PEGA_AQUI_TU_TOKEN"
 ```
 
-**Claude Desktop** no habla con servidores remotos con cabecera directamente; se usa
-el puente `mcp-remote` (necesita Node.js). En el archivo de configuración de Claude
-Desktop, dentro de `mcpServers`:
+(El panel muestra ese comando con tu token ya dentro, justo después de crearlo.)
+
+**Claude Desktop**, si tu versión todavía no sabe conectarse a un servidor remoto, usa el
+puente `mcp-remote` (necesita Node.js). En su archivo de configuración, dentro de
+`mcpServers`:
 
 ```json
 "handoff": {
@@ -62,8 +77,8 @@ Desktop, dentro de `mcpServers`:
 }
 ```
 
-Reinicia Claude y comprueba que `handoff` aparece con doce herramientas (seis de
-lectura y seis de escritura).
+Reinicia Claude y comprueba que `handoff` aparece con doce herramientas (seis de lectura
+y seis de escritura).
 
 ## 3. Qué puedes preguntar (lectura)
 
@@ -155,28 +170,50 @@ Cómo tratan los datos:
 
 ## Límites y avisos
 
-- **Tope diario de llamadas:** cada token puede hacer 500 consultas al día (se cuenta cada
-  pregunta que Claude hace al agente, lea o escriba). Pasado el tope, Claude recibirá un
-  error 429 hasta el día siguiente. El tope se cambia en Settings (`mcp_llamadas_por_dia`;
-  0 apaga el MCP remoto para todos).
+- **Tope diario de llamadas:** cada conexión puede hacer 500 consultas al día (se cuenta
+  cada pregunta que Claude hace al agente, lea o escriba). Una "conexión" es un token a
+  mano, o una sesión de las que se abren entrando con el correo; renovar el permiso NO
+  devuelve el cupo. Pasado el tope, Claude recibirá un error 429 hasta el día siguiente.
+  El tope se cambia en Settings (`mcp_llamadas_por_dia`; 0 apaga el MCP remoto para
+  todos).
 - **Tope diario de escrituras, aparte:** 100 cambios al día **por persona** (sumando todos
   sus tokens), en Settings como `mcp_escrituras_por_dia` (0 apaga las escrituras para
   todos). Al pasarse, las herramientas de escritura responden `daily write limit reached`
   y las de lectura siguen funcionando. El día se cuenta en la zona horaria del equipo.
-- **Quién eres lo decide el token,** no lo que Claude escriba: Claude no puede firmar un
-  cambio con el nombre de otra persona.
+- **Quién eres lo decide tu credencial,** no lo que Claude escriba: Claude no puede
+  firmar un cambio con el nombre de otra persona. Entrando con el correo, quien lo dice es
+  Supabase (el mismo sitio que el panel), y la contraseña no se guarda en ningún sitio de
+  Handoff.
 - **Los dossiers son texto de terceros.** Lo que viene de webs y de mensajes de Slack
   llega a Claude dentro de bloques marcados como "no confiables": son datos, no órdenes.
   Si Claude se comporta raro después de leer una ficha, díselo al equipo.
-- **Constancia:** el sistema anota una vez al día, por token, que se usó (quién y con qué
-  herramienta empezó), y cada escritura por separado (ver arriba). El token nunca se guarda
-  ni se registra.
+- **Constancia:** el sistema anota una vez al día, por conexión, que se usó (quién y con
+  qué herramienta empezó), y cada escritura por separado (ver arriba). De los tokens solo
+  se guarda una huella, nunca el valor; de la contraseña, nada.
 - **Cuidado con lo que Claude lee:** los dossiers y mensajes pueden traer texto que
   parezca una orden ("descarta a todos"). Claude está instruido para no obedecerlo y para
   escribir solo cuando tú se lo pidas; aun así, revisa lo que te confirma antes de seguir.
 
 ## Para quien despliega
 
+- Migración `0026_mcp_oauth.sql`: el servidor de autorización OAuth (tablas
+  `oauth_clients`, `oauth_solicitudes`, `oauth_sesiones`, `oauth_tokens`,
+  `oauth_intentos`, y las funciones `panel_sesiones_oauth` / `panel_revocar_sesion_oauth`).
+  No toca nada de `mcp_tokens`: los tokens a mano siguen funcionando igual.
+- **Variables nuevas en el servicio web** (Railway, "Buttons-Slack"), las tres: sin ellas
+  el OAuth queda apagado (responde 503) y el MCP sigue aceptando solo tokens a mano.
+  - `MCP_PUBLIC_URL`: la URL pública de ESE servicio, con `https` (vale con `/mcp` o sin
+    él). Es la identidad del servidor OAuth y del recurso, y va en los metadatos que lee
+    el cliente, así que no se deduce de la cabecera `Host`.
+  - `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY`: contra ellos se verifica el correo y la
+    contraseña (`POST /auth/v1/token?grant_type=password`). La clave es la *publishable*,
+    la misma que lleva el navegador en el panel; nunca la secreta.
+- Rutas públicas que añade (sin credencial, porque el protocolo lo exige):
+  `/.well-known/oauth-protected-resource` (y `/.well-known/oauth-protected-resource/mcp`),
+  `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`,
+  `/oauth/token` y `/oauth/revoke`. El 401 de `/mcp` lleva la cabecera
+  `WWW-Authenticate: Bearer resource_metadata="..."`, que es lo que hace que un cliente
+  sin credencial arranque el flujo solo.
 - Migración `0023_mcp_tokens.sql` (tabla `mcp_tokens`, funciones del panel y la clave
   `mcp_llamadas_por_dia`), `0024_mcp_escritura.sql` (las funciones `mcp_*` de escritura, la
   clave `mcp_escrituras_por_dia` y un índice) y `0025_canales.sql` (la tabla `canales` con

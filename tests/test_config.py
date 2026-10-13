@@ -267,3 +267,33 @@ def test_unipile_settings_are_optional_and_the_dsn_is_trimmed(monkeypatch):
     settings = load_settings()
     assert settings.unipile_dsn == "api4.unipile.com:13460"
     assert (settings.unipile_api_key, settings.unipile_account_id) == ("k", "acc")
+
+
+def test_the_public_url_of_the_mcp_is_normalised_and_has_to_be_https(monkeypatch):
+    """Vale pegar la URL del MCP tal cual (con `/mcp`) o solo el dominio; de ahí sale la
+    identidad del servidor OAuth. Sin https no hay OAuth: queda apagado."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    assert load_settings().mcp_public_url is None
+    for valor in (
+        "https://h.example",
+        "https://h.example/",
+        "https://h.example/mcp",
+        "https://h.example/mcp/",
+        " https://h.example/mcp ",
+    ):
+        monkeypatch.setenv("MCP_PUBLIC_URL", valor)
+        assert load_settings().mcp_public_url == "https://h.example"
+    for malo in ("", "http://h.example", "h.example", "https://", "ftp://h.example"):
+        monkeypatch.setenv("MCP_PUBLIC_URL", malo)
+        assert load_settings().mcp_public_url is None
+
+
+def test_supabase_auth_settings_are_optional_and_trimmed(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres")
+    assert load_settings().supabase_url is None
+    assert load_settings().supabase_publishable_key is None
+    monkeypatch.setenv("SUPABASE_URL", " https://ref.supabase.co/ ")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_x")
+    settings = load_settings()
+    assert settings.supabase_url == "https://ref.supabase.co"
+    assert settings.supabase_publishable_key == "sb_publishable_x"

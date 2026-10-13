@@ -58,6 +58,22 @@ class Settings:
     unipile_api_key: str | None
     unipile_dsn: str | None
     unipile_account_id: str | None
+    mcp_public_url: str | None
+    supabase_url: str | None
+    supabase_publishable_key: str | None
+
+
+def _base_publica(valor: str | None) -> str | None:
+    """`https://host` a partir de `https://host/`, `https://host/mcp` o `https://host/mcp/`.
+
+    Solo https: los metadatos de OAuth y los redirect_uri viajan por ahí, y un cliente
+    los rechazaría igualmente. Cualquier otra cosa cuenta como no configurado."""
+    base = (valor or "").strip().rstrip("/")
+    if base.endswith("/mcp"):
+        base = base[: -len("/mcp")].rstrip("/")
+    if not base.startswith("https://") or len(base) <= len("https://"):
+        return None
+    return base
 
 
 def _required(name: str) -> str:
@@ -142,4 +158,18 @@ def load_settings() -> Settings:
             os.environ.get("UNIPILE_DSN", "").strip().removeprefix("https://").rstrip("/") or None
         ),
         unipile_account_id=os.environ.get("UNIPILE_ACCOUNT_ID") or None,
+        # Base pública de ESTE servicio (el receptor de Railway), sin barra final y sin
+        # `/mcp`. Es la identidad del servidor OAuth y del recurso protegido, y aparece
+        # en los metadatos que lee el cliente, así que no puede salir de la cabecera
+        # Host, que la pone quien llama: se declara. El panel ya tiene una variable
+        # MCP_PUBLIC_URL con la URL completa del MCP, así que aquí valen las dos formas
+        # (con y sin `/mcp`) y se normaliza. Sin ella, el OAuth queda apagado y el MCP
+        # sigue funcionando solo con tokens estáticos (ver web/oauth.py).
+        mcp_public_url=_base_publica(os.environ.get("MCP_PUBLIC_URL")),
+        # Supabase Auth (GoTrue): contra él se verifican el correo y la contraseña del
+        # panel en la pantalla de login del OAuth. La clave publishable es la que lleva
+        # el navegador en el panel -- no concede nada por sí misma, solo permite llamar
+        # al endpoint de login; la secreta (service_role) no entra aquí.
+        supabase_url=(os.environ.get("SUPABASE_URL") or "").strip().rstrip("/") or None,
+        supabase_publishable_key=os.environ.get("SUPABASE_PUBLISHABLE_KEY") or None,
     )

@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import { guardarExigirEvidencia, guardarPausaUnipile, guardarUmbral } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
-import { ConectarClaude, type TokenMcp } from "./ConectarClaude";
+import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
 import { TokenSlackForm } from "./TokenSlackForm";
 
 const EDITABLES: Record<string, string> = {
@@ -124,13 +124,20 @@ export default async function Ajustes() {
 
   // panel_tokens_mcp solo devuelve los tokens de quien mira, y nunca su hash.
   const { data: tokensMcp } = await supabase.rpc("panel_tokens_mcp");
+  // Y panel_sesiones_oauth (0026), las conexiones hechas desde Claude con el correo y la
+  // contraseña, sin copiar ninguna llave. Mismas reglas: solo las propias, nunca un hash.
+  const { data: sesionesOauth } = await supabase.rpc("panel_sesiones_oauth");
 
   return (
     <>
       <h1>Settings</h1>
       <section style={{ marginBottom: 24 }}>
         <h2>Connect your Claude</h2>
-        <ConectarClaude tokens={(tokensMcp ?? []) as TokenMcp[]} url={MCP_URL} />
+        <ConectarClaude
+          tokens={(tokensMcp ?? []) as TokenMcp[]}
+          sesiones={(sesionesOauth ?? []) as SesionOauth[]}
+          url={MCP_URL}
+        />
       </section>
       <section style={{ marginBottom: 24 }}>
         <h2>Founders Club reader token</h2>

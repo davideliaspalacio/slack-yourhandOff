@@ -1,7 +1,9 @@
 """Recibe los clics de la tarjeta y sirve el MCP remoto. Es lo único expuesto a internet.
 
-Dos puertas, cada una con su llave: `/slack/acciones` verifica la firma de Slack y
-`/mcp` (web/mcp_auth.py) exige un token personal. `/salud` no lleva nada sensible.
+Tres puertas, cada una con su llave: `/slack/acciones` verifica la firma de Slack,
+`/mcp` (web/mcp_auth.py) exige una credencial personal, y `/oauth/*` (web/oauth.py) es
+el servidor de autorización que las emite tras un login contra Supabase Auth. `/salud`
+y los `/.well-known/*` son públicos y no llevan nada sensible.
 
 Slack corta a los 3 segundos, así que cada acción es una escritura corta en la
 base y una actualización de la tarjeta -- ambas síncronas, y por eso corren en
@@ -37,13 +39,14 @@ from ..delivery import slack_writer
 from ..delivery.card import _escape_mrkdwn
 from ..ingest import queue
 from ..mcp_remoto import mcp as mcp_remoto
-from . import slack_signature
+from . import oauth, slack_signature
 from .mcp_auth import GuardiaMCP
 
 logger = logging.getLogger(__name__)
 
-# MCP remoto de solo lectura (mcp_remoto.py) en `/mcp`, detrás de la puerta de tokens
-# (mcp_auth.py): sin token válido, 401 antes de que corra ninguna herramienta.
+# MCP remoto (mcp_remoto.py) en `/mcp`, detrás de la puerta de credenciales
+# (mcp_auth.py): sin token válido, 401 antes de que corra ninguna herramienta. Valen un
+# token estático del panel (0023) y un access token OAuth (0026, web/oauth.py).
 guardia_mcp = GuardiaMCP()
 
 
@@ -75,6 +78,10 @@ async def _ciclo_de_vida(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="handoff-acciones", lifespan=_ciclo_de_vida)
 app.router.routes.append(Route("/mcp", endpoint=guardia_mcp))
+# Servidor de autorización OAuth del MCP (web/oauth.py): metadatos, registro de cliente,
+# login y tokens. Es la tercera puerta expuesta a internet, y la única con un formulario
+# de contraseña: sus propias defensas están documentadas allí.
+app.include_router(oauth.router)
 
 # "ver_original" es un botón de tipo URL: Slack manda igualmente un
 # block_actions para él, pero no representa una acción nuestra -- no está en

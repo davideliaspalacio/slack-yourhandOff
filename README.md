@@ -72,11 +72,13 @@ si OpenAI los cambia o se cambia de modelo, hay que actualizarlos aquí.
 ### Para todo el equipo: MCP remoto
 
 Además del servidor local (arriba, solo para quien tiene el repo), el servicio web
-sirve un MCP en `/mcp`, con un token por persona que se crea en Settings → *Connect your
-Claude*. Seis herramientas leen y seis cambian estados, notas de research, umbrales y los
-canales vigilados (con el mismo control que el panel, firmadas y con tope diario). Guía
-para el equipo:
-[`docs/mcp-remoto.md`](docs/mcp-remoto.md).
+sirve un MCP en `/mcp`. Cada persona lo conecta desde su Claude con *Add custom
+connector*: pega la URL, pulsa *Connect* y entra con el correo y la contraseña del panel
+(OAuth 2.1, migración `0026`; los tokens pegados a mano de `0023` siguen valiendo para
+Claude Code en la terminal). Seis herramientas leen y seis cambian estados, notas de
+research, umbrales y los canales vigilados (con el mismo control que el panel, firmadas y
+con tope diario). Las conexiones se ven y se cortan en Settings → *Connect your Claude*.
+Guía para el equipo: [`docs/mcp-remoto.md`](docs/mcp-remoto.md).
 
 ## Research desde la terminal
 

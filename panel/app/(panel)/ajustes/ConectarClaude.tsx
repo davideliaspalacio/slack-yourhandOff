@@ -2,41 +2,87 @@
 
 import { useActionState, useState, useTransition } from "react";
 import { fecha } from "@/lib/format";
-import { crearTokenMcp, revocarTokenMcp } from "../acciones";
+import { crearTokenMcp, revocarSesionOauth, revocarTokenMcp } from "../acciones";
 
 export type TokenMcp = {
   id: string; nombre: string; sufijo: string;
   creado_at: string; ultimo_uso_at: string | null; revocado_at: string | null;
 };
 
-// "Connect your Claude": tokens personales del MCP remoto (leer, y cambiar estados,
-// notas y umbrales: Fase 2, migración 0024). El token
-// en claro solo existe en el estado de este componente, justo después de crearlo:
-// no se guarda en el navegador ni se puede pedir de nuevo a la base.
-export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: string }) {
+// Una sesión OAuth (panel_sesiones_oauth, 0026): alguien entró con su correo y su
+// contraseña desde Claude, sin copiar ninguna llave. `cliente` es como se llama el
+// programa que lo pidió -- texto de un tercero, así que se pinta como texto y nada más.
+export type SesionOauth = {
+  id: string; cliente: string; client_id: string;
+  creado_at: string; ultimo_uso_at: string | null; revocado_at: string | null;
+};
+
+// Las dos formas de conectar un Claude, en una sola lista: la sesión que se abre desde
+// "Add custom connector" (OAuth, migración 0026) y el token que se copia a mano (0023,
+// el que sigue haciendo falta para `claude mcp add` en la terminal). Se muestran juntas
+// porque para quien mira son lo mismo -- "qué tiene acceso a mis datos" -- y lo que
+// cambia es de dónde viene cada una, que es la columna "How".
+type Conexion = {
+  clave: string; id: string; nombre: string; origen: "oauth" | "token"; detalle: string;
+  creado_at: string; ultimo_uso_at: string | null; revocado_at: string | null;
+};
+
+// "Connect your Claude": leer, y cambiar estados, notas y umbrales (Fase 2, migración
+// 0024). El token en claro solo existe en el estado de este componente, justo después de
+// crearlo: no se guarda en el navegador ni se puede pedir de nuevo a la base.
+export function ConectarClaude({
+  tokens,
+  sesiones,
+  url,
+}: {
+  tokens: TokenMcp[];
+  sesiones: SesionOauth[];
+  url: string;
+}) {
   const [state, formAction, pending] = useActionState(crearTokenMcp, {});
   const [visto, setVisto] = useState<string | null>(null);
   const [revocando, startRevocar] = useTransition();
   const [errorRevocar, setErrorRevocar] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
+  const [copiadaUrl, setCopiadaUrl] = useState(false);
+  const [manual, setManual] = useState(false);
 
   const token = state.token && state.token !== visto ? state.token : null;
   const activos = tokens.filter((t) => !t.revocado_at).length;
 
-  function revocar(t: TokenMcp) {
-    if (!confirm(`Revoke "${t.nombre}"? Any Claude using it stops working immediately.`)) return;
+  const conexiones: Conexion[] = [
+    ...sesiones.map((s) => ({
+      clave: `oauth:${s.id}`, id: s.id, nombre: s.cliente, origen: "oauth" as const,
+      detalle: "Signed in with your email",
+      creado_at: s.creado_at, ultimo_uso_at: s.ultimo_uso_at, revocado_at: s.revocado_at,
+    })),
+    ...tokens.map((t) => ({
+      clave: `token:${t.id}`, id: t.id, nombre: t.nombre, origen: "token" as const,
+      detalle: `Pasted token ending in ${t.sufijo}`,
+      creado_at: t.creado_at, ultimo_uso_at: t.ultimo_uso_at, revocado_at: t.revocado_at,
+    })),
+  ].sort((a, b) => b.creado_at.localeCompare(a.creado_at));
+
+  function revocar(c: Conexion) {
+    const aviso = c.origen === "oauth"
+      ? `Disconnect "${c.nombre}"? It stops working immediately and whoever uses it will `
+        + "have to sign in again."
+      : `Revoke "${c.nombre}"? Any Claude using it stops working immediately.`;
+    if (!confirm(aviso)) return;
     startRevocar(async () => {
-      const res = await revocarTokenMcp(t.id);
+      const res = c.origen === "oauth"
+        ? await revocarSesionOauth(c.id)
+        : await revocarTokenMcp(c.id);
       setErrorRevocar(res.error ?? null);
     });
   }
 
-  async function copiar(texto: string) {
+  async function copiar(texto: string, marcar: (ok: boolean) => void) {
     try {
       await navigator.clipboard.writeText(texto);
-      setCopiado(true);
+      marcar(true);
     } catch {
-      setCopiado(false); // sin portapapeles: se puede seleccionar a mano
+      marcar(false); // sin portapapeles: se puede seleccionar a mano
     }
   }
 
@@ -46,6 +92,19 @@ export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: strin
 
   return (
     <>
+      <p>
+        In Claude, open <b>Settings &rarr; Connectors &rarr; Add custom connector</b>, paste
+        this URL and press <b>Connect</b>. Claude will ask you to sign in with the same email
+        and password you use here. Nothing to copy, and it works in the browser and on your
+        phone.
+      </p>
+      <p>
+        <code style={{ wordBreak: "break-all" }}>{url}</code>{" "}
+        <button type="button" onClick={() => copiar(url, setCopiadaUrl)}>
+          {copiadaUrl ? "Copied" : "Copy URL"}
+        </button>
+      </p>
+
       {token && (
         <div className="notice">
           <p style={{ marginTop: 0 }}>
@@ -54,12 +113,9 @@ export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: strin
           </p>
           <p>
             <code style={{ wordBreak: "break-all" }}>{token}</code>{" "}
-            <button type="button" onClick={() => copiar(token)}>
+            <button type="button" onClick={() => copiar(token, setCopiado)}>
               {copiado ? "Copied" : "Copy token"}
             </button>
-          </p>
-          <p>
-            MCP URL: <code style={{ wordBreak: "break-all" }}>{url}</code>
           </p>
           <p style={{ marginBottom: 0 }}>
             In Claude Code, run this once (it already includes your token):
@@ -74,24 +130,28 @@ export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: strin
         </div>
       )}
 
-      {tokens.length > 0 ? (
+      {conexiones.length > 0 ? (
         <table>
           <thead>
-            <tr><th>Name</th><th>Ends in</th><th>Created</th><th>Last used</th><th /></tr>
+            <tr>
+              <th>Name</th><th>How</th><th>Created</th><th>Last used</th><th />
+            </tr>
           </thead>
           <tbody>
-            {tokens.map((t) => (
-              <tr key={t.id} className={t.revocado_at ? "muted" : undefined}>
-                <td>{t.nombre}</td>
-                <td><code>{t.sufijo}</code></td>
-                <td>{fecha(t.creado_at)}</td>
-                <td>{t.ultimo_uso_at ? fecha(t.ultimo_uso_at) : "Never"}</td>
+            {conexiones.map((c) => (
+              <tr key={c.clave} className={c.revocado_at ? "muted" : undefined}>
+                <td>{c.nombre}</td>
+                <td>{c.detalle}</td>
+                <td>{fecha(c.creado_at)}</td>
+                <td>{c.ultimo_uso_at ? fecha(c.ultimo_uso_at) : "Never"}</td>
                 <td>
-                  {t.revocado_at ? (
-                    <span>Revoked {fecha(t.revocado_at)}</span>
+                  {c.revocado_at ? (
+                    <span>
+                      {c.origen === "oauth" ? "Disconnected" : "Revoked"} {fecha(c.revocado_at)}
+                    </span>
                   ) : (
-                    <button type="button" onClick={() => revocar(t)} disabled={revocando}>
-                      Revoke
+                    <button type="button" onClick={() => revocar(c)} disabled={revocando}>
+                      {c.origen === "oauth" ? "Disconnect" : "Revoke"}
                     </button>
                   )}
                 </td>
@@ -100,34 +160,47 @@ export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: strin
           </tbody>
         </table>
       ) : (
-        <p className="muted">You have no tokens yet.</p>
+        <p className="muted">Nothing is connected yet.</p>
       )}
       {errorRevocar && <p className="notice">{errorRevocar}</p>}
 
-      <form action={formAction} className="inline">
-        <input
-          name="nombre"
-          type="text"
-          autoComplete="off"
-          placeholder="e.g. Anthony's Claude"
-          aria-label="Token name"
-          maxLength={60}
-          required
-          style={{ width: 260 }}
-        />
-        <button type="submit" disabled={pending || activos >= 5}>
-          {pending ? "Creating…" : "Create token"}
-        </button>
-      </form>
-      {state.error && <p className="notice">{state.error}</p>}
       <p className="muted" style={{ fontSize: 12 }}>
-        MCP URL: <code>{url}</code> · A token lets Claude read everything the panel shows and
-        change statuses, research notes, thresholds and the watched channels, with the same
-        access you have here. Every
-        change is recorded under your name. It can&apos;t delete anything, touch the spending
-        caps or shut the system down. Up to 5 active tokens per person; the database keeps only a
-        fingerprint of each one.
+        Any connection lets Claude read everything the panel shows and change statuses,
+        research notes and thresholds, with the same access you have here. Every change is
+        recorded under your name. It can&apos;t delete anything, touch the spending caps or
+        shut the system down.
       </p>
+      <p>
+        <button type="button" onClick={() => setManual(!manual)}>
+          {manual ? "Hide the manual way" : "Connect by hand instead"}
+        </button>
+      </p>
+
+      {manual && (
+        <>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Only needed for Claude Code in a terminal, which asks for a token instead of
+            signing in. Up to 5 active tokens per person; the database keeps only a
+            fingerprint of each one.
+          </p>
+          <form action={formAction} className="inline">
+            <input
+              name="nombre"
+              type="text"
+              autoComplete="off"
+              placeholder="e.g. Anthony's Claude"
+              aria-label="Token name"
+              maxLength={60}
+              required
+              style={{ width: 260 }}
+            />
+            <button type="submit" disabled={pending || activos >= 5}>
+              {pending ? "Creating…" : "Create token"}
+            </button>
+          </form>
+          {state.error && <p className="notice">{state.error}</p>}
+        </>
+      )}
     </>
   );
 }

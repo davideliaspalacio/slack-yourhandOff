@@ -34,6 +34,11 @@ TABLES_TO_CLEAN = [
     "prospects",
     "secretos",
     "mcp_tokens",
+    "oauth_tokens",
+    "oauth_solicitudes",
+    "oauth_sesiones",
+    "oauth_clients",
+    "oauth_intentos",
 ]
 
 ENV_THAT_MUST_NOT_LEAK = [
@@ -61,6 +66,9 @@ ENV_THAT_MUST_NOT_LEAK = [
     "UNIPILE_API_KEY",
     "UNIPILE_DSN",
     "UNIPILE_ACCOUNT_ID",
+    "MCP_PUBLIC_URL",
+    "SUPABASE_URL",
+    "SUPABASE_PUBLISHABLE_KEY",
 ]
 
 

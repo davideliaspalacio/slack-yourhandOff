@@ -343,3 +343,14 @@ export async function revocarTokenMcp(id: string): Promise<{ error?: string }> {
   revalidatePath("/ajustes");
   return {};
 }
+
+// Desconectar una sesión OAuth (panel_revocar_sesion_oauth, 0026): lo que se corta es la
+// autorización entera, no un token, así que el Claude que la usaba deja de entrar en la
+// petición siguiente y tampoco puede renovarse.
+export async function revocarSesionOauth(id: string): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_revocar_sesion_oauth", { p_id: id });
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return {};
+}
