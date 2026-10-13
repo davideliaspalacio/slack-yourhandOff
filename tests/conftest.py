@@ -7,7 +7,9 @@ import pytest
 ADMIN_DB = os.environ.get(
     "TEST_ADMIN_DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54332/postgres"
 )
-TEST_DB_NAME = "handoff_test"
+# Se puede cambiar con TEST_DB_NAME para que dos sesiones de tests en paralelo
+# (por ejemplo dos agentes trabajando a la vez) no se pisen la misma base.
+TEST_DB_NAME = os.environ.get("TEST_DB_NAME", "handoff_test")
 TEST_DB = ADMIN_DB.rsplit("/", 1)[0] + f"/{TEST_DB_NAME}"
 MIGRATIONS = sorted(
     (pathlib.Path(__file__).parent.parent / "supabase" / "migrations").glob("*.sql")
