@@ -4,9 +4,9 @@ Servidor aparte de `mcp_server.py` (el local, por stdio, del desarrollador). Aqu
 expone `investigar_persona` (gasta dinero) y `buscar_decisor` (consume Unipile); este
 se abre a internet con un token por persona, así que expone dos listas cerradas:
 
-- LECTURA, seis herramientas definidas en este archivo: `personas_buscar`,
-  `persona_ver`, `senales_recientes`, `canales_listar`, `resumen_costes` y
-  `estado_sistema`.
+- LECTURA, siete herramientas definidas en este archivo: `personas_buscar`,
+  `persona_ver`, `senales_recientes`, `seguimientos_pendientes`, `canales_listar`,
+  `resumen_costes` y `estado_sistema`.
 - ESCRITURA, seis, definidas en `mcp_escritura.py` y registradas al final de este
   archivo: `persona_cambiar_estado`, `persona_ayudar_research`, `persona_reinvestigar`,
   `ajustar_umbral`, `canal_agregar` y `canal_quitar`. Lo mismo que el panel, y nada más
@@ -14,7 +14,7 @@ se abre a internet con un token por persona, así que expone dos listas cerradas
 
 Garantías, cada una con su test:
 
-- Lista blanca. Las herramientas expuestas son exactamente esas doce; si alguien añade
+- Lista blanca. Las herramientas expuestas son exactamente esas trece; si alguien añade
   otra, `tests/test_mcp_remoto.py` falla hasta que se decida a conciencia, en la lista
   de lectura o en la de escritura.
 - La lectura no escribe. Cada consulta corre en una transacción de solo lectura
@@ -397,6 +397,141 @@ def senales_recientes(
             for f in filas
         ],
     }
+
+
+@mcp.tool()
+def seguimientos_pendientes(dias: int | None = None, limite: int = 25) -> dict:
+    """A quién le debes respuesta en tus mensajes directos de Slack, lo que lleva
+    más tiempo esperando primero.
+
+    Tres tipos de caso: `responder` (la otra persona escribió el último mensaje y
+    tú no has contestado), `sin_respuesta` (escribiste tú y no ha contestado) y
+    `sin_conversacion` (alguien marcado como contactado con quien no hay ningún
+    mensaje directo). Con `dias` solo salen los que llevan al menos tantos días
+    esperando; sin él se usan los umbrales de la configuración
+    (`seguimiento_horas_para_responder`, `seguimiento_dias_sin_respuesta`).
+
+    De cada conversación se sabe con quién es, quién escribió el último mensaje,
+    cuándo y el enlace para abrirla. El contenido de los mensajes directos NO se
+    guarda en ninguna parte, así que esta herramienta no puede decir qué se dijo.
+    """
+    limite = _acotar(limite, 1, LIMITE_MAXIMO, 25)
+    dias = None if dias is None else _acotar(dias, 0, DIAS_MAXIMOS, 1)
+    with _lectura() as cur:
+        cur.execute(
+            "select key, value from config where key in "
+            "('seguimiento_activo', 'seguimiento_horas_para_responder', "
+            "'seguimiento_dias_sin_respuesta')"
+        )
+        ajustes = {f["key"]: f["value"] for f in cur.fetchall()}
+        activo = ajustes.get("seguimiento_activo", True) is True
+        # Con `dias` manda lo que pide quien pregunta; sin él, la configuración.
+        horas_responder = (
+            dias * 24 if dias is not None else ajustes.get("seguimiento_horas_para_responder", 24)
+        )
+        dias_sin_respuesta = (
+            dias if dias is not None else ajustes.get("seguimiento_dias_sin_respuesta", 3)
+        )
+        if not activo:
+            return {
+                "activo": False,
+                "total": 0,
+                "casos": [],
+                "nota": "follow-up tracking is switched off (seguimiento_activo)",
+            }
+        cur.execute(
+            """
+            select r.dm_id, r.team_id, r.ultimo_de, r.ultimo_ts, r.avisado_ts,
+                   coalesce(p.slack_user_id, r.slack_user_id) as slack_user_id,
+                   p.id::text as prospect_id, p.full_name, p.company_name,
+                   p.company_name_override, p.state,
+                   case when r.ultimo_de = 'otro' then 'responder' else 'sin_respuesta' end as tipo,
+                   floor((extract(epoch from now()) - r.ultimo_ts::numeric) / 86400) as dias
+              from dm_rastro r
+              left join prospects p on p.id = r.prospect_id
+             where (p.state is null or p.state <> 'descartado')
+               and ((r.ultimo_de = 'otro'
+                     and r.ultimo_ts::numeric
+                         < extract(epoch from now()) - %(horas)s * 3600)
+                 or (r.ultimo_de = 'dueno'
+                     and r.ultimo_ts::numeric
+                         < extract(epoch from now()) - %(dias_sin)s * 86400))
+             order by r.ultimo_ts::numeric
+             limit %(limite)s
+            """,
+            {"horas": horas_responder, "dias_sin": dias_sin_respuesta, "limite": limite},
+        )
+        conversaciones = cur.fetchall()
+        cur.execute(
+            """
+            select p.id::text as prospect_id, p.slack_user_id, p.full_name, p.company_name,
+                   p.company_name_override, p.updated_at,
+                   floor(extract(epoch from now() - p.updated_at) / 86400) as dias
+              from prospects p
+             where p.state = 'contactado'
+               and not p.sin_tarjeta
+               and p.updated_at < now() - make_interval(days => %(dias)s)
+               and not exists (
+                   select 1 from dm_rastro r
+                    where r.prospect_id = p.id or r.slack_user_id = p.slack_user_id
+               )
+             order by p.updated_at
+             limit %(limite)s
+            """,
+            {"dias": dias_sin_respuesta, "limite": limite},
+        )
+        sin_conversacion = cur.fetchall()
+
+    casos = [
+        jsonable(
+            {
+                "tipo": f["tipo"],
+                "dias_esperando": int(f["dias"] or 0),
+                "persona": jsonable(
+                    {
+                        "id": f["prospect_id"],
+                        "slack_user_id": f["slack_user_id"],
+                        "nombre": _f(f["full_name"], "nombre-en-slack"),
+                        "empresa": _f(_empresa(f), "empresa-en-slack"),
+                        "estado": f["state"],
+                    }
+                ),
+                "ultimo_mensaje_de": "them" if f["ultimo_de"] == "otro" else "you",
+                "ultimo_mensaje_ts": f["ultimo_ts"],
+                "avisado": f["avisado_ts"] == f["ultimo_ts"],
+                "abrir_en_slack": (
+                    f"https://app.slack.com/client/{f['team_id']}/{f['dm_id']}"
+                    if f["team_id"] and f["dm_id"]
+                    else None
+                ),
+            }
+        )
+        for f in conversaciones
+    ]
+    casos += [
+        jsonable(
+            {
+                "tipo": "sin_conversacion",
+                "dias_esperando": int(f["dias"] or 0),
+                "persona": jsonable(
+                    {
+                        "id": f["prospect_id"],
+                        "slack_user_id": f["slack_user_id"],
+                        "nombre": _f(f["full_name"], "nombre-en-slack"),
+                        "empresa": _f(_empresa(f), "empresa-en-slack"),
+                        "estado": "contactado",
+                    }
+                ),
+                "ultimo_mensaje_de": None,
+                "ultimo_mensaje_ts": None,
+                "avisado": None,
+                "abrir_en_slack": None,
+            }
+        )
+        for f in sin_conversacion
+    ]
+    casos.sort(key=lambda c: -c["dias_esperando"])
+    return {"activo": True, "total": len(casos[:limite]), "casos": casos[:limite]}
 
 
 @mcp.tool()

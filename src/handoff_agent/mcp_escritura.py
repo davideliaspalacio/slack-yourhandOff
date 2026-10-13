@@ -75,6 +75,10 @@ UMBRALES = (
     "alertas_dias_misma_persona",
     "alertas_edad_maxima_horas",
     "aviso_token_horas",
+    "seguimiento_horas_para_responder",
+    "seguimiento_dias_sin_respuesta",
+    "seguimiento_max_por_resumen",
+    "seguimiento_retencion_dias",
 )
 
 # Canales vigilados: la clave de config de la migración 0016. El formato y el máximo

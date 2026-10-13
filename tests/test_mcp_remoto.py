@@ -21,6 +21,7 @@ HERRAMIENTAS_LECTURA = {
     "personas_buscar",
     "persona_ver",
     "senales_recientes",
+    "seguimientos_pendientes",
     "canales_listar",
     "resumen_costes",
     "estado_sistema",
@@ -543,3 +544,105 @@ def test_the_channel_name_travels_with_every_signal(con_canales):
     ficha = mcp_remoto.persona_ver("U1")
     assert ficha["senales"][0]["canal"] == "C1"
     assert ficha["senales"][0]["canal_nombre"] == "#founders-general"
+
+
+# --- seguimientos pendientes (el rastro de los DMs, migración 0027) --------------
+
+
+def _traza(dm_id, user, de, horas, prospect_id=None, team="T0OWNER"):
+    import time
+
+    db.execute(
+        "insert into dm_rastro (dm_id, team_id, slack_user_id, prospect_id, ultimo_ts, ultimo_de) "
+        "values (%s, %s, %s, %s, %s, %s)",
+        (dm_id, team, user, prospect_id, f"{time.time() - horas * 3600:.6f}", de),
+    )
+
+
+def test_seguimientos_pendientes_lists_who_is_waiting(datos):
+    _traza("DAAA", "U1", "otro", 30, datos["ada"]["id"])
+    _traza("DBBB", "U2", "dueno", 24 * 5, datos["bob"]["id"])
+    r = mcp_remoto.seguimientos_pendientes()
+    assert r["activo"] is True
+    assert [c["tipo"] for c in r["casos"]] == ["sin_respuesta", "responder"]
+    responder = next(c for c in r["casos"] if c["tipo"] == "responder")
+    assert responder["ultimo_mensaje_de"] == "them"
+    assert responder["dias_esperando"] == 1
+    assert responder["abrir_en_slack"] == "https://app.slack.com/client/T0OWNER/DAAA"
+    assert responder["avisado"] is False
+
+
+def test_seguimientos_pendientes_never_says_what_was_said(datos):
+    """El rastro no guarda el texto de un DM: la herramienta no puede inventarlo."""
+    _traza("DAAA", "U1", "otro", 30, datos["ada"]["id"])
+    (caso,) = mcp_remoto.seguimientos_pendientes()["casos"]
+    for clave in ("cita", "texto", "text", "mensaje"):
+        assert clave not in caso
+    assert set(caso) == {
+        "tipo",
+        "dias_esperando",
+        "persona",
+        "ultimo_mensaje_de",
+        "ultimo_mensaje_ts",
+        "avisado",
+        "abrir_en_slack",
+    }
+
+
+def test_seguimientos_pendientes_fences_the_name_and_company(datos):
+    _traza("DAAA", "U1", "otro", 30, datos["ada"]["id"])
+    (caso,) = mcp_remoto.seguimientos_pendientes()["casos"]
+    assert TAG in caso["persona"]["nombre"]
+    # Y el intento de cerrar el bloque desde dentro queda retirado.
+    assert "</contenido-web-no-confiable>" not in caso["persona"]["nombre"].rstrip()[:-30]
+    assert "[etiqueta retirada]" in caso["persona"]["nombre"]
+
+
+def test_seguimientos_pendientes_respects_the_thresholds_and_dias(datos):
+    _traza("DAAA", "U1", "otro", 5, datos["ada"]["id"])
+    assert mcp_remoto.seguimientos_pendientes()["total"] == 0
+    # `dias` manda sobre los umbrales de la configuración: con 0 sale todo
+    # (incluido el contactado sin conversación), con 7 nada.
+    assert "responder" in {c["tipo"] for c in mcp_remoto.seguimientos_pendientes(dias=0)["casos"]}
+    assert mcp_remoto.seguimientos_pendientes(dias=7)["total"] == 0
+
+
+def test_seguimientos_pendientes_includes_contacted_without_a_conversation(datos):
+    db.execute(
+        "update prospects set updated_at = now() - interval '9 days' where id = %s",
+        (datos["bob"]["id"],),
+    )
+    r = mcp_remoto.seguimientos_pendientes()
+    (caso,) = r["casos"]
+    assert caso["tipo"] == "sin_conversacion"
+    assert caso["dias_esperando"] == 9
+    assert caso["abrir_en_slack"] is None
+    # Con un DM ya no es un caso de "sin conversación".
+    _traza("DBBB", "U2", "otro", 1, datos["bob"]["id"])
+    assert mcp_remoto.seguimientos_pendientes()["casos"] == []
+
+
+def test_seguimientos_pendientes_skips_discarded_people(datos):
+    db.execute("update prospects set state = 'descartado' where id = %s", (datos["ada"]["id"],))
+    _traza("DAAA", "U1", "otro", 30, datos["ada"]["id"])
+    assert mcp_remoto.seguimientos_pendientes()["total"] == 0
+
+
+def test_seguimientos_pendientes_says_so_when_the_switch_is_off(datos, restore_config):
+    db.execute("update config set value = 'false'::jsonb where key = 'seguimiento_activo'")
+    _traza("DAAA", "U1", "otro", 30, datos["ada"]["id"])
+    r = mcp_remoto.seguimientos_pendientes()
+    assert r == {
+        "activo": False,
+        "total": 0,
+        "casos": [],
+        "nota": "follow-up tracking is switched off (seguimiento_activo)",
+    }
+
+
+def test_seguimientos_pendientes_caps_the_limit(datos):
+    for i in range(5):
+        _traza(f"DAA{i}", f"U{i}", "otro", 30 + i)
+    assert mcp_remoto.seguimientos_pendientes(limite=2)["total"] == 2
+    # Un límite absurdo se acota, no falla (igual que en personas_buscar).
+    assert mcp_remoto.seguimientos_pendientes(limite=-3)["total"] == 1

@@ -69,6 +69,10 @@ const ACTION_LABELS: Record<string, string> = {
   sms_detenido: "SMS stopped",
   sms_fallido: "SMS failed",
   mcp_escritura: "Changed from Claude",
+  seguimiento_resumen: "Follow-up summary posted",
+  seguimiento_avisado: "Follow-up reminded",
+  seguimiento_parada: "Follow-ups stopped",
+  seguimiento_fallido: "Follow-up summary failed",
 };
 export const accionLabel = (action: string) => ACTION_LABELS[action] ?? action;
 
@@ -220,3 +224,20 @@ export const canalLabel = (channelId: string, nombre?: string | null, conCodigo 
   if (!limpio) return channelId;
   return conCodigo ? `#${limpio} (${channelId})` : `#${limpio}`;
 };
+
+// Mensajes directos: el rastro (dm_rastro, migración 0027) guarda la marca de
+// tiempo de Slack, que es un epoch en segundos con decimales ("1700000000.000100").
+export const fechaDesdeTs = (ts: string | null | undefined): string | null => {
+  const segundos = Number(ts);
+  if (!ts || !Number.isFinite(segundos) || segundos <= 0) return null;
+  return new Date(segundos * 1000).toISOString();
+};
+
+// dm_rastro.ultimo_de: quién escribió el último mensaje de la conversación.
+export const ultimoDeLabel = (de: string | null | undefined) =>
+  de === "dueno" ? "You wrote last" : de === "otro" ? "They replied last" : "—";
+
+// El enlace que abre la conversación en Slack. Sin el código del workspace (que
+// el worker guarda con el rastro) no hay enlace: se enseña la sección sin él.
+export const enlaceDm = (teamId: string | null | undefined, dmId: string | null | undefined) =>
+  teamId && dmId ? `https://app.slack.com/client/${teamId}/${dmId}` : null;

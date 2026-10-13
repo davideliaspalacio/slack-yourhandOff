@@ -933,3 +933,89 @@ def test_nobody_writes_channel_names_from_the_panel(con_nombre_de_canal):
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             as_user(ALLOWED, sql)
     assert db.fetch_one("select nombre from canales")["nombre"] == "founders-general"
+
+
+# -- rastro de los DMs y ajustes del seguimiento (0027) ------------------------
+
+
+def _traza_dm():
+    db.execute(
+        "insert into dm_rastro (dm_id, team_id, slack_user_id, ultimo_ts, ultimo_de) "
+        "values ('DAAA', 'T0OWNER', 'U1', '1700000000.000100', 'otro')"
+    )
+
+
+def test_an_allowed_user_reads_the_dm_trace_and_a_stranger_does_not(people):
+    _traza_dm()
+    assert len(as_user(ALLOWED, "select * from dm_rastro")) == 1
+    assert as_user(STRANGER, "select * from dm_rastro") == []
+    assert as_user(None, "select * from dm_rastro") == []
+
+
+def test_nobody_in_the_panel_can_write_the_dm_trace(people):
+    """El rastro lo escribe el worker; el panel solo lo lee."""
+    _traza_dm()
+    for sql in (
+        "update dm_rastro set ultimo_de = 'dueno'",
+        "delete from dm_rastro",
+        (
+            "insert into dm_rastro (dm_id, slack_user_id, ultimo_ts, ultimo_de) "
+            "values ('DBBB', 'U2', '1.1', 'otro')"
+        ),
+    ):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            as_user(ALLOWED, sql)
+    fila = db.fetch_one("select ultimo_de from dm_rastro where dm_id = 'DAAA'")
+    assert fila["ultimo_de"] == "otro"
+
+
+def test_the_follow_up_settings_ship_with_their_defaults(conn):
+    assert _config("seguimiento_activo") is True
+    assert _config("seguimiento_horas_para_responder") == 24
+    assert _config("seguimiento_dias_sin_respuesta") == 3
+    assert _config("seguimiento_max_por_resumen") == 10
+    assert _config("seguimiento_retencion_dias") == 90
+
+
+def test_an_allowed_user_can_switch_the_follow_ups_off_and_tune_them(people, restore_config):
+    as_user(ALLOWED, "update config set value = 'false'::jsonb where key = 'seguimiento_activo'")
+    assert _config("seguimiento_activo") is False
+    as_user(
+        ALLOWED,
+        "update config set value = '48'::jsonb where key = 'seguimiento_horas_para_responder'",
+    )
+    assert _config("seguimiento_horas_para_responder") == 48
+
+
+@pytest.mark.parametrize("value", ["0", "1", '"false"', "null", "[]"])
+def test_the_follow_up_switch_only_takes_a_boolean(people, restore_config, value):
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(
+            ALLOWED,
+            "update config set value = %s::jsonb where key = 'seguimiento_activo'",
+            (value,),
+        )
+    assert _config("seguimiento_activo") is True
+
+
+@pytest.mark.parametrize("value", ["true", '"7"', "-1", "null", "{}"])
+def test_the_follow_up_thresholds_only_take_a_number_zero_or_more(people, restore_config, value):
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        as_user(
+            ALLOWED,
+            "update config set value = %s::jsonb where key = 'seguimiento_retencion_dias'",
+            (value,),
+        )
+    assert _config("seguimiento_retencion_dias") == 90
+
+
+def test_a_stranger_cannot_touch_the_follow_up_settings(people, restore_config):
+    as_user(STRANGER, "update config set value = 'false'::jsonb where key = 'seguimiento_activo'")
+    assert _config("seguimiento_activo") is True
+
+
+def test_the_follow_up_policy_does_not_widen_the_allowlist(people, restore_config):
+    for key in ("kill_switch", "monthly_budget_usd", "zona_horaria"):
+        before = db.fetch_one("select value from config where key = %s", (key,))["value"]
+        as_user(ALLOWED, "update config set value = '5'::jsonb where key = %s", (key,))
+        assert db.fetch_one("select value from config where key = %s", (key,))["value"] == before

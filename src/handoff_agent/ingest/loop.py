@@ -3,7 +3,10 @@ research queue in between. Once per cycle it also runs the target-account
 radar (accounts/radar.py), which only does work when an account is due, and
 the decisor (accounts/decisor.py), which finds who decides each pursued
 opening and queues their research, and the message signals (signals/alertas.py),
-which detect what people ask for in Slack and post a light alert.
+which detect what people ask for in Slack and post a light alert. Every few
+minutes it also goes over the owner's one-to-one DMs (ingest/dms.py) to know
+which conversations are waiting -- the timing only, never what was said -- and
+posts one follow-up summary a day (delivery/seguimiento.py).
 
 A dead token or a system stop raises an operational alert and the loop keeps
 running: the token may be renewed and the cap may be raised without anyone
@@ -18,11 +21,11 @@ from collections.abc import Callable, Sequence
 
 from .. import estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
-from ..delivery import aviso_lector
+from ..delivery import aviso_lector, seguimiento
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas
 from ..slack_client import SlackAuthFailed
-from . import queue
+from . import dms, queue
 from .research_runner import run_next_job
 from .resolver import resolve_pending
 from .watcher import watch_tick
@@ -112,6 +115,46 @@ def _senales(reader) -> None:
         logger.info("señales: %d alerta(s) publicada(s)", publicadas)
 
 
+def _rastro_dms(reader) -> None:
+    """Una pasada por los mensajes directos del dueño de la credencial, para
+    saber qué conversaciones esperan respuesta (ingest/dms.py).
+
+    Protegida igual que el radar y las señales: es un extra y un fallo aquí se
+    registra y se reintenta en la pasada siguiente, sin tocar el research ni la
+    entrega. La credencial caducada sí se trata, porque es lo que hay que
+    avisar a quien pega el token."""
+    try:
+        resultado = dms.rastro_tick(reader)
+    except SlackAuthFailed as exc:
+        _credencial_caducada(exc)
+        return
+    except Exception:
+        logger.exception("rastro de DMs fallido; se reintenta en la pasada siguiente")
+        return
+    logger.info(
+        "DMs: %d vistos, %d en el rastro, %d omitidos, %d caducados",
+        resultado.vistos,
+        resultado.guardados,
+        resultado.omitidos,
+        resultado.borrados,
+    )
+    for error in resultado.errores:
+        logger.warning("DMs: %s", error)
+
+
+def _seguimiento() -> None:
+    """El resumen diario de las conversaciones que se enfrían. `publicar_resumen`
+    ya gestiona por dentro los frenos y no lanza; esta guarda es la segunda
+    línea, por si algo se le escapa."""
+    try:
+        lineas = seguimiento.publicar_resumen()
+    except Exception:
+        logger.exception("seguimiento fallido; se reintenta en la pasada siguiente")
+        return
+    if lineas:
+        logger.info("seguimiento: resumen con %d línea(s)", lineas)
+
+
 def _credencial_caducada(exc: SlackAuthFailed) -> None:
     """La alerta operativa de siempre, más un aviso en el Slack de Handoff (con
     el bot, que tiene otro token) para que se entere quien no mira el panel. El
@@ -136,6 +179,10 @@ def run_loop(
     max_cycles: int | None = None,
 ) -> int:
     next_watch = clock()
+    # El rastro de los DMs va a su propio ritmo (ingest/dms.py): una
+    # conversación que se enfría no tiene prisa, y cada pasada habla con Slack
+    # una vez por conversación.
+    next_rastro = clock()
     cycles = 0
     failing = False
     try:
@@ -171,6 +218,11 @@ def run_loop(
                         logger.warning("slack: %s", error)
                 except SlackAuthFailed as exc:
                     _credencial_caducada(exc)
+
+            if clock() >= next_rastro:
+                next_rastro = clock() + dms.MINUTOS_ENTRE_PASADAS * 60
+                _rastro_dms(reader)
+                _seguimiento()
 
             _radar()
             _decisor()

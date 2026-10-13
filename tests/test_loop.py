@@ -35,6 +35,8 @@ def wiring(monkeypatch):
         "radar": 0,
         "decisor": 0,
         "senales": [],
+        "rastro": [],
+        "resumenes": 0,
         "avisos": 0,
         "ok": [],
         "fallos": [],
@@ -69,6 +71,17 @@ def wiring(monkeypatch):
         loop.aviso_lector,
         "avisar_credencial_caducada",
         lambda: calls.__setitem__("avisos", calls["avisos"] + 1) or True,
+    )
+    # Ni Slack ni la base de verdad para el rastro de los DMs y su resumen.
+    monkeypatch.setattr(
+        loop.dms,
+        "rastro_tick",
+        lambda reader: calls["rastro"].append(reader) or loop.dms.ResultadoRastro(),
+    )
+    monkeypatch.setattr(
+        loop.seguimiento,
+        "publicar_resumen",
+        lambda: calls.__setitem__("resumenes", calls["resumenes"] + 1) or 0,
     )
     monkeypatch.setattr(loop.ops_alerts, "alert", lambda kind, msg: calls["alerts"].append(kind))
     # El latido no escribe en la base desde estos tests: se anota lo que se habría escrito.
@@ -435,3 +448,64 @@ def test_another_failure_of_the_poll_does_not_notify_about_the_credential(wiring
     monkeypatch.setattr(loop, "watch_tick", lambda *a: (_ for _ in ()).throw(RuntimeError("db")))
     run(FakeClock(), max_cycles=1)
     assert wiring["avisos"] == 0
+
+
+# --- rastro de los mensajes directos y su resumen ---------------------------------
+
+
+def test_the_dm_trace_runs_at_start_and_then_on_its_own_interval(wiring):
+    """No en cada vuelta: una conversación que se enfría no tiene prisa."""
+    clock = FakeClock()
+    run(clock, max_cycles=10)
+    # Cada vuelta duerme 30 s: en 10 vueltas el reloj llega a 300 s, y la
+    # pasada toca cada 15 min (900 s). Solo la del arranque.
+    assert len(wiring["rastro"]) == 1
+    assert wiring["resumenes"] == 1
+
+
+def test_the_dm_trace_runs_again_once_the_interval_passes(wiring, monkeypatch):
+    monkeypatch.setattr(loop.dms, "MINUTOS_ENTRE_PASADAS", 1)
+    clock = FakeClock()
+    run(clock, max_cycles=10)
+    # 300 s de reloj y una pasada por minuto: t=0, 60, 120, 180, 240.
+    assert len(wiring["rastro"]) == 5
+    assert wiring["resumenes"] == 5
+
+
+def test_the_dm_trace_gets_the_reader(wiring):
+    run(FakeClock(), max_cycles=1)
+    assert isinstance(wiring["rastro"][0], FakeReader)
+
+
+def test_a_failing_dm_trace_does_not_stop_research_or_delivery(wiring, monkeypatch):
+    def boom(reader):
+        raise RuntimeError("Slack raro")
+
+    monkeypatch.setattr(loop.dms, "rastro_tick", boom)
+    jobs = []
+    monkeypatch.setattr(loop, "run_next_job", lambda reader: jobs.append(1) or None)
+    assert run(FakeClock(), max_cycles=3) == 3
+    # El research sigue corriendo y nadie avisa de una parada del sistema.
+    assert len(jobs) == 3
+    assert wiring["alerts"] == []
+
+
+def test_a_dead_credential_in_the_dm_trace_warns_the_person_who_pastes_the_token(
+    wiring, monkeypatch
+):
+    def caducada(reader):
+        raise SlackAuthFailed("token_revoked")
+
+    monkeypatch.setattr(loop.dms, "rastro_tick", caducada)
+    assert run(FakeClock(), max_cycles=1) == 1
+    assert "slack_auth" in wiring["alerts"]
+    assert wiring["avisos"] == 1
+
+
+def test_a_failing_summary_does_not_stop_the_loop(wiring, monkeypatch):
+    def boom():
+        raise RuntimeError("ledger caído")
+
+    monkeypatch.setattr(loop.seguimiento, "publicar_resumen", boom)
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert wiring["alerts"] == []

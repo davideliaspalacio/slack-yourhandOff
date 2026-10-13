@@ -44,11 +44,18 @@ READ_METHODS = frozenset(
         "auth_test",
         "conversations_history",
         "conversations_info",
+        "conversations_list",
         "conversations_members",
         "users_info",
         "chat_getPermalink",
     }
 )
+
+# Lo que NUNCA entra en la lista de arriba, por si a alguien le parece inocente:
+# `conversations.mark` no publica nada, pero movería el marcador de leído de SUS
+# mensajes directos -- el agente le borraría las notificaciones sin querer. Leer
+# el rastro de los DMs no puede cambiar nada de lo que él ve en su Slack.
+# tests/test_slack_client.py lo comprueba.
 
 
 class SlackAuthFailed(RuntimeError):
@@ -152,6 +159,48 @@ class FoundersClubReader:
     def owner_id(self) -> str:
         """The member whose token this is (Anthony, in production)."""
         return self.identity()[0]
+
+    def team_id(self) -> str:
+        """El código del workspace (T…), lo único que falta para montar el
+        enlace `app.slack.com/client/<team_id>/<dm_id>` de una conversación.
+
+        Aparte de `identity()` a propósito: aquella devuelve el *nombre* del
+        equipo, que es lo que muestra el panel, y cambiar su forma rompería a
+        quien ya la usa. Puede volver vacía; quien la use tiene que seguir
+        funcionando sin enlace."""
+        return self._call("auth_test").get("team_id") or ""
+
+    def dms(self) -> list[dict]:
+        """Las conversaciones directas uno a uno del dueño de la credencial.
+
+        `types=im` pide solo DMs: los grupos (`mpim`) y los canales privados no
+        entran, ni aquí ni en el filtro de `ingest/dms.py`. Es de lectura, como
+        el resto de la clase: listar conversaciones no las marca como leídas.
+        """
+        conversaciones: list[dict] = []
+        cursor = None
+        while True:
+            page = self._call(
+                "conversations_list",
+                types="im",
+                exclude_archived=True,
+                limit=PAGE_SIZE,
+                cursor=cursor,
+            )
+            conversaciones.extend(page.get("channels") or [])
+            cursor = (page.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                return conversaciones
+
+    def last_message(self, channel: str) -> dict | None:
+        """El último mensaje de una conversación, y solo ese (`limit=1`).
+
+        Lo usa el rastro de los DMs, que se queda con la marca de tiempo y el
+        autor y descarta el resto: el texto no se guarda en ninguna parte.
+        None si la conversación está vacía."""
+        page = self._call("conversations_history", channel=channel, limit=1)
+        mensajes = page.get("messages") or []
+        return mensajes[0] if mensajes else None
 
     def history(self, channel: str, oldest: str) -> list[dict]:
         messages: list[dict] = []

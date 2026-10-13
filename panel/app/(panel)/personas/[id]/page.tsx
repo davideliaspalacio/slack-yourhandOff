@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { acceso } from "@/lib/acceso";
 import {
   ESTADOS_EDITABLES, accionLabel, alertaLabel, bandLabel, canalLabel, empresaVisible,
-  estadoLabel, fecha, jobStatusLabel, reasonLabel, tipoSenalLabel, usd,
+  enlaceDm, estadoLabel, fecha, fechaDesdeTs, hace, jobStatusLabel, reasonLabel, tipoSenalLabel,
+  ultimoDeLabel, usd,
 } from "@/lib/format";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
 import { SinAcceso } from "../../SinAcceso";
@@ -68,7 +69,9 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
   const { data: p } = await supabase.from("prospects").select("*").eq("id", id).maybeSingle();
   if (!p) notFound();
 
-  const [dossier, mensajes, entregas, acciones, cola, llm, otros, pedidos] = await Promise.all([
+  const [
+    dossier, mensajes, entregas, acciones, cola, llm, otros, pedidos, conversacion,
+  ] = await Promise.all([
     supabase.from("dossiers").select("version, content, sources, created_at")
       .eq("prospect_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("slack_messages").select("channel_id, ts, text, status, created_at")
@@ -86,6 +89,13 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
       .select("id, created_at, tipo, cita, alerta_estado, alerta_motivo")
       .eq("prospect_id", id).eq("detectada", true)
       .order("created_at", { ascending: false }).limit(10),
+    // El rastro del mensaje directo con esta persona (dm_rastro, 0027): con
+    // quién, cuándo fue el último mensaje y quién lo escribió. Nunca el texto:
+    // el rastro no lo guarda. Se busca por slack_user_id, que no cambia aunque
+    // el enlace con el prospect se haga más tarde.
+    supabase.from("dm_rastro")
+      .select("dm_id, team_id, ultimo_ts, ultimo_de, avisado_ts")
+      .eq("slack_user_id", p.slack_user_id).maybeSingle(),
   ]);
   // Nombres de canal (los pone el worker, con una llamada de solo lectura a Slack): son
   // pocos y se traen todos de una vez.
@@ -121,6 +131,29 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
           </ul>
         </div>
       )}
+
+      {conversacion.data && (() => {
+        const dm = conversacion.data;
+        const cuando = fechaDesdeTs(dm.ultimo_ts as string | null);
+        const enlace = enlaceDm(dm.team_id as string | null, dm.dm_id as string | null);
+        const esperando = dm.ultimo_de === "otro";
+        return (
+          <div className="card conversation">
+            <h2 style={{ marginTop: 0 }}>Conversation</h2>
+            <p>
+              {ultimoDeLabel(dm.ultimo_de as string | null)}
+              {cuando && <> · {hace(cuando)} <span className="muted">({fecha(cuando)})</span></>}
+              {esperando && <> · <span className="pill awaiting">awaiting your reply</span></>}
+            </p>
+            <p className="muted">
+              Only the timing is tracked — what was said in a direct message is never stored.
+            </p>
+            {enlace && (
+              <p><a href={enlace} target="_blank" rel="noreferrer">Open the conversation in Slack ↗</a></p>
+            )}
+          </div>
+        );
+      })()}
 
       <div className="two">
         <div className="card">

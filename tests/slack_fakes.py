@@ -14,6 +14,11 @@ class FakeReader:
         self.history_calls: list[tuple[str, str]] = []
         self.channel_names: dict[str, str] = {}
         self.name_calls: list[str] = []
+        self.team = "T0OWNER"
+        # Las conversaciones directas, tal como las devuelve conversations.list.
+        self.conversations: list[dict] = []
+        self.last_message_calls: list[str] = []
+        self.dms_error: Exception | None = None
 
     # --- la misma superficie que FoundersClubReader ---
     def identity(self) -> tuple[str, str]:
@@ -55,6 +60,26 @@ class FakeReader:
     def permalink(self, channel: str, ts: str) -> str | None:
         return f"https://fake.slack.com/archives/{channel}/p{ts.replace('.', '')}"
 
+    def team_id(self) -> str:
+        if self.auth_error:
+            raise self.auth_error
+        return self.team
+
+    def dms(self) -> list[dict]:
+        if self.auth_error:
+            raise self.auth_error
+        if self.dms_error:
+            raise self.dms_error
+        return list(self.conversations)
+
+    def last_message(self, channel: str) -> dict | None:
+        """Como el real: un solo mensaje, el más nuevo."""
+        self.last_message_calls.append(channel)
+        if channel in self.unavailable_channels:
+            raise SlackUnavailable(f"conversations_history: {channel}: internal_error")
+        mensajes = self.messages.get(channel, [])
+        return max(mensajes, key=lambda m: float(m["ts"])) if mensajes else None
+
     # --- ayudas para los tests ---
     def post(self, channel: str, user: str, text: str, ts: str, **extra) -> None:
         self.messages.setdefault(channel, []).append(
@@ -66,3 +91,9 @@ class FakeReader:
 
     def add_profile(self, user_id, real_name, title="", email="", is_bot=False, deleted=False):
         self.profiles[user_id] = UserProfile(user_id, real_name, title, email, is_bot, deleted)
+
+    def add_dm(self, dm_id: str, user: str, **extra) -> None:
+        """Un DM uno a uno en la lista de conversaciones del dueño. `extra`
+        sirve para las variantes que el rastro tiene que descartar
+        (is_mpim=True, is_user_deleted=True...)."""
+        self.conversations.append({"id": dm_id, "is_im": True, "user": user, **extra})

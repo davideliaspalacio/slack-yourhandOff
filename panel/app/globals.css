@@ -98,3 +98,6 @@ details > summary { cursor: pointer; }
 .card.asked ul.plain { list-style: none; padding-left: 0; }
 .card.asked li { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .card.asked li:last-child { border-bottom: 0; }
+/* Conversaciones directas (dm_rastro, 0027): solo el cuándo, nunca el texto. */
+.pill.awaiting { border-color: var(--alta); color: var(--alta); font-weight: 600; }
+.card.conversation { margin-bottom: 16px; }

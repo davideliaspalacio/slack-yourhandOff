@@ -38,6 +38,18 @@ export default async function Hoy() {
     .sort((a, b) => b.d.created_at.localeCompare(a.d.created_at))
     .slice(0, MAXIMO);
 
+  // Quién de la lista está esperando respuesta suya en un mensaje directo
+  // (dm_rastro, 0027): el último mensaje de la conversación lo escribió la otra
+  // persona. Del rastro solo sale el cuándo y el quién, nunca el texto.
+  const esperando = new Set<string>();
+  if (candidatos.length) {
+    const { data: conversaciones } = await supabase.from("dm_rastro")
+      .select("slack_user_id, ultimo_de")
+      .eq("ultimo_de", "otro")
+      .in("slack_user_id", candidatos.map(({ p }) => p.slack_user_id));
+    for (const c of conversaciones ?? []) esperando.add(c.slack_user_id as string);
+  }
+
   // Quién de la lista pidió ayuda en Slack esta semana: no es solo un research más.
   // La más reciente por persona (la consulta ya viene ordenada de más nueva a más vieja).
   const pidio = new Map<string, string>();
@@ -85,11 +97,17 @@ export default async function Hoy() {
                 </Link>
                 <span className={`pill fit-${d.puntuacion}`}>Fit {d.puntuacion}/3</span>
               </div>
-              {pidio.has(p.id) && (
+              {(pidio.has(p.id) || esperando.has(p.slack_user_id)) && (
                 <div>
-                  <span className="pill asked">
-                    asked: {tipoSenalLabel(pidio.get(p.id) || null).toLowerCase()}
-                  </span>
+                  {esperando.has(p.slack_user_id) && (
+                    <span className="pill awaiting">awaiting your reply</span>
+                  )}
+                  {esperando.has(p.slack_user_id) && pidio.has(p.id) && " "}
+                  {pidio.has(p.id) && (
+                    <span className="pill asked">
+                      asked: {tipoSenalLabel(pidio.get(p.id) || null).toLowerCase()}
+                    </span>
+                  )}
                 </div>
               )}
               <div className="muted">{empresa ?? "—"} · researched {hace(d.created_at)}</div>

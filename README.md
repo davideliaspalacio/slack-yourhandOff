@@ -477,6 +477,40 @@ alertas y nada toca LinkedIn hasta que una persona lo reactive (Settings del
 panel o `update config set value = 'false'::jsonb where key = 'unipile_pausado'`).
 Variables: `UNIPILE_API_KEY`, `UNIPILE_DSN`, `UNIPILE_ACCOUNT_ID`.
 
+## Recordatorios de los mensajes directos
+
+Anthony escribió a un lead por DM, el lead contestó, y se le pasó responder.
+El agente lleva la cuenta de qué conversaciones directas están esperando y le
+avisa; nunca escribe ni contesta por él.
+
+**Qué se guarda, y nada más** (`dm_rastro`, migración `0027`): el id del DM, el
+código del workspace (para el enlace), con quién es, la marca de tiempo del
+último mensaje y si lo escribió él o la otra persona. **El texto de un DM no se
+guarda en ninguna parte.** De cada conversación se lee un solo mensaje
+(`conversations.history` con `limit=1`) y solo se mira su `ts` y su autor. Fuera
+quedan los grupos (`mpim`), los canales privados, los bots y Slackbot. El rastro
+de una conversación cuyo último mensaje pase de `seguimiento_retencion_dias`
+(90) se borra solo. `conversations.mark` no está ni puede estar en la lista
+blanca de métodos: leer el rastro no puede marcarle sus DMs como leídos.
+
+El worker da una pasada cada 15 minutos (`ingest/dms.py`, enganchado al bucle
+con la misma protección que el radar) y publica **un solo resumen al día** en el
+canal de tarjetas, con el bot de Handoff (`delivery/seguimiento.py`). Tres tipos
+de caso: *They replied, you haven't* (contestaron hace más de
+`seguimiento_horas_para_responder`, 24), *No answer yet* (escribió él hace más
+de `seguimiento_dias_sin_respuesta`, 3) y *Marked contacted, no conversation*
+(alguien en `contactado` sin ningún DM). Como mucho
+`seguimiento_max_por_resumen` (10) líneas, las que esperan su respuesta
+primero. Cada línea dice nombre, empresa, cuántos días lleva y el enlace para
+abrir la conversación — nunca qué se dijo. Un caso avisado no vuelve hasta que
+la conversación cambia (`dm_rastro.avisado_ts`). Respeta `seguimiento_activo`,
+el kill switch y el tope mensual, y nunca propaga un error al bucle.
+
+El panel lo muestra en la ficha de la persona (sección **Conversation**) y marca
+en **Today** a quien espera respuesta; los umbrales y el interruptor se editan en
+Settings. La herramienta MCP de lectura `seguimientos_pendientes` responde "¿a
+quién le debo respuesta?".
+
 ## Invariantes del proyecto
 
 Romper cualquiera de estas es un bug, no una preferencia:
@@ -487,11 +521,13 @@ Romper cualquiera de estas es un bug, no una preferencia:
    través de `llm.complete()`; usar el SDK de OpenAI directamente se salta el
    kill switch y el registro de coste.
 3. **El agente nunca escribe en el Slack del Founders Club.** Ni mensajes, ni
-   reacciones, ni DMs.
+   reacciones, ni DMs, ni marcar nada como leído.
 4. **Todo lo que se descarga de la web es entrada hostil.** Las URLs vienen de
    buscadores y de links que pega gente en un Slack ajeno.
 5. **RLS activado en toda tabla nueva.** Al migrar a Cloud la anon key es
    pública; denegar por defecto es lo único que separa internet de los dossiers.
+6. **Del contenido de un mensaje directo no se guarda nada.** Del rastro de sus
+   DMs solo salen el cuándo y el con quién (ver arriba).
 
 ## Comandos
 

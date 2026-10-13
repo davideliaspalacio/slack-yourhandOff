@@ -13,9 +13,26 @@ READ_METHODS = {
     "auth_test",
     "conversations_history",
     "conversations_info",
+    "conversations_list",
     "conversations_members",
     "users_info",
     "chat_getPermalink",
+}
+
+# Métodos que no pueden entrar en la lista de arriba por mucho que parezcan
+# inofensivos. `conversations.mark` no publica nada, pero marcaría como leídos
+# los mensajes directos del dueño de la credencial: el agente le borraría sus
+# notificaciones. El rastro de los DMs (ingest/dms.py) lee y no toca nada.
+JAMAS = {
+    "conversations_mark",
+    "conversations_setTopic",
+    "chat_postMessage",
+    "chat_update",
+    "chat_delete",
+    "reactions_add",
+    "conversations_join",
+    "conversations_invite",
+    "files_upload_v2",
 }
 
 
@@ -27,6 +44,7 @@ class FakeWebClient:
         *,
         history_pages=(),
         member_pages=(),
+        dm_pages=(),
         users=None,
         error=None,
         permalink="https://handoff.slack.com/archives/C1/p1726000000000100",
@@ -34,6 +52,7 @@ class FakeWebClient:
     ):
         self.history_pages = list(history_pages)
         self.member_pages = list(member_pages)
+        self.dm_pages = list(dm_pages)
         self.users = users or {}
         self.error = error
         self.permalink_response = permalink
@@ -47,11 +66,19 @@ class FakeWebClient:
 
     def auth_test(self, **kwargs):
         self._record("auth_test", kwargs)
-        return {"ok": True, "user_id": "UOWNER", "team": "Handoff"}
+        return {"ok": True, "user_id": "UOWNER", "team": "Handoff", "team_id": "T0FOUNDERS"}
 
     def conversations_history(self, **kwargs):
         self._record("conversations_history", kwargs)
         return self.history_pages.pop(0)
+
+    def conversations_list(self, **kwargs):
+        self._record("conversations_list", kwargs)
+        return self.dm_pages.pop(0)
+
+    def conversations_mark(self, **kwargs):  # nunca debería llamarse
+        self._record("conversations_mark", kwargs)
+        return {"ok": True}
 
     def conversations_members(self, **kwargs):
         self._record("conversations_members", kwargs)
@@ -80,7 +107,10 @@ def test_the_reader_only_exposes_reads():
     assert public == {
         "identity",
         "owner_id",
+        "team_id",
         "history",
+        "last_message",
+        "dms",
         "members",
         "user_profile",
         "permalink",
@@ -198,9 +228,10 @@ def test_the_real_client_retries_on_rate_limits_and_connection_errors():
 
 def test_only_read_methods_ever_reach_slack():
     fake = FakeWebClient(
-        history_pages=[{"ok": True, "messages": [], "has_more": False}],
+        history_pages=[{"ok": True, "messages": [], "has_more": False}, {"ok": True}],
         member_pages=[{"ok": True, "members": [], "response_metadata": {}}],
         users={"U1": {"real_name": "Ada", "profile": {}}},
+        dm_pages=[{"ok": True, "channels": []}],
     )
     reader = sc.FoundersClubReader(client=fake)
     reader.owner_id()
@@ -209,12 +240,83 @@ def test_only_read_methods_ever_reach_slack():
     reader.user_profile("U1")
     reader.permalink("C1", "1726000000.000100")
     reader.channel_name("C1")
+    reader.team_id()
+    reader.dms()
+    reader.last_message("D1")
     assert {name for name, _ in fake.calls} <= READ_METHODS
     # La lista del código es la misma que vigila este test, y `_call` la impone.
     assert set(sc.READ_METHODS) == READ_METHODS
     with pytest.raises(RuntimeError, match="no es de lectura"):
         reader._call("chat_postMessage", channel="C1", text="hola")
     assert "chat_postMessage" not in {name for name, _ in fake.calls}
+
+
+def test_no_write_method_is_ever_whitelisted_or_called():
+    """Ni uno de los de JAMAS, y `conversations.mark` el primero: leer el
+    rastro de sus DMs no puede marcárselos como leídos."""
+    assert not (READ_METHODS & JAMAS)
+    assert not (set(sc.READ_METHODS) & JAMAS)
+    fake = FakeWebClient(
+        history_pages=[{"ok": True, "messages": [{"ts": "9", "user": "U1"}]}],
+        member_pages=[{"ok": True, "members": [], "response_metadata": {}}],
+        users={"U1": {"real_name": "Ada", "profile": {}}},
+        dm_pages=[{"ok": True, "channels": [{"id": "D1", "user": "U1", "is_im": True}]}],
+    )
+    reader = sc.FoundersClubReader(client=fake)
+    # Todo el camino del rastro de los DMs, de punta a punta.
+    reader.owner_id()
+    reader.team_id()
+    for conversacion in reader.dms():
+        reader.last_message(conversacion["id"])
+        reader.user_profile(conversacion["user"])
+    llamados = {name for name, _ in fake.calls}
+    assert not (llamados & JAMAS)
+    for metodo in sorted(JAMAS):
+        with pytest.raises(RuntimeError, match="no es de lectura"):
+            reader._call(metodo, channel="D1")
+    assert not ({name for name, _ in fake.calls} & JAMAS)
+
+
+def test_the_dm_list_asks_only_for_one_to_one_conversations_and_follows_cursors():
+    fake = FakeWebClient(
+        dm_pages=[
+            {
+                "ok": True,
+                "channels": [{"id": "D1", "user": "U1", "is_im": True}],
+                "response_metadata": {"next_cursor": "siguiente"},
+            },
+            {"ok": True, "channels": [{"id": "D2", "user": "U2", "is_im": True}]},
+        ]
+    )
+    reader = sc.FoundersClubReader(client=fake)
+    assert [c["id"] for c in reader.dms()] == ["D1", "D2"]
+    assert fake.calls[0][1]["types"] == "im"
+    assert fake.calls[1][1]["cursor"] == "siguiente"
+
+
+def test_the_last_message_is_a_single_message_and_nothing_else():
+    fake = FakeWebClient(
+        history_pages=[{"ok": True, "messages": [{"ts": "9", "user": "U1", "text": "hola"}]}]
+    )
+    reader = sc.FoundersClubReader(client=fake)
+    assert reader.last_message("D1")["ts"] == "9"
+    # limit=1: ni paginación ni historial entero de una conversación privada.
+    assert fake.calls[0][1] == {"channel": "D1", "limit": 1}
+    assert len(fake.calls) == 1
+
+
+def test_an_empty_dm_has_no_last_message():
+    fake = FakeWebClient(history_pages=[{"ok": True, "messages": []}])
+    reader = sc.FoundersClubReader(client=fake)
+    assert reader.last_message("D1") is None
+
+
+def test_team_id_comes_from_auth_test():
+    fake = FakeWebClient()
+    reader = sc.FoundersClubReader(client=fake)
+    assert reader.team_id() == "T0FOUNDERS"
+    # identity() sigue devolviendo lo de siempre: el nombre, no el código.
+    assert reader.identity() == ("UOWNER", "Handoff")
 
 
 def test_permalink_asks_slack_for_the_link(monkeypatch):

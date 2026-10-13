@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
-import { guardarExigirEvidencia, guardarPausaUnipile, guardarUmbral } from "../acciones";
+import {
+  guardarExigirEvidencia, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
+} from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
 import { TokenSlackForm } from "./TokenSlackForm";
@@ -21,6 +23,16 @@ const EDITABLES: Record<string, string> = {
 // el mismo que recibe los botones de Slack) más /mcp. Se puede cambiar con
 // MCP_PUBLIC_URL si el dominio cambia, sin tocar código.
 const MCP_URL = process.env.MCP_PUBLIC_URL ?? "https://buttons-slack-production.up.railway.app/mcp";
+
+// Recordatorios de los mensajes directos (0027_seguimiento_dm.sql): los
+// numéricos que la política panel_ajusta_seguimiento deja tocar.
+// seguimiento_activo va aparte porque es un booleano.
+const EDITABLES_SEGUIMIENTO: Record<string, string> = {
+  seguimiento_horas_para_responder: "Hours before \"they replied, you haven't\" counts as waiting",
+  seguimiento_dias_sin_respuesta: "Days with no answer before it shows up as waiting",
+  seguimiento_max_por_resumen: "Maximum lines in the daily follow-up summary",
+  seguimiento_retencion_dias: "Days a conversation stays on file after its last message",
+};
 
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la
 // política panel_ajusta_radar deja tocar. unipile_pausado va aparte porque
@@ -68,7 +80,9 @@ function inicioDelDia(zona: string): string {
 export default async function Ajustes() {
   const supabase = await createClient();
   const { data } = await supabase.from("config").select("key, value, updated_at")
-    .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR), "unipile_pausado", "unipile_zona", "slack_channel_ids",
+    .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR),
+      ...Object.keys(EDITABLES_SEGUIMIENTO), "seguimiento_activo",
+      "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
   const canalesValor = valores.get("slack_channel_ids");
@@ -94,6 +108,8 @@ export default async function Ajustes() {
   // Activado salvo que la base diga false: el mismo valor por defecto que usa
   // el worker (delivery/bands.py) cuando la clave falta o no es un booleano.
   const exigirEvidencia = valores.get("exigir_evidencia") !== false;
+  // Activado salvo que la base diga false, igual que en el worker (ingest/dms.py).
+  const seguimientoActivo = valores.get("seguimiento_activo") !== false;
   const zona = String(valores.get("unipile_zona") ?? "America/New_York");
   const desde = inicioDelDia(zona);
 
@@ -200,6 +216,30 @@ export default async function Ajustes() {
               </form>
             </td>
           </tr>
+        </tbody>
+      </table>
+
+      <h2>Direct message follow-ups</h2>
+      <p>
+        The agent keeps track of which one-to-one conversations in the Founders Club are
+        waiting — who wrote last and when — and posts one summary a day in the cards channel.
+        It never writes there and <b>never stores what was said</b>: only the timing.
+      </p>
+      <table>
+        <tbody>
+          <tr>
+            <td>Follow-up reminders. Turn this off and the agent stops reading direct
+              messages altogether.
+              <div className="muted" style={{ fontSize: 12 }}>seguimiento_activo</div></td>
+            <td>
+              <form action={guardarSeguimientoActivo} className="inline">
+                <input type="hidden" name="value" value={seguimientoActivo ? "false" : "true"} />
+                <span>{seguimientoActivo ? "On" : "Off"}</span>
+                <button type="submit">{seguimientoActivo ? "Turn off" : "Turn on"}</button>
+              </form>
+            </td>
+          </tr>
+          {Object.entries(EDITABLES_SEGUIMIENTO).map(fila)}
         </tbody>
       </table>
 

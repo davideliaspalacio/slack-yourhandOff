@@ -263,6 +263,19 @@ export async function guardarExigirEvidencia(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// seguimiento_activo también es un booleano: el interruptor del rastro de los
+// mensajes directos y de sus recordatorios. La política panel_ajusta_seguimiento
+// (0027) es la que permite tocar esta clave, y solo con true o false. Apagarlo
+// para el rastro entero: el worker deja de leer los DMs.
+export async function guardarSeguimientoActivo(formData: FormData) {
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", "seguimiento_activo");
+  revalidatePath("/ajustes");
+}
+
 export async function salir() {
   const supabase = await createClient();
   await supabase.auth.signOut();
