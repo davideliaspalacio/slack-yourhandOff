@@ -277,7 +277,31 @@ button { width: 100%; padding: 10px; font-size: 15px; border: 0; border-radius: 
 """
 
 
-def _pagina(titulo: str, cuerpo: str, status: int = 200) -> HTMLResponse:
+def _cabeceras_pagina(destino: str | None = None) -> dict[str, str]:
+    """Las cabeceras de una página, con `form-action` abierta al destino del cliente.
+
+    El navegador aplica `form-action` también a la redirección que sigue al envío del
+    formulario, así que con `'self'` a secas el 303 hacia el callback del cliente se
+    bloquea y la conexión muere ahí (visto en producción el 2026-10-13: "Sending form
+    data ... violates ... form-action 'self'"). Se añade solo el origen del
+    `redirect_uri` ya validado contra los registrados, nada más.
+    """
+    if not destino:
+        return dict(CABECERAS_PAGINA)
+    partes = urlsplit(destino)
+    if not partes.scheme or not partes.netloc:
+        return dict(CABECERAS_PAGINA)
+    origen = f"{partes.scheme}://{partes.netloc}"
+    cabeceras = dict(CABECERAS_PAGINA)
+    cabeceras["Content-Security-Policy"] = cabeceras["Content-Security-Policy"].replace(
+        "form-action 'self'", f"form-action 'self' {origen}"
+    )
+    return cabeceras
+
+
+def _pagina(
+    titulo: str, cuerpo: str, status: int = 200, destino: str | None = None
+) -> HTMLResponse:
     documento = (
         '<!doctype html>\n<html lang="en">\n<head>\n'
         '<meta charset="utf-8">\n'
@@ -285,7 +309,7 @@ def _pagina(titulo: str, cuerpo: str, status: int = 200) -> HTMLResponse:
         f"<title>{html.escape(titulo)}</title>\n"
         f"<style>{_ESTILO}</style>\n</head>\n<body>\n<main>\n{cuerpo}\n</main>\n</body>\n</html>\n"
     )
-    return HTMLResponse(documento, status_code=status, headers=CABECERAS_PAGINA)
+    return HTMLResponse(documento, status_code=status, headers=_cabeceras_pagina(destino))
 
 
 def _pagina_login(
@@ -315,7 +339,7 @@ def _pagina_login(
         "can; every change is recorded under your name. You can disconnect it at any time "
         "from Settings &rarr; Connect your Claude.</p>"
     )
-    return _pagina("Sign in to Handoff", cuerpo, status)
+    return _pagina("Sign in to Handoff", cuerpo, status, destino=solicitud.get("redirect_uri"))
 
 
 def _pagina_error(mensaje: str, status: int = 400) -> HTMLResponse:
@@ -573,7 +597,9 @@ def autorizar(request: Request) -> Response:
 
     solicitud_id = almacen.crear_solicitud(client_id, destino, reto, SCOPE, pedido_recurso, state)
     _limpiar()
-    return _pagina_login({"id": solicitud_id, "client_name": cliente["client_name"]})
+    return _pagina_login(
+        {"id": solicitud_id, "client_name": cliente["client_name"], "redirect_uri": destino}
+    )
 
 
 def recurso_valido(base: str, pedido: str) -> bool:

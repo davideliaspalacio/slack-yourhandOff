@@ -1027,3 +1027,19 @@ def test_el_401_del_mcp_expone_la_pista_al_navegador(cli):
     )
     assert r.status_code == 401
     assert "WWW-Authenticate" in r.headers.get("access-control-expose-headers", "")
+
+
+# -- La CSP de la página de login tiene que dejar salir la redirección al
+# callback del cliente: el navegador aplica form-action también al 303. --
+
+
+def test_el_login_permite_redirigir_al_callback_del_cliente(cli):
+    _, reto = pkce()
+    pagina = autorizar(cli, client_id(cli), reto)
+    csp = pagina.headers["content-security-policy"]
+    assert "form-action 'self' https://claude.example" in csp
+
+
+def test_una_pagina_de_error_no_abre_la_politica(cli):
+    r = cli.get("/oauth/authorize", params={"response_type": "code", "client_id": "cli_nope"})
+    assert "form-action 'self';" in r.headers["content-security-policy"]
