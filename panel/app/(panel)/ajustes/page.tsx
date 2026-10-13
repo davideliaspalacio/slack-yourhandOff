@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fecha, minutosDesde } from "@/lib/format";
 import { guardarExigirEvidencia, guardarPausaUnipile, guardarUmbral } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
+import { ConectarClaude, type TokenMcp } from "./ConectarClaude";
 import { TokenSlackForm } from "./TokenSlackForm";
 
 const EDITABLES: Record<string, string> = {
@@ -12,7 +13,13 @@ const EDITABLES: Record<string, string> = {
   sms_por_dia: "Maximum SMS per day",
   sms_hora_inicio: "Hour from which SMS are allowed",
   sms_hora_fin: "Hour until which SMS are allowed",
+  mcp_llamadas_por_dia: "Maximum remote-MCP tool calls per token per day (0 switches it off)",
 };
+
+// URL pública del MCP remoto: el dominio del receptor (el servicio web de Railway,
+// el mismo que recibe los botones de Slack) más /mcp. Se puede cambiar con
+// MCP_PUBLIC_URL si el dominio cambia, sin tocar código.
+const MCP_URL = process.env.MCP_PUBLIC_URL ?? "https://buttons-slack-production.up.railway.app/mcp";
 
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la
 // política panel_ajusta_radar deja tocar. unipile_pausado va aparte porque
@@ -107,9 +114,16 @@ export default async function Ajustes() {
   const { data: estado } = await supabase.rpc("panel_estado_token_slack");
   const token = Array.isArray(estado) ? estado[0] : estado;
 
+  // panel_tokens_mcp solo devuelve los tokens de quien mira, y nunca su hash.
+  const { data: tokensMcp } = await supabase.rpc("panel_tokens_mcp");
+
   return (
     <>
       <h1>Settings</h1>
+      <section style={{ marginBottom: 24 }}>
+        <h2>Connect your Claude</h2>
+        <ConectarClaude tokens={(tokensMcp ?? []) as TokenMcp[]} url={MCP_URL} />
+      </section>
       <section style={{ marginBottom: 24 }}>
         <h2>Founders Club reader token</h2>
         <p>

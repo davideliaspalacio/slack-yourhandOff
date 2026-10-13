@@ -30,6 +30,7 @@ TABLES_TO_CLEAN = [
     "dossiers",
     "prospects",
     "secretos",
+    "mcp_tokens",
 ]
 
 ENV_THAT_MUST_NOT_LEAK = [

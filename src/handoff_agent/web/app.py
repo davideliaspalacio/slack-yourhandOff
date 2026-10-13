@@ -1,4 +1,7 @@
-"""Recibe los clics de la tarjeta. Es lo único del sistema expuesto a internet.
+"""Recibe los clics de la tarjeta y sirve el MCP remoto. Es lo único expuesto a internet.
+
+Dos puertas, cada una con su llave: `/slack/acciones` verifica la firma de Slack y
+`/mcp` (web/mcp_auth.py) exige un token personal. `/salud` no lleva nada sensible.
 
 Slack corta a los 3 segundos, así que cada acción es una escritura corta en la
 base y una actualización de la tarjeta -- ambas síncronas, y por eso corren en
@@ -19,20 +22,59 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, Request, Response
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.concurrency import run_in_threadpool
+from starlette.routing import Route
 
 from .. import db, ledger
 from ..config import Settings, load_settings
 from ..delivery import slack_writer
 from ..delivery.card import _escape_mrkdwn
 from ..ingest import queue
+from ..mcp_remoto import mcp as mcp_remoto
 from . import slack_signature
+from .mcp_auth import GuardiaMCP
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="handoff-acciones")
+
+# MCP remoto de solo lectura (mcp_remoto.py) en `/mcp`, detrás de la puerta de tokens
+# (mcp_auth.py): sin token válido, 401 antes de que corra ninguna herramienta.
+guardia_mcp = GuardiaMCP()
+
+
+@asynccontextmanager
+async def _ciclo_de_vida(_app: FastAPI) -> AsyncIterator[None]:
+    """Arranca el gestor de sesiones del MCP junto con la app web.
+
+    Se crea una app MCP nueva en cada arranque (un gestor de sesiones solo puede
+    ejecutarse una vez). Sin estado (`stateless_http`) y con respuestas JSON: cada
+    petición es independiente, así que un redeploy de Railway no deja a nadie con una
+    sesión muerta, y no hace falta ningún canal SSE abierto. La protección contra DNS
+    rebinding del SDK está pensada para servidores en localhost sin autenticación; este
+    va detrás de un token Bearer (que un navegador engañado no puede adjuntar) y con
+    otro dominio, así que se apaga: dejada en su valor por defecto rechazaría con 421 el
+    dominio de Railway.
+    """
+    interna = mcp_remoto.streamable_http_app(
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+    async with interna.router.lifespan_context(interna):
+        guardia_mcp.destino = interna
+        try:
+            yield
+        finally:
+            guardia_mcp.destino = None
+
+
+app = FastAPI(title="handoff-acciones", lifespan=_ciclo_de_vida)
+app.router.routes.append(Route("/mcp", endpoint=guardia_mcp))
 
 # "ver_original" es un botón de tipo URL: Slack manda igualmente un
 # block_actions para él, pero no representa una acción nuestra -- no está en

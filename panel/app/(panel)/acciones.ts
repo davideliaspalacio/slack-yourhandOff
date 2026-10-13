@@ -315,3 +315,31 @@ export async function guardarCanales(
   revalidatePath("/ajustes");
   return { ok: true };
 }
+
+export type TokenMcpState = { error?: string; token?: string };
+
+// Conectar el Claude de cada persona al MCP remoto de solo lectura
+// (panel_crear_token_mcp, 0023). La función devuelve el token en claro UNA vez:
+// aquí solo se pasa a la pantalla, no se guarda ni se registra en ningún sitio, y
+// la base se queda con su hash. Los errores (máximo de tokens, nombre inválido)
+// los pone la base y salen tal cual.
+export async function crearTokenMcp(
+  _previo: TokenMcpState,
+  formData: FormData,
+): Promise<TokenMcpState> {
+  const nombre = String(formData.get("nombre") ?? "");
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("panel_crear_token_mcp", { p_nombre: nombre });
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return { token: String(data) };
+}
+
+// Revocar surte efecto al instante: el MCP mira revocado_at en cada petición.
+export async function revocarTokenMcp(id: string): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_revocar_token_mcp", { p_id: id });
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return {};
+}
