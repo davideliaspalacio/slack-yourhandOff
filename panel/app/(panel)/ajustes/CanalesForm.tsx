@@ -34,7 +34,8 @@ export function CanalesForm({ actuales }: { actuales: string[] }) {
       <p className="muted" style={{ fontSize: 12 }}>
         Find a channel&apos;s ID at the bottom of its details in Slack. The account behind the
         token must be a member of each channel. Comma-separated; up to 20. Saving an empty list
-        falls back to the SLACK_CHANNEL_IDS environment variable, if set.
+        falls back to the SLACK_CHANNEL_IDS environment variable, if set. Channel names show up
+        after the next poll; a channel just added shows only its code.
       </p>
     </>
   );

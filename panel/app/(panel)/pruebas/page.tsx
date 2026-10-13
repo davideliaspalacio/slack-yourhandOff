@@ -9,6 +9,10 @@ import { BorrarSimuladosButton } from "./BorrarSimuladosButton";
 // tarjeta_prueba.py (prefijo "UPRUEBA") para marcar a alguien como simulado.
 const PREFIXES = "slack_user_id.like.USIM%,slack_user_id.like.UPRUEBA%";
 
+// El canal donde panel_simular_persona (0010_modo_pruebas.sql) guarda el mensaje de
+// prueba. No existe en Slack, así que nunca tendrá nombre en la tabla `canales`.
+const CANAL_SIMULADO = "CSIMULADO";
+
 type Persona = {
   id: string;
   full_name: string | null;
@@ -83,7 +87,9 @@ export default async function Pruebas() {
       <p className="notice">
         This writes to the real database, spends real money on research (OpenAI, Serper), and
         posts a real card in Slack (and an SMS, if that&apos;s configured) -- exactly like a real
-        message in the Founders Club would.
+        message in the Founders Club would. The test message itself is stored in{" "}
+        <code>{CANAL_SIMULADO}</code>, a channel that only exists in the database: nothing is
+        ever written to the Founders Club.
       </p>
 
       <div className="two">

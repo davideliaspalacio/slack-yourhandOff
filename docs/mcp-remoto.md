@@ -4,14 +4,14 @@
 
 Una conexión para que **tu Claude** (el que usas tú, desde tu ordenador) pueda
 **preguntarle al agente de Handoff** lo que ya sabe: quién es quién en el Founders Club,
-qué dossiers hay, qué ha pedido la gente en Slack, cuánto se ha gastado y cómo está el
-sistema. Funciona desde cualquier sitio, sin instalar nada del proyecto.
+qué dossiers hay, qué ha pedido la gente en Slack y en qué canal, cuánto se ha gastado y
+cómo está el sistema. Funciona desde cualquier sitio, sin instalar nada del proyecto.
 
-Claude puede **mirar todo** (cinco herramientas de lectura) y **cambiar lo mismo que
+Claude puede **mirar todo** (seis herramientas de lectura) y **cambiar lo mismo que
 cambias tú en el panel**: el estado de una persona, las notas y datos que ayudan al
-research, volver a investigar y los umbrales numéricos (cuatro herramientas de
-escritura, ver más abajo). No puede borrar nada, ni tocar los topes de gasto, ni apagar
-el sistema, ni escribir en Slack.
+research, volver a investigar, los umbrales numéricos y los canales que el agente vigila
+(seis herramientas de escritura, ver más abajo). No puede borrar nada, ni tocar los topes
+de gasto, ni apagar el sistema, ni escribir en Slack.
 
 ## 1. Crear tu token en el panel
 
@@ -62,8 +62,8 @@ Desktop, dentro de `mcpServers`:
 }
 ```
 
-Reinicia Claude y comprueba que `handoff` aparece con nueve herramientas (cinco de
-lectura y cuatro de escritura).
+Reinicia Claude y comprueba que `handoff` aparece con doce herramientas (seis de
+lectura y seis de escritura).
 
 ## 3. Qué puedes preguntar (lectura)
 
@@ -73,13 +73,17 @@ Habla con Claude con normalidad; él elige la herramienta. Algunos ejemplos real
 - "Enséñame las personas con encaje 3 que todavía no hemos contactado."
 - "Dame la ficha de Ada Ruiz: qué sabemos de su empresa y qué pidió en Slack."
 - "¿Cuánto hemos gastado este mes y está el lector de Slack funcionando?"
+- "¿Qué canales vigila el agente y cuál se mueve más?" (los canales salen por su nombre,
+  `#founders-general`, no solo por su código)
+- "¿Quién ha pedido algo en #founders-general esta semana?" (`senales_recientes` y
+  `personas_buscar` aceptan un `canal`, por nombre o por código)
 
 Las herramientas que hay detrás: `personas_buscar`, `persona_ver`, `senales_recientes`,
-`resumen_costes` y `estado_sistema`.
+`canales_listar`, `resumen_costes` y `estado_sistema`.
 
 ## 4. Cambiar cosas desde Claude
 
-Cuatro herramientas cambian datos. Tienen **el mismo nivel de control que el panel**:
+Seis herramientas cambian datos. Tienen **el mismo nivel de control que el panel**:
 validan lo mismo que sus botones y formularios, y nada más.
 
 | Herramienta | Qué hace | Equivale en el panel a |
@@ -88,10 +92,13 @@ validan lo mismo que sus botones y formularios, y nada más.
 | `persona_ayudar_research` | Guarda la empresa, la web, enlaces o notas que el equipo sabe y el agente no, y **encola un research nuevo** (salvo que la persona esté descartada). | **Help the research** |
 | `persona_reinvestigar` | Encola un research nuevo. Una persona descartada no se reencola; si ya hay uno pendiente, no se duplica. | **Research again** |
 | `ajustar_umbral` | Cambia un umbral numérico (ver la lista abajo). | Settings |
+| `canal_agregar` | Añade un canal a los que el agente vigila (por su código, `C…` o `G…`; máximo 20, sin repetir). El canal donde el agente publica sus tarjetas **nunca** se puede vigilar. | Settings → **Watched channels** |
+| `canal_quitar` | Quita un canal de los vigilados. Deja de leerse en el siguiente sondeo; los mensajes y las señales que ya trajo se quedan. | Settings → **Watched channels** |
 
-Cada una acepta a la persona por su id o por su `slack_user_id`, y **devuelve cómo quedó
-el cambio** (estado anterior y nuevo, lo que se guardó, si se encoló el research), para
-que Claude confirme lo que pasó en vez de suponerlo.
+Las que actúan sobre una persona la aceptan por su id o por su `slack_user_id`, y todas
+**devuelven cómo quedó el cambio** (estado anterior y nuevo, lo que se guardó, si se
+encoló el research, la lista de canales resultante), para que Claude confirme lo que pasó
+en vez de suponerlo.
 
 ### Ejemplos
 
@@ -105,6 +112,11 @@ que Claude confirme lo que pasó en vez de suponerlo.
 - "Marca como contactados a los de encaje 3 que me enseñaste." → una llamada a
   `persona_cambiar_estado` por persona.
 - "Baja el tope de SMS a 2 al día." → `ajustar_umbral` con `sms_por_dia = 2`.
+- "Vigila también C08MRLP46G6." → `canal_agregar`. Para que sirva, la cuenta del token de
+  lectura tiene que ser miembro de ese canal; el nombre (`#…`) aparece tras el siguiente
+  sondeo.
+- "Deja de leer #founders-random." → `canal_quitar` (con el código, que es lo que la
+  herramienta acepta; `canales_listar` lo dice).
 
 Cómo tratan los datos:
 
@@ -166,8 +178,14 @@ Cómo tratan los datos:
 ## Para quien despliega
 
 - Migración `0023_mcp_tokens.sql` (tabla `mcp_tokens`, funciones del panel y la clave
-  `mcp_llamadas_por_dia`) y `0024_mcp_escritura.sql` (las funciones `mcp_*` de escritura, la
-  clave `mcp_escrituras_por_dia` y un índice). Se aplican como las anteriores.
+  `mcp_llamadas_por_dia`), `0024_mcp_escritura.sql` (las funciones `mcp_*` de escritura, la
+  clave `mcp_escrituras_por_dia` y un índice) y `0025_canales.sql` (la tabla `canales` con
+  los nombres y las funciones `mcp_canal_agregar` / `mcp_canal_quitar`). Se aplican como
+  las anteriores.
+- Los nombres de canal los rellena el worker en su ciclo de lectura con
+  `conversations.info`, un método de solo lectura más en la lista blanca de
+  `slack_client.py`: no hace falta ningún scope de escritura, pero el token sí necesita
+  poder leer el canal (`channels:read` / `groups:read`).
 - Las funciones `mcp_*` reciben el correo como argumento y comprueban que esté en
   `panel_users`; por eso la migración les quita el `execute` a `public`, `anon` y
   `authenticated` (si el panel pudiera llamarlas, cualquiera con cuenta elegiría el correo).

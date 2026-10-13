@@ -211,3 +211,12 @@ export const alertaLabel = (estado: string | null, motivo: string | null) => {
 
 // Una señal detectada cuenta como "pidió algo" en Today durante esta ventana.
 export const DIAS_SENAL_RECIENTE = 7;
+
+// Cómo se ve un canal de Slack: su nombre (tabla `canales`, migración 0025) cuando el
+// worker ya lo sabe, y el código si no, que es lo único que hay. `conCodigo` añade el
+// código entre paréntesis donde haga falta para editarlo o buscarlo en Slack.
+export const canalLabel = (channelId: string, nombre?: string | null, conCodigo = false) => {
+  const limpio = (nombre ?? "").trim().replace(/^#/, "");
+  if (!limpio) return channelId;
+  return conCodigo ? `#${limpio} (${channelId})` : `#${limpio}`;
+};

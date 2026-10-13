@@ -73,8 +73,9 @@ si OpenAI los cambia o se cambia de modelo, hay que actualizarlos aquí.
 
 Además del servidor local (arriba, solo para quien tiene el repo), el servicio web
 sirve un MCP en `/mcp`, con un token por persona que se crea en Settings → *Connect your
-Claude*. Cinco herramientas leen y cuatro cambian estados, notas de research y umbrales
-(con el mismo control que el panel, firmadas y con tope diario). Guía para el equipo:
+Claude*. Seis herramientas leen y seis cambian estados, notas de research, umbrales y los
+canales vigilados (con el mismo control que el panel, firmadas y con tope diario). Guía
+para el equipo:
 [`docs/mcp-remoto.md`](docs/mcp-remoto.md).
 
 ## Research desde la terminal
@@ -215,7 +216,7 @@ Las migraciones no se aplican al desplegar: se suben con `supabase db push`.
 | `DATABASE_URL` | Sí | Cadena **Session pooler** de Supabase Cloud (*Connect* en el panel). La conexión directa no funciona en redes solo IPv4. |
 | `OPENAI_API_KEY` | Sí | Clave de producción, no la de desarrollo. |
 | `SLACK_USER_TOKEN` | No | Token `xoxp` de solo lectura. Opcional: se puede pegar en Settings del panel, y el valor del panel gana sobre este. Sin ninguno de los dos, el worker explica qué falta y sale. |
-| `SLACK_CHANNEL_IDS` | No | IDs de canal separados por comas. Opcional: se editan en Settings del panel (Watched channels) y el valor del panel gana; sin ninguno de los dos, el worker explica qué falta y sale. |
+| `SLACK_CHANNEL_IDS` | No | IDs de canal separados por comas. Opcional: se editan en Settings del panel (Watched channels) -- o desde Claude, con `canal_agregar` / `canal_quitar` -- y el valor de la base gana; sin ninguno de los dos, el worker explica qué falta y sale. |
 | `SERPER_API_KEY` | Sí, salvo que se despliegue SearXNG | `SEARXNG_URL` apunta por defecto a `127.0.0.1`, que en Railway no existe: sin Serper no hay búsqueda. |
 | `HANDOFF_ALERT_WEBHOOK_URL` | Recomendada | Sin ella los avisos solo quedan en los logs. |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | No | Sin ellas no hay trazas; el gasto se registra igual. |

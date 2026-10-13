@@ -2,7 +2,8 @@
 
 The workspace belongs to a third party and Anthony is one member among 1,400.
 The agent never writes there — no messages, no reactions, no DMs — so this
-wrapper exposes reads only, and a test pins that surface. Anything the agent
+wrapper exposes reads only: `READ_METHODS` lists the methods it may call,
+`_call` refuses anything else, and a test pins that list. Anything the agent
 posts goes to Handoff's own Slack, through a different credential.
 """
 
@@ -34,6 +35,20 @@ AUTH_ERRORS = frozenset(
 )
 PAGE_SIZE = 200
 RATE_LIMIT_RETRIES = 3
+
+# Los únicos métodos de Slack que este cliente puede llamar. La lista está aquí, y no
+# solo en el test que la vigila (tests/test_slack_client.py), para que `_call` la imponga
+# en tiempo de ejecución: añadir un método de escritura no es un descuido posible.
+READ_METHODS = frozenset(
+    {
+        "auth_test",
+        "conversations_history",
+        "conversations_info",
+        "conversations_members",
+        "users_info",
+        "chat_getPermalink",
+    }
+)
 
 
 class SlackAuthFailed(RuntimeError):
@@ -105,6 +120,9 @@ class FoundersClubReader:
         return self._client
 
     def _call(self, method: str, **kwargs):
+        if method not in READ_METHODS:
+            # No es un error de Slack ni algo que reintentar: es un error de programación.
+            raise RuntimeError(f"{method} no es de lectura: el agente nunca escribe allí")
         client = self._resolve_client()
         try:
             return getattr(client, method)(**kwargs)
@@ -162,6 +180,15 @@ class FoundersClubReader:
             cursor = (page.get("response_metadata") or {}).get("next_cursor")
             if not cursor:
                 return found
+
+    def channel_name(self, channel: str) -> str:
+        """El nombre del canal (`founders-general`), para mostrarlo en vez del código.
+
+        Es de lectura, como el resto de la clase. Puede volver vacío: un canal sin
+        nombre (un DM) o una respuesta sin ese campo. Quien la usa tiene que seguir
+        funcionando sin nombre."""
+        info = self._call("conversations_info", channel=channel).get("channel") or {}
+        return info.get("name") or ""
 
     def user_profile(self, user_id: str) -> UserProfile:
         user = self._call("users_info", user=user_id)["user"]

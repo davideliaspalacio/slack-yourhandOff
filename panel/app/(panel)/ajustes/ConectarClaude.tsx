@@ -122,7 +122,8 @@ export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: strin
       {state.error && <p className="notice">{state.error}</p>}
       <p className="muted" style={{ fontSize: 12 }}>
         MCP URL: <code>{url}</code> · A token lets Claude read everything the panel shows and
-        change statuses, research notes and thresholds, with the same access you have here. Every
+        change statuses, research notes, thresholds and the watched channels, with the same
+        access you have here. Every
         change is recorded under your name. It can&apos;t delete anything, touch the spending
         caps or shut the system down. Up to 5 active tokens per person; the database keeps only a
         fingerprint of each one.

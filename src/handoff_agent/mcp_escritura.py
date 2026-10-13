@@ -1,5 +1,6 @@
 """Herramientas de ESCRITURA del MCP remoto: cambiar un estado, ayudar al research,
-volver a investigar y ajustar un umbral. El mismo control que tiene el panel, y nada más.
+volver a investigar, ajustar un umbral y gestionar los canales vigilados. El mismo
+control que tiene el panel, y nada más.
 
 Se registran en `mcp_remoto.py` junto a las de lectura (que siguen sin poder escribir:
 corren en una transacción `READ ONLY`). Aquí cada herramienta pasa por `_escribir`, el
@@ -12,13 +13,18 @@ corren en una transacción `READ ONLY`). Aquí cada herramienta pasa por `_escri
 3. El tope diario de escrituras por persona (`mcp_escrituras_por_dia`), aparte del tope
    general de llamadas. Un candado de la base serializa a quien llama dos veces a la vez,
    así que no se cuela ninguna por encima.
-4. La escritura, que la hace una función SQL `mcp_*` (migración 0024) con el correo como
-   primer argumento. Replican las validaciones del panel (las de research comparten
-   código con `panel_ayudar_research`). Nada de SQL de escritura vive aquí salvo la
-   auditoría.
+4. La escritura, que la hace una función SQL `mcp_*` (migraciones 0024 y 0025) con el
+   correo como primer argumento. Replican las validaciones del panel (las de research
+   comparten código con `panel_ayudar_research`, y las de los canales con
+   `panel_guardar_canales`). Nada de SQL de escritura vive aquí salvo la auditoría.
 5. La auditoría: una fila `mcp_escritura` en `agent_actions` con quién, qué herramienta y
    el antes y el después. Va en LA MISMA transacción que el cambio: o quedan las dos cosas
    o ninguna. Nunca lleva el token (esta capa ni siquiera lo conoce).
+
+Los canales vigilados tienen una regla más que el panel no necesitaba: el canal donde el
+bot publica las tarjetas no puede entrar en la lista (también lo impide
+`delivery/slack_writer.py`). Vive en el entorno del worker, así que viaja a la función SQL
+como argumento, y se comprueba en los dos sitios.
 
 Lo que NO hay y no debe haber: borrar, tocar `kill_switch` ni los presupuestos, publicar
 en Slack. `tests/test_mcp_remoto.py` lo vigila (lista blanca de herramientas, de
@@ -37,7 +43,8 @@ from typing import Any
 import psycopg
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import db, mcp_identidad, untrusted
+from . import canales, db, mcp_identidad, untrusted
+from .config import load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +76,10 @@ UMBRALES = (
     "alertas_edad_maxima_horas",
     "aviso_token_horas",
 )
+
+# Canales vigilados: la clave de config de la migración 0016. El formato y el máximo
+# viven en `canales`, que también los usa la lectura.
+CLAVE_CANALES = "slack_channel_ids"
 
 RESULTADOS_REINVESTIGAR = {
     "encolado": "queued",
@@ -386,3 +397,100 @@ def ajustar_umbral(clave: str, valor: int) -> dict:
         )
 
     return _escribir("ajustar_umbral", operacion)
+
+
+def _canal_normalizado(channel_id: str) -> str:
+    """El código en mayúsculas, o un error que explica dónde encontrarlo."""
+    canal = (channel_id or "").strip().upper()
+    if not canales.CODIGO.match(canal):
+        raise ToolError(
+            f"invalid channel id {(channel_id or '').strip()!r}: use the code Slack shows "
+            "at the bottom of the channel details (C… or G…), not the name"
+        )
+    return canal
+
+
+def _canales_vistos(cur, lista: list[str]) -> list[dict]:
+    """Una lista de canales con el nombre de cada uno, si se conoce."""
+    nombres = canales.nombres(cur, lista)
+    return [
+        {"canal": c, "nombre": canales.etiqueta(c, nombres[c]) if c in nombres else None}
+        for c in lista
+    ]
+
+
+def _respuesta_canales(cur, hecho: str, canal: str, r: dict, respaldo: tuple[str, ...]) -> dict:
+    respuesta = {
+        "ok": True,
+        hecho: canal,
+        "canales": _canales_vistos(cur, r["canales"]),
+        "total": len(r["canales"]),
+        "maximo": canales.MAXIMO,
+        "nota": "the worker picks the new list up on its next poll (a couple of minutes)",
+    }
+    if not r["canales"] and respaldo:
+        # Una lista vacía en la base significa "sin valor del panel" y el worker vuelve a
+        # SLACK_CHANNEL_IDS (ver secretos.slack_channel_ids): hay que decirlo.
+        respuesta["nota"] = (
+            "the watched list is now empty, so the SLACK_CHANNEL_IDS list from the "
+            "worker's environment takes over again"
+        )
+    return respuesta
+
+
+def canal_agregar(channel_id: str) -> dict:
+    """AÑADE un canal de Slack a los que el agente vigila (lo mismo que Settings →
+    Watched channels del panel). `channel_id` es el código que Slack muestra al final de
+    los detalles del canal (empieza por C o por G; se pasa a mayúsculas), no el nombre.
+    El canal donde el agente publica sus tarjetas NO se puede vigilar; un canal repetido
+    se rechaza; el máximo son 20. La cuenta del token de lectura tiene que ser miembro
+    del canal o el agente no podrá leerlo. Úsala solo cuando la persona del equipo lo
+    pida de forma explícita. Devuelve la lista de canales resultante."""
+    canal = _canal_normalizado(channel_id)
+    ajustes = load_settings()
+    tarjetas = (ajustes.handoff_channel_id or "").strip().upper()
+    if tarjetas and canal == tarjetas:
+        raise ToolError(
+            f"{canal} is the channel where the agent posts its cards: it can never be "
+            "watched (the agent would end up reading its own cards)"
+        )
+
+    def operacion(cur, email: str) -> Resultado:
+        cur.execute(
+            "select public.mcp_canal_agregar(%s, %s, %s, %s) as r",
+            (email, canal, tarjetas or None, list(ajustes.slack_channel_ids)),
+        )
+        r = cur.fetchone()["r"]
+        return Resultado(
+            respuesta=_respuesta_canales(cur, "agregado", canal, r, ajustes.slack_channel_ids),
+            cambio={"canales": {"antes": r["antes"], "despues": r["canales"]}},
+            estado={"canales": r["canales"]},
+            clave=CLAVE_CANALES,
+        )
+
+    return _escribir("canal_agregar", operacion)
+
+
+def canal_quitar(channel_id: str) -> dict:
+    """QUITA un canal de los que el agente vigila (lo mismo que Settings → Watched
+    channels del panel). Deja de leerse en el siguiente sondeo; los mensajes y las
+    señales que ese canal ya trajo se quedan donde están. Un canal que no se vigila es un
+    error. Úsala solo cuando la persona del equipo lo pida de forma explícita. Devuelve la
+    lista de canales resultante."""
+    canal = _canal_normalizado(channel_id)
+    ajustes = load_settings()
+
+    def operacion(cur, email: str) -> Resultado:
+        cur.execute(
+            "select public.mcp_canal_quitar(%s, %s, %s) as r",
+            (email, canal, list(ajustes.slack_channel_ids)),
+        )
+        r = cur.fetchone()["r"]
+        return Resultado(
+            respuesta=_respuesta_canales(cur, "quitado", canal, r, ajustes.slack_channel_ids),
+            cambio={"canales": {"antes": r["antes"], "despues": r["canales"]}},
+            estado={"canales": r["canales"]},
+            clave=CLAVE_CANALES,
+        )
+
+    return _escribir("canal_quitar", operacion)

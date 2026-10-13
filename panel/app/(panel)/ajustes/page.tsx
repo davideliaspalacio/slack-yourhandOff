@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { fecha, minutosDesde } from "@/lib/format";
+import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import { guardarExigirEvidencia, guardarPausaUnipile, guardarUmbral } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type TokenMcp } from "./ConectarClaude";
@@ -75,6 +75,13 @@ export default async function Ajustes() {
   const canales = Array.isArray(canalesValor)
     ? canalesValor.filter((c): c is string => typeof c === "string")
     : [];
+  // Los nombres que el worker ya averiguó (conversations.info, solo lectura): un código
+  // de canal no le dice nada a nadie.
+  const { data: nombresData } = await supabase.from("canales").select("channel_id, nombre");
+  const nombrePorCanal = new Map(
+    (nombresData ?? []).map((c) => [c.channel_id as string, c.nombre as string | null]),
+  );
+  const canalVisible = (id: string) => canalLabel(id, nombrePorCanal.get(id), true);
   const latidoValor = valores.get("lector_estado");
   const latido: Latido | null =
     latidoValor && typeof latidoValor === "object" && !Array.isArray(latidoValor) &&
@@ -163,7 +170,7 @@ export default async function Ajustes() {
         <h2>Watched channels</h2>
         <p>
           {canales.length > 0
-            ? canales.join(", ")
+            ? canales.map(canalVisible).join(", ")
             : "No channels configured — the agent is not reading anything"}
         </p>
         <CanalesForm key={canales.join(",")} actuales={canales} />

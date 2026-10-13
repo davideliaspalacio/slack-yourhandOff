@@ -8,13 +8,18 @@ ruled out. Later reads start right after the last stored message.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .. import db
+import psycopg
+
+from .. import canales, db
 from ..slack_client import SlackUnavailable
 from . import queue
+
+logger = logging.getLogger(__name__)
 
 # Mensajes que no escribió una persona o que no dicen nada: nunca disparan research.
 SYSTEM_SUBTYPES = frozenset(
@@ -89,6 +94,40 @@ def _store(channel: str, message: dict, status: str) -> bool:
     return inserted == 1
 
 
+def _refrescar_nombre(reader, channel: str) -> None:
+    """Guarda el nombre del canal si no se conoce o lleva más de un día sin mirarse.
+
+    Es un adorno: sirve para que el panel y el MCP digan `#founders-general` en vez de
+    `C08MRLP46G6`. Por eso ni que Slack no conteste, ni que el canal sea privado, ni que
+    la base falle puede tumbar la lectura. La credencial muerta sí sale (SlackAuthFailed):
+    la gestiona el bucle, que avisa a quien pega el token, y sin ella no se va a leer nada
+    de todas formas.
+    """
+    try:
+        if not canales.necesita_nombre(channel):
+            return
+        try:
+            nombre = reader.channel_name(channel) or None
+        except SlackUnavailable as exc:
+            # Se anota el intento igual (sin nombre, o conservando el que hubiera): así
+            # no se le pregunta a Slack en cada sondeo por un canal que no contesta, y
+            # se vuelve a intentar al día siguiente.
+            nombre = None
+            logger.warning("sin nombre para el canal %s (%s); se sigue con el código", channel, exc)
+        db.execute(
+            """
+            insert into canales (channel_id, nombre, actualizado_at)
+            values (%s, %s, now())
+            on conflict (channel_id) do update
+                set nombre = coalesce(excluded.nombre, canales.nombre),
+                    actualizado_at = excluded.actualizado_at
+            """,
+            (channel, nombre),
+        )
+    except psycopg.Error:
+        logger.warning("no se pudo guardar el nombre del canal %s", channel)
+
+
 def _diff_members(reader, channel: str, owner_id: str, result: TickResult) -> None:
     current = reader.members(channel)
     previous = db.fetch_one(
@@ -126,6 +165,7 @@ def watch_tick(
     result.user_id = owner_id
     for channel in channels:
         try:
+            _refrescar_nombre(reader, channel)
             history = reader.history(channel, oldest=_oldest(channel, lookback_hours, now))
             # De más viejo a más nuevo, a propósito. El marcador de reanudación
             # es el ts más alto ya guardado y cada mensaje se confirma por

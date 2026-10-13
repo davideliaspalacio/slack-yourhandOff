@@ -12,6 +12,8 @@ class FakeReader:
         self.auth_error: Exception | None = None
         self.unavailable_channels: set[str] = set()
         self.history_calls: list[tuple[str, str]] = []
+        self.channel_names: dict[str, str] = {}
+        self.name_calls: list[str] = []
 
     # --- la misma superficie que FoundersClubReader ---
     def identity(self) -> tuple[str, str]:
@@ -30,6 +32,14 @@ class FakeReader:
         # Como el Slack real: primero lo más nuevo. Devolverlos en orden de
         # inserción escondía que el watcher los guardaba de nuevo a viejo.
         return sorted(fresh, key=lambda m: float(m["ts"]), reverse=True)
+
+    def channel_name(self, channel: str) -> str:
+        self.name_calls.append(channel)
+        if self.auth_error:
+            raise self.auth_error
+        if channel in self.unavailable_channels:
+            raise SlackUnavailable(f"conversations_info: {channel}: internal_error")
+        return self.channel_names.get(channel, "")
 
     def members(self, channel: str) -> set[str]:
         return set(self.channel_members.get(channel, set()))

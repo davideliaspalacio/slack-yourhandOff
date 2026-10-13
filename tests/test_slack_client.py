@@ -7,9 +7,12 @@ from slack_sdk.http_retry.builtin_handlers import RateLimitErrorRetryHandler
 
 from handoff_agent import slack_client as sc
 
+# Escrita a mano a propósito, igual que las listas blancas del MCP: añadir un método
+# obliga a venir aquí y comprobar que de verdad no escribe en el Founders Club.
 READ_METHODS = {
     "auth_test",
     "conversations_history",
+    "conversations_info",
     "conversations_members",
     "users_info",
     "chat_getPermalink",
@@ -27,12 +30,14 @@ class FakeWebClient:
         users=None,
         error=None,
         permalink="https://handoff.slack.com/archives/C1/p1726000000000100",
+        channel=None,
     ):
         self.history_pages = list(history_pages)
         self.member_pages = list(member_pages)
         self.users = users or {}
         self.error = error
         self.permalink_response = permalink
+        self.channel = channel if channel is not None else {"id": "C1", "name": "founders-general"}
         self.calls = []
 
     def _record(self, name, kwargs):
@@ -60,11 +65,27 @@ class FakeWebClient:
         self._record("chat_getPermalink", kwargs)
         return {"ok": True, "permalink": self.permalink_response}
 
+    def conversations_info(self, **kwargs):
+        self._record("conversations_info", kwargs)
+        return {"ok": True, "channel": self.channel}
+
+    def chat_postMessage(self, **kwargs):  # nunca debería llamarse
+        self._record("chat_postMessage", kwargs)
+        return {"ok": True}
+
 
 def test_the_reader_only_exposes_reads():
     """El agente nunca escribe en el Founders Club: la superficie queda fijada."""
     public = {name for name in dir(sc.FoundersClubReader) if not name.startswith("_")}
-    assert public == {"identity", "owner_id", "history", "members", "user_profile", "permalink"}
+    assert public == {
+        "identity",
+        "owner_id",
+        "history",
+        "members",
+        "user_profile",
+        "permalink",
+        "channel_name",
+    }
 
 
 def test_identity_returns_user_and_team_and_owner_id_still_works():
@@ -187,7 +208,13 @@ def test_only_read_methods_ever_reach_slack():
     reader.members("C1")
     reader.user_profile("U1")
     reader.permalink("C1", "1726000000.000100")
+    reader.channel_name("C1")
     assert {name for name, _ in fake.calls} <= READ_METHODS
+    # La lista del código es la misma que vigila este test, y `_call` la impone.
+    assert set(sc.READ_METHODS) == READ_METHODS
+    with pytest.raises(RuntimeError, match="no es de lectura"):
+        reader._call("chat_postMessage", channel="C1", text="hola")
+    assert "chat_postMessage" not in {name for name, _ in fake.calls}
 
 
 def test_permalink_asks_slack_for_the_link(monkeypatch):
@@ -265,3 +292,23 @@ def test_an_invalid_auth_alert_says_the_credential_may_have_expired():
     fake = FakeWebClient(error=SlackApiError("x", {"ok": False, "error": "invalid_auth"}))
     with pytest.raises(sc.SlackAuthFailed, match="caducado.*Settings del panel"):
         sc.FoundersClubReader(client=fake).owner_id()
+
+
+def test_channel_name_asks_conversations_info():
+    fake = FakeWebClient(channel={"id": "C1", "name": "founders-general"})
+    reader = sc.FoundersClubReader(client=fake)
+    assert reader.channel_name("C1") == "founders-general"
+    assert fake.calls == [("conversations_info", {"channel": "C1"})]
+
+
+@pytest.mark.parametrize("respuesta", [{"id": "C1"}, {}])
+def test_a_channel_without_a_name_comes_back_empty(respuesta):
+    reader = sc.FoundersClubReader(client=FakeWebClient(channel=respuesta))
+    assert reader.channel_name("C1") == ""
+
+
+def test_a_failing_channel_name_raises_like_any_other_read():
+    error = SlackApiError("x", response={"ok": False, "error": "channel_not_found"})
+    reader = sc.FoundersClubReader(client=FakeWebClient(error=error))
+    with pytest.raises(sc.SlackUnavailable, match="channel_not_found"):
+        reader.channel_name("C1")

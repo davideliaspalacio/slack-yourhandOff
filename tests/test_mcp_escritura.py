@@ -1,4 +1,5 @@
-"""Escrituras del MCP remoto: estados, notas, cola y umbrales, con el control del panel.
+"""Escrituras del MCP remoto: estados, notas, cola, umbrales y canales, con el control
+del panel.
 
 Lo que más importa: sin identidad o con un correo fuera de `panel_users` no cambia nada,
 cada escritura deja su firma (correo y sufijo, nunca el token), el tope diario de
@@ -35,6 +36,8 @@ ESCRITURAS = [
     ("persona_ayudar_research", {"id_o_slack_user_id": "U1", "empresa": "Acme"}),
     ("persona_reinvestigar", {"id_o_slack_user_id": "U1"}),
     ("ajustar_umbral", {"clave": "sms_por_dia", "valor": 7}),
+    ("canal_agregar", {"channel_id": "C0ABC123"}),
+    ("canal_quitar", {"channel_id": "C0ABC123"}),
 ]
 # Lo que el panel ya deja tocar y el MCP no: el dinero, la emergencia, sus propios topes
 # y los booleanos.
@@ -166,6 +169,8 @@ def test_the_owner_losing_panel_access_stops_writes_at_once(gente):
         ("select public.mcp_reinvestigar(%s, %s)", "p"),
         ("select public.mcp_ayudar_research(%s, %s, 'X', null, null, null)", "p"),
         ("select public.mcp_ajustar_umbral(%s, 'sms_por_dia', 9)", None),
+        ("select public.mcp_canal_agregar(%s, 'C0ABC123', null, '{}'::text[])", None),
+        ("select public.mcp_canal_quitar(%s, 'C0ABC123', '{}'::text[])", None),
     ],
 )
 @pytest.mark.parametrize("email", [EXTRANO, "", None, "ANA@EXAMPLE.COM ", "%"])
@@ -888,3 +893,185 @@ def test_the_identity_never_holds_the_token(equipo, cliente):
     assert identidad == (ANA, token[-4:])
     assert token not in json.dumps(identidad)
     assert all(len(x) < 40 for x in identidad)
+
+
+# --- 10. canales vigilados ---
+
+TARJETAS = "C0TARJETAS"
+
+
+@pytest.fixture
+def canales_vigilados(equipo, restore_config, monkeypatch):
+    """Dos canales vigilados, uno con nombre, y un canal de tarjetas configurado."""
+    monkeypatch.setenv("HANDOFF_SLACK_CHANNEL_ID", TARJETAS)
+    db.execute(
+        'update config set value = \'["C0ABC123", "C0DEF456"]\'::jsonb '
+        "where key = 'slack_channel_ids'"
+    )
+    db.execute("insert into canales (channel_id, nombre) values ('C0DEF456', 'founders-general')")
+
+
+def vigilados():
+    return valor("slack_channel_ids")
+
+
+def test_adding_a_channel_returns_the_resulting_list_with_names(canales_vigilados, como_ana):
+    r = mcp_escritura.canal_agregar("c0xyz789")
+    assert r["ok"] is True and r["agregado"] == "C0XYZ789"
+    assert r["canales"] == [
+        {"canal": "C0ABC123", "nombre": None},
+        {"canal": "C0DEF456", "nombre": "#founders-general"},
+        {"canal": "C0XYZ789", "nombre": None},
+    ]
+    assert r["total"] == 3 and r["maximo"] == 20
+    assert "next poll" in r["nota"]
+    assert vigilados() == ["C0ABC123", "C0DEF456", "C0XYZ789"]
+    json.dumps(r)
+
+
+def test_adding_a_channel_is_audited_with_the_email_and_the_suffix(canales_vigilados, como_ana):
+    mcp_escritura.canal_agregar("C0XYZ789")
+    [fila] = auditoria()
+    assert set(fila["payload"]) == {"herramienta", "email", "sufijo", "clave", "cambio"}
+    assert fila["payload"]["herramienta"] == "canal_agregar"
+    assert (fila["payload"]["email"], fila["payload"]["sufijo"]) == (ANA, SUFIJO)
+    assert fila["payload"]["clave"] == "slack_channel_ids"
+    assert fila["payload"]["cambio"] == {
+        "canales": {
+            "antes": ["C0ABC123", "C0DEF456"],
+            "despues": ["C0ABC123", "C0DEF456", "C0XYZ789"],
+        }
+    }
+    assert fila["result"] == {"canales": ["C0ABC123", "C0DEF456", "C0XYZ789"]}
+    assert fila["prospect_id"] is None
+
+
+def test_the_cards_channel_can_never_be_watched(canales_vigilados, como_ana):
+    antes = _huella()
+    for referencia in (TARJETAS, TARJETAS.lower(), f" {TARJETAS} "):
+        with pytest.raises(ToolError, match="posts its cards"):
+            mcp_escritura.canal_agregar(referencia)
+    assert _huella() == antes
+    # Y la función SQL por sí sola, con el canal de tarjetas como argumento.
+    with pytest.raises(psycopg.errors.RaiseException, match="posts its cards"):
+        db.fetch_one(
+            "select public.mcp_canal_agregar(%s, %s, %s, '{}'::text[])", (ANA, TARJETAS, TARJETAS)
+        )
+    assert vigilados() == ["C0ABC123", "C0DEF456"]
+    assert not auditoria()
+
+
+@pytest.mark.parametrize(
+    "malo", ["X0ABC123", "C0AB", "C0ABC-23", "random1", "#founders-general", "", "  "]
+)
+def test_an_invalid_channel_id_is_refused_and_changes_nothing(canales_vigilados, como_ana, malo):
+    antes = _huella()
+    with pytest.raises(ToolError, match="invalid channel id"):
+        mcp_escritura.canal_agregar(malo)
+    with pytest.raises(ToolError, match="invalid channel id"):
+        mcp_escritura.canal_quitar(malo)
+    assert _huella() == antes
+
+
+def test_a_duplicate_channel_is_refused(canales_vigilados, como_ana):
+    antes = _huella()
+    for referencia in ("C0ABC123", "c0abc123"):
+        with pytest.raises(ToolError, match="already watched"):
+            mcp_escritura.canal_agregar(referencia)
+    assert _huella() == antes
+
+
+def test_the_twenty_first_channel_is_refused(canales_vigilados, como_ana, restore_config):
+    veinte = [f"C0AAA{i:03d}" for i in range(20)]
+    db.execute(
+        "update config set value = %s::jsonb where key = 'slack_channel_ids'",
+        (json.dumps(veinte),),
+    )
+    with pytest.raises(ToolError, match="too many channels"):
+        mcp_escritura.canal_agregar("C0XYZ789")
+    assert vigilados() == veinte
+    assert not auditoria()
+
+
+def test_removing_a_channel_takes_out_the_right_one_and_leaves_the_rest(
+    canales_vigilados, como_ana
+):
+    r = mcp_escritura.canal_quitar("c0abc123")
+    assert r["ok"] is True and r["quitado"] == "C0ABC123"
+    assert r["canales"] == [{"canal": "C0DEF456", "nombre": "#founders-general"}]
+    assert vigilados() == ["C0DEF456"]
+    [fila] = auditoria()
+    assert fila["payload"]["herramienta"] == "canal_quitar"
+    assert fila["payload"]["cambio"]["canales"]["despues"] == ["C0DEF456"]
+
+
+def test_removing_a_channel_that_is_not_watched_is_a_clear_error(canales_vigilados, como_ana):
+    antes = _huella()
+    with pytest.raises(ToolError, match="is not watched"):
+        mcp_escritura.canal_quitar("C0XYZ789")
+    assert _huella() == antes
+
+
+def test_removing_a_channel_keeps_its_messages_and_signals(canales_vigilados, gente, como_ana):
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text) "
+        "values ('C0ABC123', '1.1', 'U1', 'hola')"
+    )
+    db.execute(
+        "insert into message_signals (channel_id, ts, detectada, tipo, cita, confianza) "
+        "values ('C0ABC123', '1.1', true, 'ventas', 'busco comercial', 'alta')"
+    )
+    mcp_escritura.canal_quitar("C0ABC123")
+    assert db.fetch_one("select count(*) as n from slack_messages")["n"] == 1
+    assert db.fetch_one("select count(*) as n from message_signals")["n"] == 1
+    assert db.fetch_one("select count(*) as n from canales")["n"] == 1
+
+
+def test_emptying_the_list_warns_that_the_environment_takes_over(
+    canales_vigilados, como_ana, monkeypatch
+):
+    monkeypatch.setenv("SLACK_CHANNEL_IDS", "C0DEF456")
+    db.execute("update config set value = '[\"C0DEF456\"]'::jsonb where key = 'slack_channel_ids'")
+    r = mcp_escritura.canal_quitar("C0DEF456")
+    assert r["canales"] == [] and "SLACK_CHANNEL_IDS" in r["nota"]
+    assert vigilados() == []
+
+
+def test_the_environment_list_is_materialised_before_adding(canales_vigilados, como_ana):
+    """Con la lista de la base vacía el worker usa la del entorno: añadir no la pierde."""
+    db.execute("update config set value = '[]'::jsonb where key = 'slack_channel_ids'")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("SLACK_CHANNEL_IDS", "C0DEF456, c0ghi789")
+        r = mcp_escritura.canal_agregar("C0XYZ789")
+    assert [c["canal"] for c in r["canales"]] == ["C0DEF456", "C0GHI789", "C0XYZ789"]
+    assert vigilados() == ["C0DEF456", "C0GHI789", "C0XYZ789"]
+
+
+def test_the_channel_tools_respect_the_daily_write_cap(canales_vigilados, como_ana):
+    db.execute("update config set value = '2'::jsonb where key = 'mcp_escrituras_por_dia'")
+    mcp_escritura.canal_agregar("C0XYZ789")
+    mcp_escritura.canal_quitar("C0XYZ789")
+    antes = _huella()
+    with pytest.raises(ToolError, match="daily write limit reached"):
+        mcp_escritura.canal_agregar("C0XYZ789")
+    with pytest.raises(ToolError, match="daily write limit reached"):
+        mcp_escritura.canal_quitar("C0ABC123")
+    assert _huella() == antes
+    assert vigilados() == ["C0ABC123", "C0DEF456"]
+    # La lectura sigue: los canales se pueden consultar aunque no se puedan cambiar.
+    assert [c["canal"] for c in mcp_remoto.canales_listar()["canales"]] == [
+        "C0ABC123",
+        "C0DEF456",
+    ]
+
+
+def test_the_panel_function_and_the_mcp_ones_share_the_validation(equipo, restore_config):
+    """panel_guardar_canales (0016) y las mcp_canal_* validan con la misma función."""
+    for malo in ("X0ABC123", "C0AB"):
+        with pytest.raises(psycopg.errors.RaiseException, match="invalid channel id"):
+            as_user(ANA, "select panel_guardar_canales(%s)", ([malo],))
+        with pytest.raises(psycopg.errors.RaiseException, match="invalid channel id"):
+            db.fetch_one("select public.mcp_canal_agregar(%s, %s, null, '{}'::text[])", (ANA, malo))
+    # Y el panel sigue guardando como siempre, normalizando y sin duplicados.
+    as_user(ANA, "select panel_guardar_canales(%s)", (["  c0abc123 ", "C0ABC123", "g0def456"],))
+    assert vigilados() == ["C0ABC123", "G0DEF456"]

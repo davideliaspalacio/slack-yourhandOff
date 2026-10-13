@@ -2,8 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { acceso } from "@/lib/acceso";
 import {
-  ESTADOS_EDITABLES, accionLabel, alertaLabel, bandLabel, empresaVisible, estadoLabel, fecha,
-  jobStatusLabel, reasonLabel, tipoSenalLabel, usd,
+  ESTADOS_EDITABLES, accionLabel, alertaLabel, bandLabel, canalLabel, empresaVisible,
+  estadoLabel, fecha, jobStatusLabel, reasonLabel, tipoSenalLabel, usd,
 } from "@/lib/format";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
 import { SinAcceso } from "../../SinAcceso";
@@ -87,6 +87,12 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
       .eq("prospect_id", id).eq("detectada", true)
       .order("created_at", { ascending: false }).limit(10),
   ]);
+  // Nombres de canal (los pone el worker, con una llamada de solo lectura a Slack): son
+  // pocos y se traen todos de una vez.
+  const { data: nombresCanal } = await supabase.from("canales").select("channel_id, nombre");
+  const nombrePorCanal = new Map(
+    (nombresCanal ?? []).map((c) => [c.channel_id as string, c.nombre as string | null]),
+  );
 
   const d = (dossier.data?.content ?? {}) as Dossier;
   const fuentes = (dossier.data?.sources ?? []) as Fuente[];
@@ -336,7 +342,9 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
         <table><tbody>
           {mensajes.data!.map((m) => (
             <tr key={`${m.channel_id}${m.ts}`}>
-              <td>{m.text}</td><td className="muted">{fecha(m.created_at)}</td>
+              <td>{m.text}</td>
+              <td className="muted">{canalLabel(m.channel_id, nombrePorCanal.get(m.channel_id))}</td>
+              <td className="muted">{fecha(m.created_at)}</td>
             </tr>
           ))}
         </tbody></table>

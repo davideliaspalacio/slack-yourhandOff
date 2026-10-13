@@ -897,3 +897,39 @@ def test_the_signal_settings_only_take_their_own_type(people, restore_config, ke
 def test_a_stranger_cannot_edit_the_signal_settings(people, restore_config):
     as_user(STRANGER, "update config set value = 'false'::jsonb where key = 'senales_activas'")
     assert _config("senales_activas") is True
+
+
+# -- Nombres de canal (0025): el panel los lee, nadie más, y nadie los escribe
+# desde la API (los pone el worker, que conecta como dueño de la base). --
+
+
+@pytest.fixture
+def con_nombre_de_canal(people):
+    db.execute("insert into canales (channel_id, nombre) values ('C0ABC123', 'founders-general')")
+
+
+def test_rls_is_enabled_on_the_channel_names(con_nombre_de_canal):
+    assert db.fetch_one("select relrowsecurity from pg_class where relname = 'canales'")[
+        "relrowsecurity"
+    ]
+
+
+def test_an_allowed_user_reads_the_channel_names(con_nombre_de_canal):
+    filas = as_user(ALLOWED, "select channel_id, nombre from canales")
+    assert filas == [{"channel_id": "C0ABC123", "nombre": "founders-general"}]
+
+
+def test_a_stranger_reads_no_channel_names(con_nombre_de_canal):
+    assert as_user(STRANGER, "select * from canales") == []
+    assert as_user(None, "select * from canales") == []
+
+
+def test_nobody_writes_channel_names_from_the_panel(con_nombre_de_canal):
+    for sql in (
+        "insert into canales (channel_id, nombre) values ('C0DEF456', 'otro')",
+        "update canales set nombre = 'otro' where channel_id = 'C0ABC123'",
+        "delete from canales where channel_id = 'C0ABC123'",
+    ):
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            as_user(ALLOWED, sql)
+    assert db.fetch_one("select nombre from canales")["nombre"] == "founders-general"

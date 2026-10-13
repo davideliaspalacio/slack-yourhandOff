@@ -155,3 +155,73 @@ def test_an_auth_failure_propagates(conn, reader):
     reader.auth_error = SlackAuthFailed("Slack rechazó el token: token_revoked")
     with pytest.raises(SlackAuthFailed):
         tick(reader)
+
+
+# --- nombres de canal (tabla `canales`, migración 0025) ---
+
+
+def nombre_guardado(channel="C1"):
+    fila = db.fetch_one("select nombre from canales where channel_id = %s", (channel,))
+    return fila and fila["nombre"]
+
+
+def test_the_cycle_saves_the_channel_name(conn, reader):
+    reader.channel_names["C1"] = "founders-general"
+    reader.post("C1", "U1", "hola", ts(60))
+    assert tick(reader).messages_new == 1
+    assert nombre_guardado() == "founders-general"
+    assert reader.name_calls == ["C1"]
+
+
+def test_the_name_is_not_asked_again_within_a_day(conn, reader):
+    reader.channel_names["C1"] = "founders-general"
+    tick(reader)
+    tick(reader)
+    tick(reader)
+    assert reader.name_calls == ["C1"]
+    # Pasado el día, se vuelve a preguntar (y un canal renombrado se actualiza).
+    db.execute("update canales set actualizado_at = now() - interval '25 hours'")
+    reader.channel_names["C1"] = "founders-privado"
+    tick(reader)
+    assert reader.name_calls == ["C1", "C1"]
+    assert nombre_guardado() == "founders-privado"
+
+
+def test_a_channel_without_a_name_in_slack_does_not_block_the_read(conn, reader):
+    reader.post("C1", "U1", "hola", ts(60))
+    assert tick(reader).messages_new == 1  # channel_names vacío: Slack no da nombre
+    assert nombre_guardado() is None
+    assert db.fetch_one("select count(*) as n from canales")["n"] == 1
+
+
+def test_if_slack_fails_the_read_goes_on_without_a_name(conn, reader, caplog):
+    reader.unavailable_channels.add("C2")
+    reader.channel_names["C2"] = "nunca-se-sabra"
+    reader.post("C1", "U1", "hola", ts(60))
+    reader.channel_names["C1"] = "founders-general"
+    with caplog.at_level("WARNING"):
+        result = tick(reader, channels=("C1", "C2"))
+    # C1 se lee y se nombra; de C2 solo se queda el intento anotado, sin nombre.
+    assert result.messages_new == 1 and result.channels_read == 1
+    assert nombre_guardado("C1") == "founders-general"
+    assert nombre_guardado("C2") is None
+    assert any("sin nombre para el canal C2" in r.getMessage() for r in caplog.records)
+    # Y no se insiste en el siguiente sondeo: el intento cuenta como consulta.
+    tick(reader, channels=("C1", "C2"))
+    assert reader.name_calls.count("C2") == 1
+
+
+def test_an_existing_name_survives_a_failure(conn, reader):
+    reader.channel_names["C1"] = "founders-general"
+    tick(reader)
+    db.execute("update canales set actualizado_at = now() - interval '25 hours'")
+    reader.unavailable_channels.add("C1")
+    tick(reader)
+    assert nombre_guardado() == "founders-general"
+
+
+def test_a_dead_token_still_stops_the_read(conn, reader):
+    reader.auth_error = SlackAuthFailed("token_revoked")
+    with pytest.raises(SlackAuthFailed):
+        tick(reader)
+    assert db.fetch_one("select count(*) as n from canales")["n"] == 0
