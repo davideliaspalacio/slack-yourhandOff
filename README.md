@@ -69,11 +69,13 @@ si OpenAI los cambia o se cambia de modelo, hay que actualizarlos aquí.
 | `resumen_costes` | Gasto de los últimos N días |
 | `investigar_persona` | Investiga a una persona y guarda el dossier (**cuesta dinero**) |
 
-### Para todo el equipo: MCP remoto de solo lectura
+### Para todo el equipo: MCP remoto
 
 Además del servidor local (arriba, solo para quien tiene el repo), el servicio web
-sirve un MCP **de solo lectura** en `/mcp`, con un token por persona que se crea en
-Settings → *Connect your Claude*. Guía para el equipo: [`docs/mcp-remoto.md`](docs/mcp-remoto.md).
+sirve un MCP en `/mcp`, con un token por persona que se crea en Settings → *Connect your
+Claude*. Cinco herramientas leen y cuatro cambian estados, notas de research y umbrales
+(con el mismo control que el panel, firmadas y con tope diario). Guía para el equipo:
+[`docs/mcp-remoto.md`](docs/mcp-remoto.md).
 
 ## Research desde la terminal
 

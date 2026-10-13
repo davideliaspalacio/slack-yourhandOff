@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from handoff_agent import db, mcp_remoto
 from handoff_agent.web import app as web_app
 from handoff_agent.web import mcp_auth
+from tests.test_mcp_remoto import HERRAMIENTAS_ESCRITURA, HERRAMIENTAS_LECTURA
 from tests.test_panel_rls import as_user
 
 ANA = "ana@example.com"
@@ -215,18 +216,12 @@ def test_the_token_in_the_query_string_is_not_accepted(equipo, cliente):
     assert r.status_code == 401
 
 
-def test_a_valid_token_lists_exactly_the_read_tools(equipo, cliente):
+def test_a_valid_token_lists_exactly_the_whitelisted_tools(equipo, cliente):
     token = crear(ANA)
     r = post(cliente, rpc("tools/list"), token)
     assert r.status_code == 200
     nombres = {t["name"] for t in r.json()["result"]["tools"]}
-    assert nombres == {
-        "personas_buscar",
-        "persona_ver",
-        "senales_recientes",
-        "resumen_costes",
-        "estado_sistema",
-    }
+    assert nombres == HERRAMIENTAS_LECTURA | HERRAMIENTAS_ESCRITURA
 
 
 def test_a_valid_token_runs_a_tool(equipo, cliente):

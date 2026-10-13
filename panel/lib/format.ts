@@ -68,6 +68,7 @@ const ACTION_LABELS: Record<string, string> = {
   entrega_fallida: "Delivery failed",
   sms_detenido: "SMS stopped",
   sms_fallido: "SMS failed",
+  mcp_escritura: "Changed from Claude",
 };
 export const accionLabel = (action: string) => ACTION_LABELS[action] ?? action;
 

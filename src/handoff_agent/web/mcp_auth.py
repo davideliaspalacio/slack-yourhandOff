@@ -34,14 +34,12 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .. import db, db_config, ledger
+from .. import db, db_config, ledger, mcp_identidad
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +84,7 @@ def autenticar(token: str) -> TokenMCP | None:
 
 
 def _hoy() -> str:
-    nombre = db_config.value("zona_horaria", "America/New_York")
-    try:
-        zona = ZoneInfo(nombre)
-    except (ZoneInfoNotFoundError, ValueError):
-        zona = ZoneInfo("America/New_York")
-    return datetime.now(zona).date().isoformat()
+    return mcp_identidad.hoy()
 
 
 # Resultados de `registrar_uso`.
@@ -255,6 +248,10 @@ class GuardiaMCP:
                     return {"type": "http.request", "body": cuerpo, "more_body": False}
                 return await receive()
 
-            await self.destino(scope, reenviar, send)
+            receptor: Receive = reenviar
         else:
-            await self.destino(scope, receive, send)
+            receptor = receive
+        # Quién llama: solo el correo y el sufijo, nunca el token. Lo leen las
+        # herramientas de escritura (mcp_identidad); se retira al terminar la petición.
+        with mcp_identidad.como(autenticado.email, autenticado.sufijo):
+            await self.destino(scope, receptor, send)

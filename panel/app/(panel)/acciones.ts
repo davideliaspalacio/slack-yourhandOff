@@ -318,7 +318,7 @@ export async function guardarCanales(
 
 export type TokenMcpState = { error?: string; token?: string };
 
-// Conectar el Claude de cada persona al MCP remoto de solo lectura
+// Conectar el Claude de cada persona al MCP remoto (lectura y cambios acotados)
 // (panel_crear_token_mcp, 0023). La función devuelve el token en claro UNA vez:
 // aquí solo se pasa a la pantalla, no se guarda ni se registra en ningún sitio, y
 // la base se queda con su hash. Los errores (máximo de tokens, nombre inválido)

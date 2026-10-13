@@ -9,7 +9,8 @@ export type TokenMcp = {
   creado_at: string; ultimo_uso_at: string | null; revocado_at: string | null;
 };
 
-// "Connect your Claude": tokens personales del MCP remoto (solo lectura). El token
+// "Connect your Claude": tokens personales del MCP remoto (leer, y cambiar estados,
+// notas y umbrales: Fase 2, migración 0024). El token
 // en claro solo existe en el estado de este componente, justo después de crearlo:
 // no se guarda en el navegador ni se puede pedir de nuevo a la base.
 export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: string }) {
@@ -120,9 +121,11 @@ export function ConectarClaude({ tokens, url }: { tokens: TokenMcp[]; url: strin
       </form>
       {state.error && <p className="notice">{state.error}</p>}
       <p className="muted" style={{ fontSize: 12 }}>
-        MCP URL: <code>{url}</code> · Read-only: Claude can look things up (people, dossiers,
-        signals, costs, system status) but can&apos;t change anything. Up to 5 active tokens per
-        person; the database keeps only a fingerprint of each one.
+        MCP URL: <code>{url}</code> · A token lets Claude read everything the panel shows and
+        change statuses, research notes and thresholds, with the same access you have here. Every
+        change is recorded under your name. It can&apos;t delete anything, touch the spending
+        caps or shut the system down. Up to 5 active tokens per person; the database keeps only a
+        fingerprint of each one.
       </p>
     </>
   );

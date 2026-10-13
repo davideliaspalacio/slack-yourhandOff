@@ -14,6 +14,7 @@ const EDITABLES: Record<string, string> = {
   sms_hora_inicio: "Hour from which SMS are allowed",
   sms_hora_fin: "Hour until which SMS are allowed",
   mcp_llamadas_por_dia: "Maximum remote-MCP tool calls per token per day (0 switches it off)",
+  mcp_escrituras_por_dia: "Maximum changes Claude can make per person per day (0 switches writes off)",
 };
 
 // URL pública del MCP remoto: el dominio del receptor (el servicio web de Railway,
