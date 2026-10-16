@@ -185,6 +185,22 @@ def _seguimiento() -> None:
         logger.info("seguimiento: resumen con %d línea(s)", lineas)
 
 
+def _avisos_seguimiento() -> None:
+    """Los avisos inmediatos de las conversaciones que ya pasaron de su plazo (0029).
+
+    Van en la misma pasada que el rastro de los DMs, justo después: el rastro acaba de
+    actualizar quién habló último, así que esto decide sobre datos recién traídos.
+    `publicar_avisos` ya gestiona por dentro el cupo diario y los frenos y no lanza;
+    esta guarda es la segunda línea."""
+    try:
+        avisos = seguimiento.publicar_avisos()
+    except Exception:
+        logger.exception("avisos de seguimiento fallidos; se reintenta en la pasada siguiente")
+        return
+    if avisos:
+        logger.info("seguimiento: %d aviso(s) publicado(s)", avisos)
+
+
 def _credencial_caducada(exc: SlackAuthFailed) -> None:
     """La alerta operativa de siempre, más un aviso en el Slack de Handoff (con
     el bot, que tiene otro token) para que se entere quien no mira el panel. El
@@ -267,6 +283,7 @@ def run_loop(
             if clock() >= next_rastro:
                 next_rastro = clock() + dms.MINUTOS_ENTRE_PASADAS * 60
                 _rastro_dms(reader)
+                _avisos_seguimiento()
                 _seguimiento()
 
             _radar()

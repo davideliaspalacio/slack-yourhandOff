@@ -202,24 +202,31 @@ def test_without_the_workspace_code_the_line_has_no_link(conn, slack):
 # --- no repetirse ----------------------------------------------------------------
 
 
-def test_a_case_already_reported_does_not_come_back(conn, slack):
+def test_a_pending_conversation_is_in_every_days_summary(conn, slack):
+    """El resumen es la foto del día, no un aviso: un pendiente sigue saliendo mañana.
+
+    Antes de 0029 salía una sola vez. Cambió a propósito: desde que existen los avisos
+    inmediatos, que son los que no se repiten hasta pasadas unas horas, el resumen tiene
+    el otro trabajo -- decir todo lo que está esperando ahora mismo. Si descontara lo ya
+    avisado, con recordatorios cada pocas horas saldría vacío todos los días."""
     traza(de="otro", horas=30, prospect_id=persona())
     assert seguimiento.publicar_resumen() == 1
     assert avisado()
-    # Mañana, con la conversación igual, ya no sale.
+    # Mañana, con la conversación igual de parada, vuelve a salir.
     db.execute("delete from agent_actions where action = %s", (seguimiento.ACCION_RESUMEN,))
-    assert seguimiento.publicar_resumen() == 0
-    assert len(slack) == 1
-
-
-def test_a_change_in_the_conversation_brings_the_case_back(conn, slack):
-    traza(de="otro", horas=30, prospect_id=persona())
-    seguimiento.publicar_resumen()
-    db.execute("delete from agent_actions where action = %s", (seguimiento.ACCION_RESUMEN,))
-    # La otra persona insiste: el rastro cambia y el aviso se reinicia.
-    db.execute("update dm_rastro set ultimo_ts = %s, avisado_ts = null", (ts(26),))
     assert seguimiento.publicar_resumen() == 1
     assert len(slack) == 2
+
+
+def test_a_conversation_that_got_an_answer_leaves_the_summary(conn, slack):
+    """Lo que deja de estar parado deja de salir: es la otra cara de la foto del día."""
+    traza(de="otro", horas=30, prospect_id=persona())
+    assert seguimiento.publicar_resumen() == 1
+    db.execute("delete from agent_actions where action = %s", (seguimiento.ACCION_RESUMEN,))
+    # Anthony contesta: ahora el último mensaje es suyo y es reciente.
+    db.execute("update dm_rastro set ultimo_ts = %s, ultimo_de = 'dueno'", (ts(1),))
+    assert seguimiento.publicar_resumen() == 0
+    assert len(slack) == 1
 
 
 def test_the_contacted_case_comes_back_only_if_the_person_changes(conn, slack):
@@ -323,3 +330,145 @@ def test_an_unexpected_failure_never_escapes(conn, monkeypatch):
 def test_the_guards_are_the_shared_ones(conn):
     """Si alguien cambiara los frenos por otros, esto lo nota."""
     assert seguimiento.guards is guards
+
+
+# ---------------------------------------------------------------------------------
+# El aviso inmediato (0029): llega en cuanto cruza y vuelve cada pocas horas.
+# ---------------------------------------------------------------------------------
+
+
+def avisado_at(dm_id="DAAA"):
+    return db.fetch_one("select avisado_at from dm_rastro where dm_id = %s", (dm_id,))["avisado_at"]
+
+
+def atrasar_aviso(horas: float, dm_id="DAAA") -> None:
+    """Como si el último aviso hubiera salido hace N horas."""
+    db.execute(
+        "update dm_rastro set avisado_at = now() - make_interval(hours => %s) where dm_id = %s",
+        (horas, dm_id),
+    )
+
+
+def test_an_alert_goes_out_as_soon_as_it_crosses(conn, slack):
+    """No espera al resumen del día: la conversación ya pasó de su plazo y sale ya."""
+    traza(prospect_id=persona())
+    assert seguimiento.publicar_avisos() == 1
+    assert len(slack) == 1
+    assert "WAITING ON YOU" in slack[0]["json"]
+    assert "Sunny Patel" in slack[0]["json"]
+
+
+def test_an_alert_has_its_own_header_so_it_is_not_the_daily_summary(conn, slack):
+    traza(prospect_id=persona())
+    seguimiento.publicar_avisos()
+    seguimiento.publicar_resumen()
+    # Dos mensajes distintos, y se distinguen de un golpe en el canal.
+    assert "WAITING ON YOU" in slack[0]["json"]
+    assert "FOLLOW-UPS" in slack[1]["json"]
+
+
+def test_a_conversation_inside_its_threshold_is_not_alerted(conn, slack):
+    traza(horas=2.0, prospect_id=persona())
+    assert seguimiento.publicar_avisos() == 0
+    assert slack == []
+
+
+def test_it_does_not_repeat_before_the_reminder_window(conn, slack):
+    traza(prospect_id=persona())
+    assert seguimiento.publicar_avisos() == 1
+    assert seguimiento.publicar_avisos() == 0
+    assert len(slack) == 1
+
+
+def test_it_comes_back_after_the_reminder_window(conn, slack, restore_config):
+    traza(prospect_id=persona())
+    seguimiento.publicar_avisos()
+    atrasar_aviso(seguimiento.RECORDAR_HORAS + 1)
+    assert seguimiento.publicar_avisos() == 1
+    assert len(slack) == 2
+
+
+def test_the_reminder_window_comes_from_config(conn, slack, restore_config):
+    db.execute("update config set value = '48'::jsonb where key = 'seguimiento_recordar_horas'")
+    traza(prospect_id=persona())
+    seguimiento.publicar_avisos()
+    # Cuatro horas ya no bastan: ahora el recordatorio es a las 48.
+    atrasar_aviso(5)
+    assert seguimiento.publicar_avisos() == 0
+    atrasar_aviso(49)
+    assert seguimiento.publicar_avisos() == 1
+
+
+def test_the_daily_cap_stops_the_flood(conn, slack, restore_config):
+    db.execute("update config set value = '1'::jsonb where key = 'seguimiento_avisos_por_dia'")
+    traza(dm_id="DAAA", user="U1", prospect_id=persona("U1", "Uno"))
+    traza(dm_id="DBBB", user="U2", prospect_id=persona("U2", "Dos"))
+    assert seguimiento.publicar_avisos() == 1
+    # El cupo del día está gastado, aunque la otra conversación siga esperando.
+    atrasar_aviso(seguimiento.RECORDAR_HORAS + 1, "DAAA")
+    assert seguimiento.publicar_avisos() == 0
+
+
+def test_the_daily_summary_is_still_the_safety_net(conn, slack, restore_config):
+    """Con el cupo gastado, lo que no se avisó sigue saliendo en el resumen del día."""
+    db.execute("update config set value = '0'::jsonb where key = 'seguimiento_avisos_por_dia'")
+    traza(prospect_id=persona())
+    assert seguimiento.publicar_avisos() == 0
+    assert seguimiento.publicar_resumen() == 1
+    assert "Sunny Patel" in slack[0]["json"]
+
+
+def test_a_new_message_restarts_the_clock(conn, slack):
+    """Si alguno de los dos escribe, la conversación entra otra vez desde cero."""
+    traza(prospect_id=persona())
+    seguimiento.publicar_avisos()
+    db.execute("update dm_rastro set ultimo_ts = %s where dm_id = 'DAAA'", (ts(30.0),))
+    atrasar_aviso(seguimiento.RECORDAR_HORAS + 1)
+    assert seguimiento.publicar_avisos() == 1
+
+
+def test_an_alert_never_quotes_a_message(conn, slack):
+    """La garantía de siempre: el texto de un DM no está guardado y no puede salir."""
+    traza(prospect_id=persona())
+    seguimiento.publicar_avisos()
+    assert SECRETO not in slack[0]["json"]
+
+
+def test_a_discarded_person_is_never_alerted(conn, slack):
+    traza(prospect_id=persona(estado="descartado"))
+    assert seguimiento.publicar_avisos() == 0
+
+
+def test_with_the_switch_off_no_alerts_go_out(conn, slack, restore_config):
+    db.execute("update config set value = 'false'::jsonb where key = 'seguimiento_activo'")
+    traza(prospect_id=persona())
+    assert seguimiento.publicar_avisos() == 0
+    assert slack == []
+
+
+def test_the_kill_switch_stops_the_alerts(conn, slack, restore_config):
+    db.execute("update config set value = 'true'::jsonb where key = 'kill_switch'")
+    traza(prospect_id=persona())
+    assert seguimiento.publicar_avisos() == 0
+    assert acciones(seguimiento.ACCION_PARADA)
+
+
+def test_a_failed_post_does_not_mark_the_case_as_alerted(conn, slack, monkeypatch):
+    """Si Slack falla, la conversación no se marca: vuelve en la pasada siguiente."""
+    traza(prospect_id=persona())
+
+    def boom(blocks, text):
+        raise RuntimeError("slack caído")
+
+    monkeypatch.setattr(seguimiento.slack_writer, "post_card", boom)
+    assert seguimiento.publicar_avisos() == 0
+    assert avisado_at() is None
+    assert acciones(seguimiento.ACCION_FALLIDO)
+
+
+def test_alerting_never_raises(conn, slack, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("base caída")
+
+    monkeypatch.setattr(seguimiento, "_casos_para_avisar", boom)
+    assert seguimiento.publicar_avisos() == 0

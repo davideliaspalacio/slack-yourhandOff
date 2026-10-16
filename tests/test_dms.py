@@ -26,6 +26,10 @@ COLUMNAS = {
     "ultimo_ts",
     "ultimo_de",
     "avisado_ts",
+    # `avisado_at` (0029): cuándo salió el último aviso, para poder recordarlo pasadas
+    # unas horas. Una marca de tiempo más, igual que las de arriba: sigue sin haber
+    # dónde guardar lo que nadie dijo.
+    "avisado_at",
     "actualizado_at",
 }
 # Nada que huela a contenido puede aparecer como columna.

@@ -33,6 +33,9 @@ const EDITABLES_SEGUIMIENTO: Record<string, string> = {
   seguimiento_dias_sin_respuesta: "Days with no answer before it shows up as waiting",
   seguimiento_max_por_resumen: "Maximum lines in the daily follow-up summary",
   seguimiento_retencion_dias: "Days a conversation stays on file after its last message",
+  seguimiento_recordar_horas:
+    "Hours before a conversation that is still waiting is brought up again",
+  seguimiento_avisos_por_dia: "Maximum follow-up alerts posted per day",
 };
 
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la

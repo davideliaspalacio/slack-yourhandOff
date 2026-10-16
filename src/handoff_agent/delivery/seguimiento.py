@@ -53,6 +53,8 @@ ACCION_RESUMEN = "seguimiento_resumen"
 ACCION_AVISADO = "seguimiento_avisado"
 ACCION_PARADA = "seguimiento_parada"
 ACCION_FALLIDO = "seguimiento_fallido"
+# El aviso inmediato (0029) va aparte del resumen: tiene su propio cupo diario.
+ACCION_AVISO = "seguimiento_aviso"
 
 RESPONDER = "responder"
 SIN_RESPUESTA = "sin_respuesta"
@@ -68,6 +70,12 @@ TITULOS = {
 ORDEN = (RESPONDER, SIN_RESPUESTA, SIN_CONVERSACION)
 MAX_POR_RESUMEN = 10
 CABECERA = "⏰ *FOLLOW-UPS*"
+# El aviso inmediato lleva otra cabecera a propósito: en el canal se distingue de un
+# golpe qué es "acaba de pasar esto" y qué es la foto del día.
+CABECERA_AVISO = "⏳ *WAITING ON YOU*"
+# Valores por omisión de 0029, los mismos que la migración deja en config.
+RECORDAR_HORAS = 4
+AVISOS_POR_DIA = 20
 
 
 @dataclass(frozen=True)
@@ -151,9 +159,14 @@ def linea(caso: Caso) -> str:
 def _casos_dm(tipo: str, limite_ts: float, ahora: datetime) -> list[Caso]:
     """Los DMs esperando, de los que llevan más tiempo a los que menos.
 
-    Un caso ya avisado (`avisado_ts` igual al `ultimo_ts` de ahora) queda
-    fuera: no vuelve hasta que la conversación cambie. A un descartado no se
-    le avisa nunca, igual que en `signals/alertas.py`."""
+    Esto es la foto del día: sale todo lo que sigue esperando, se haya avisado ya o no.
+    Son dos trabajos distintos y es a propósito (0029) -- el aviso inmediato dice "esto
+    acaba de pasar" y no se repite hasta pasadas unas horas; el resumen dice "esto es
+    todo lo que tienes pendiente ahora mismo", y un pendiente no deja de serlo porque
+    ayer ya se avisara. Si el resumen descontara lo avisado, con recordatorios cada
+    pocas horas saldría vacío todos los días.
+
+    A un descartado no se le avisa nunca, igual que en `signals/alertas.py`."""
     de = "otro" if tipo == RESPONDER else "dueno"
     filas = db.fetch_all(
         """
@@ -163,7 +176,6 @@ def _casos_dm(tipo: str, limite_ts: float, ahora: datetime) -> list[Caso]:
           left join prospects p on p.id = r.prospect_id
          where r.ultimo_de = %s
            and r.ultimo_ts::numeric < %s
-           and (r.avisado_ts is null or r.avisado_ts <> r.ultimo_ts)
            and (p.state is null or p.state <> 'descartado')
            and (p.sin_tarjeta is null or not p.sin_tarjeta)
          order by r.ultimo_ts::numeric
@@ -247,9 +259,12 @@ def casos(now: datetime | None = None, limite: int | None = None) -> list[Caso]:
     return ordenados[: max(0, int(tope))]
 
 
-def bloques(lista: list[Caso]) -> list[dict]:
-    """Los bloques de Slack del resumen: una sección por tipo de caso."""
-    texto = [CABECERA]
+def bloques(lista: list[Caso], cabecera: str = CABECERA) -> list[dict]:
+    """Los bloques de Slack del resumen: una sección por tipo de caso.
+
+    `cabecera` distingue el resumen del día del aviso inmediato (0029); el cuerpo es el
+    mismo, porque las líneas dicen lo mismo en los dos casos."""
+    texto = [cabecera]
     for tipo in ORDEN:
         del_tipo = [c for c in lista if c.tipo == tipo]
         if not del_tipo:
@@ -301,6 +316,132 @@ def _marcar(lista: list[Caso]) -> None:
         except Exception:
             # Como mucho, el caso se repite mañana. Peor sería perder el resto.
             logger.exception("seguimiento: no se pudo marcar el caso %s", caso.dm_id or caso.nombre)
+
+
+def _casos_para_avisar(ahora: datetime) -> list[Caso]:
+    """Las conversaciones que ya pasaron de su plazo y a las que toca avisar ahora.
+
+    Se diferencia del resumen en una cosa: el resumen saca cada conversación una sola
+    vez (`avisado_ts`), y esto vuelve a sacarla pasadas `seguimiento_recordar_horas`
+    desde el último aviso (`avisado_at`, 0029). Un mensaje nuevo de cualquiera de los
+    dos cambia `ultimo_ts` y la conversación entra otra vez desde cero.
+
+    Solo los dos casos que nacen de un DM. "Marcado contactado y sin conversación" se
+    queda en el resumen diario: lleva tres días esperando, no es algo que acabe de
+    pasar, y avisar de eso cada cuatro horas sería ruido sin nada nuevo que contar.
+    """
+    horas_responder = db_config.value("seguimiento_horas_para_responder", 24)
+    dias_sin = db_config.value("seguimiento_dias_sin_respuesta", 3)
+    recordar = db_config.value("seguimiento_recordar_horas", RECORDAR_HORAS)
+    casos: list[Caso] = []
+    for tipo, limite_ts in (
+        (RESPONDER, ahora.timestamp() - horas_responder * 3600),
+        (SIN_RESPUESTA, ahora.timestamp() - dias_sin * 86400),
+    ):
+        de = "otro" if tipo == RESPONDER else "dueno"
+        filas = db.fetch_all(
+            """
+            select r.dm_id, r.team_id, r.slack_user_id, r.ultimo_ts, p.id::text as prospect_id,
+                   p.full_name, p.company_name, p.company_name_override
+              from dm_rastro r
+              left join prospects p on p.id = r.prospect_id
+             where r.ultimo_de = %(de)s
+               and r.ultimo_ts::numeric < %(limite)s
+               -- Nunca avisada, o avisada hace más de lo que toca recordar.
+               and (r.avisado_at is null
+                    or r.avisado_at < %(ahora)s - make_interval(hours => %(recordar)s))
+               and (p.state is null or p.state <> 'descartado')
+               and (p.sin_tarjeta is null or not p.sin_tarjeta)
+             order by r.ultimo_ts::numeric
+            """,
+            {"de": de, "limite": limite_ts, "ahora": ahora, "recordar": recordar},
+        )
+        casos.extend(
+            Caso(
+                tipo=tipo,
+                dias=_dias_desde_ts(f["ultimo_ts"], ahora),
+                nombre=_nombre(f),
+                empresa=_empresa(f),
+                dm_id=f["dm_id"],
+                team_id=f["team_id"],
+                slack_user_id=f["slack_user_id"],
+                prospect_id=f["prospect_id"],
+                ultimo_ts=f["ultimo_ts"],
+            )
+            for f in filas
+        )
+    casos.sort(key=lambda c: (ORDEN.index(c.tipo), -c.dias))
+    return casos
+
+
+def _avisos_hoy(ahora: datetime) -> int:
+    fila = db.fetch_one(
+        "select count(*) as n from agent_actions where action = %s and created_at >= %s",
+        (ACCION_AVISO, _inicio_del_dia(ahora)),
+    )
+    return fila["n"] if fila else 0
+
+
+def _marcar_avisados(lista: list[Caso], ahora: datetime) -> None:
+    """Apunta el aviso: por qué mensaje fue y cuándo. Solo después de publicar."""
+    for caso in lista:
+        if not caso.dm_id:
+            continue
+        try:
+            db.execute(
+                "update dm_rastro set avisado_ts = %s, avisado_at = %s where dm_id = %s",
+                (caso.ultimo_ts, ahora, caso.dm_id),
+            )
+        except Exception:
+            # Como mucho se repite en la pasada siguiente. Peor sería perder el resto.
+            logger.exception("seguimiento: no se pudo marcar el aviso de %s", caso.dm_id)
+
+
+def _avisar(now: datetime | None) -> int:
+    ahora = now or datetime.now(UTC)
+    if not db_config.value("seguimiento_activo", True):
+        return 0
+    try:
+        guards.check_kill_switch()
+        guards.check_monthly_budget()
+    except (guards.KillSwitchActive, guards.MonthlyBudgetExceeded) as exc:
+        _parada(exc)
+        return 0
+
+    settings = load_settings()
+    if not (settings.handoff_bot_token and settings.handoff_channel_id):
+        logger.info("avisos de seguimiento sin configurar (faltan HANDOFF_SLACK_*), se omite")
+        return 0
+
+    cupo = db_config.value("seguimiento_avisos_por_dia", AVISOS_POR_DIA) - _avisos_hoy(ahora)
+    if cupo <= 0:
+        # El resumen diario sigue siendo la red: lo que no avisó hoy sale ahí.
+        return 0
+
+    lista = _casos_para_avisar(ahora)[:cupo]
+    if not lista:
+        return 0
+
+    _registrar(ACCION_AVISO, {"casos": len(lista), "tipos": [c.tipo for c in lista]})
+    try:
+        slack_writer.post_card(bloques(lista, CABECERA_AVISO), resumen_texto(lista))
+    except Exception as exc:
+        logger.exception("seguimiento: no se pudo publicar el aviso")
+        _registrar(ACCION_FALLIDO, {"motivo": f"{type(exc).__name__}: {exc}"})
+        return 0
+    _marcar_avisados(lista, ahora)
+    return len(lista)
+
+
+def publicar_avisos(now: datetime | None = None) -> int:
+    """Avisa de las conversaciones que ya pasaron de su plazo, y vuelve a recordarlas
+    cada `seguimiento_recordar_horas` mientras sigan esperando. Devuelve cuántas
+    salieron. Nunca lanza: un recordatorio no puede tumbar el bucle."""
+    try:
+        return _avisar(now)
+    except Exception:
+        logger.exception("seguimiento: aviso fallido; se reintenta en la pasada siguiente")
+        return 0
 
 
 def _publicar(now: datetime | None) -> int:

@@ -79,6 +79,8 @@ UMBRALES = (
     "seguimiento_dias_sin_respuesta",
     "seguimiento_max_por_resumen",
     "seguimiento_retencion_dias",
+    "seguimiento_recordar_horas",
+    "seguimiento_avisos_por_dia",
 )
 
 # Canales vigilados: la clave de config de la migración 0016. El formato y el máximo
