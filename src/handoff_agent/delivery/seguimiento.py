@@ -55,6 +55,11 @@ ACCION_PARADA = "seguimiento_parada"
 ACCION_FALLIDO = "seguimiento_fallido"
 # El aviso inmediato (0029) va aparte del resumen: tiene su propio cupo diario.
 ACCION_AVISO = "seguimiento_aviso"
+# Lo que Slack devolvió al publicar. Se anota DESPUÉS de publicar y aparte del marcador
+# del día, que se escribe antes a propósito: sin esto no hay forma de volver a señalar un
+# mensaje ya publicado, y borrar uno que salió por error se convierte en buscarlo a mano
+# entre las tarjetas reales. Lo usa scripts/borrar_avisos.py.
+ACCION_MENSAJE = "seguimiento_mensaje"
 
 RESPONDER = "responder"
 SIN_RESPUESTA = "sin_respuesta"
@@ -430,11 +435,12 @@ def _avisar(now: datetime | None) -> int:
 
     _registrar(ACCION_AVISO, {"casos": len(lista), "tipos": [c.tipo for c in lista]})
     try:
-        slack_writer.post_card(bloques(lista, CABECERA_AVISO), resumen_texto(lista))
+        canal, ts = slack_writer.post_card(bloques(lista, CABECERA_AVISO), resumen_texto(lista))
     except Exception as exc:
         logger.exception("seguimiento: no se pudo publicar el aviso")
         _registrar(ACCION_FALLIDO, {"motivo": f"{type(exc).__name__}: {exc}"})
         return 0
+    _registrar(ACCION_MENSAJE, {"tipo": "aviso", "canal": canal, "ts": ts})
     _marcar_avisados(lista, ahora)
     return len(lista)
 
@@ -477,11 +483,12 @@ def _publicar(now: datetime | None) -> int:
 
     _registrar(ACCION_RESUMEN, {"casos": len(lista), "tipos": [c.tipo for c in lista]})
     try:
-        slack_writer.post_card(bloques(lista), resumen_texto(lista))
+        canal, ts = slack_writer.post_card(bloques(lista), resumen_texto(lista))
     except Exception as exc:
         logger.exception("seguimiento: no se pudo publicar el resumen")
         _registrar(ACCION_FALLIDO, {"motivo": f"{type(exc).__name__}: {exc}"})
         return 0
+    _registrar(ACCION_MENSAJE, {"tipo": "resumen", "canal": canal, "ts": ts})
     _marcar(lista)
     return len(lista)
 
