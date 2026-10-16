@@ -380,3 +380,18 @@ export async function guardarCanalesTodos(formData: FormData) {
     .eq("key", "slack_canales_todos");
   revalidatePath("/ajustes");
 }
+
+// canal_presentaciones es una cadena (el id del canal) y no un número, así que no pasa
+// por guardarUmbral. La política panel_ajusta_eventos (0030) es la que permite tocarla,
+// y solo con una cadena. Vacío = no se avisa de presentaciones.
+export async function guardarCanalPresentaciones(formData: FormData) {
+  const canal = String(formData.get("value") ?? "").trim().toUpperCase();
+  // Un id mal escrito se ignora en silencio, igual que en guardarUmbral: el campo
+  // conserva lo que había y la ayuda de debajo dice el formato.
+  if (canal && !/^[CG][A-Z0-9]{5,}$/.test(canal)) return;
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: canal, updated_at: new Date().toISOString() })
+    .eq("key", "canal_presentaciones");
+  revalidatePath("/ajustes");
+}

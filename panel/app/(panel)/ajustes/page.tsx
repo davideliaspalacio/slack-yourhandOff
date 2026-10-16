@@ -1,8 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
-  guardarCanalesTodos, guardarExigirEvidencia, guardarPausaUnipile, guardarSeguimientoActivo,
-  guardarUmbral,
+  guardarCanalesTodos, guardarCanalPresentaciones, guardarExigirEvidencia,
+  guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
@@ -41,6 +41,13 @@ const EDITABLES_SEGUIMIENTO: Record<string, string> = {
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la
 // política panel_ajusta_radar deja tocar. unipile_pausado va aparte porque
 // es un booleano.
+// Avisos de canal (0030_eventos_canal.sql): no cuestan una llamada al modelo, así que
+// sus topes son altos. canal_presentaciones va aparte porque es una cadena.
+const EDITABLES_EVENTOS: Record<string, string> = {
+  menciones_por_dia: "Maximum \"you were mentioned\" alerts per day",
+  presentaciones_por_dia: "Maximum \"new introduction\" alerts per day",
+};
+
 const EDITABLES_RADAR: Record<string, string> = {
   radar_auto_min: "Minimum score for a role to be pursued automatically (0–10)",
   radar_horas_entre_escaneos: "Hours between scans of the same account",
@@ -85,7 +92,8 @@ export default async function Ajustes() {
   const supabase = await createClient();
   const { data } = await supabase.from("config").select("key, value, updated_at")
     .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR),
-      ...Object.keys(EDITABLES_SEGUIMIENTO), "seguimiento_activo",
+      ...Object.keys(EDITABLES_SEGUIMIENTO), ...Object.keys(EDITABLES_EVENTOS),
+      "canal_presentaciones", "seguimiento_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
@@ -118,6 +126,7 @@ export default async function Ajustes() {
   // Apagado salvo que la base diga true: el mismo valor por defecto que el worker
   // (canales.modo_todos()). Encendido, los canales salen del descubrimiento.
   const canalesTodos = valores.get("slack_canales_todos") === true;
+  const canalIntros = String(valores.get("canal_presentaciones") ?? "");
   const descubiertos = (nombresData ?? []).filter((c) => c.es_miembro === true);
   const masActivos = [...descubiertos]
     .sort((a, b) => Number(b.mensajes_vistos ?? 0) - Number(a.mensajes_vistos ?? 0))
@@ -263,6 +272,31 @@ export default async function Ajustes() {
             </td>
           </tr>
         </tbody>
+      </table>
+
+      <h2>Channel alerts</h2>
+      <p>
+        Two alerts that cost nothing to work out, so they arrive in the same poll:
+        when someone mentions you in a watched channel, and when someone posts in the
+        introductions channel. Both are posted in the cards channel.
+      </p>
+      <section style={{ marginBottom: 16 }}>
+        <form action={guardarCanalPresentaciones} className="inline">
+          <label>
+            Introductions channel{" "}
+            <input name="value" defaultValue={canalIntros} placeholder="C0…"
+                   style={{ width: 140 }} />
+          </label>
+          <button type="submit">Save</button>
+        </form>
+        <p className="muted" style={{ fontSize: 12 }}>
+          Leave it empty and no introduction alerts are sent. The channel is not guessed
+          from its name: getting that wrong would mean an alert for everything posted in
+          some other channel.
+        </p>
+      </section>
+      <table>
+        <tbody>{Object.entries(EDITABLES_EVENTOS).map(fila)}</tbody>
       </table>
 
       <h2>Direct message follow-ups</h2>

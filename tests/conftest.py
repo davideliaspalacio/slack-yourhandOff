@@ -26,6 +26,7 @@ TABLES_TO_CLEAN = [
     "slack_messages",
     "member_snapshots",
     "canales",
+    "eventos_canal",
     "deliveries",
     "panel_users",
     "agent_actions",

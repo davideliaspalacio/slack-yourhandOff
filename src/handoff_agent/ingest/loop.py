@@ -23,7 +23,7 @@ from .. import canales, estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
 from ..delivery import aviso_lector, seguimiento
 from ..research.worker import SYSTEM_STOPS
-from ..signals import alertas
+from ..signals import alertas, eventos
 from ..slack_client import SlackAuthFailed
 from . import descubrimiento, dms, queue
 from .research_runner import run_next_job
@@ -113,6 +113,21 @@ def _senales(reader) -> None:
         return
     if publicadas:
         logger.info("señales: %d alerta(s) publicada(s)", publicadas)
+
+
+def _eventos_canal(reader) -> None:
+    """Menciones a AG y presentaciones en el canal de presentaciones (0030).
+
+    No cuestan una llamada al modelo, así que van en cada vuelta junto a las señales.
+    `publicar_pendientes` ya gestiona por dentro los topes y no lanza; esta guarda es la
+    segunda línea."""
+    try:
+        avisos = eventos.publicar_pendientes(reader)
+    except Exception:
+        logger.exception("eventos de canal fallidos; se reintenta en la vuelta siguiente")
+        return
+    if avisos:
+        logger.info("eventos: %d aviso(s) publicado(s)", avisos)
 
 
 def _rastro_dms(reader) -> None:
@@ -289,6 +304,7 @@ def run_loop(
             _radar()
             _decisor()
             _senales(reader)
+            _eventos_canal(reader)
 
             try:
                 result = run_next_job(reader)

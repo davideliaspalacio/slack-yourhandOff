@@ -210,6 +210,12 @@ def _quote(text: str) -> str:
     return "\n".join(f"> `{line}`" if line else ">" for line in escaped.splitlines() or [""])
 
 
+# Compartido a propósito: cualquier cita textual de un tercero, en una tarjeta o en un
+# aviso (`signals/eventos.py`), tiene que pasar por el mismo renderizado. Duplicarlo
+# significaría duplicar el razonamiento sobre el autoenlazado de Slack, y hacerlo peor.
+quote = _quote
+
+
 def _headline(person: dict, dossier: dict, band: str) -> str:
     persona = dossier.get("persona") or {}
     empresa = dossier.get("empresa") or {}
