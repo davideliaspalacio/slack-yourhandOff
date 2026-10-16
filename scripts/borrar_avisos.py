@@ -1,0 +1,103 @@
+"""Borra del Slack de Handoff los avisos que el bot publicó por error.
+
+Para qué: al desplegar los avisos de canal por primera vez, el detector miró todo el
+histórico de `slack_messages` y anunció como recién llegadas 20 presentaciones de hace
+semanas. El corte de edad ya está puesto y no volverá a pasar, pero esos 20 mensajes
+siguen en el canal.
+
+Por qué es seguro: NO busca ni adivina. Cada aviso publicado guardó el identificador
+exacto del mensaje que Slack devolvió (`eventos_canal.aviso_ts`), así que esto borra
+esos y solo esos. No puede llevarse por delante una tarjeta de un lead ni un mensaje de
+una persona.
+
+Dónde borra: en el canal de Handoff (`HANDOFF_SLACK_CHANNEL_ID`), con el token del bot
+de Handoff. El Founders Club no entra aquí de ninguna forma: ese token no vale en ese
+workspace, y el lector del club no tiene un solo método de escritura.
+
+En ensayo por omisión. Con `--aplicar` borra de verdad, y eso no se deshace.
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
+
+from handoff_agent import db
+from handoff_agent.config import load_settings
+
+
+def avisos(tipo: str | None) -> list[dict]:
+    """Los avisos publicados de los que se guardó el identificador del mensaje."""
+    return db.fetch_all(
+        """
+        select e.id::text as id, e.tipo, e.aviso_ts, e.channel_id, e.ts,
+               coalesce(p.full_name, e.slack_user_id, '?') as quien
+          from eventos_canal e
+          left join prospects p on p.id = e.prospect_id
+         where e.estado = 'publicada'
+           and e.aviso_ts is not null
+           and (%(tipo)s::text is null or e.tipo = %(tipo)s)
+         order by e.aviso_ts
+        """,
+        {"tipo": tipo},
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--aplicar", action="store_true", help="borrar de verdad")
+    parser.add_argument(
+        "--tipo",
+        choices=("mencion", "presentacion"),
+        help="solo los de un tipo; por omisión, todos los publicados",
+    )
+    args = parser.parse_args()
+
+    settings = load_settings()
+    if not (settings.handoff_bot_token and settings.handoff_channel_id):
+        print("Faltan HANDOFF_SLACK_BOT_TOKEN o HANDOFF_SLACK_CHANNEL_ID.")
+        return
+
+    lista = avisos(args.tipo)
+    if not lista:
+        print("No hay avisos publicados con identificador guardado. Nada que borrar.")
+        return
+
+    print(f"Canal de destino: {settings.handoff_channel_id}\n")
+    for a in lista:
+        print(f"  {a['aviso_ts']:<20} {a['tipo']:<13} {a['quien'][:40]}")
+    print(f"\n{len(lista)} mensaje(s).")
+
+    if not args.aplicar:
+        print("\nEnsayo: no se ha borrado nada. Para borrar de verdad: --aplicar")
+        print("Ojo: borrar un mensaje de Slack NO se puede deshacer.")
+        return
+
+    cliente = WebClient(token=settings.handoff_bot_token)
+    borrados = 0
+    for a in lista:
+        try:
+            cliente.chat_delete(channel=settings.handoff_channel_id, ts=a["aviso_ts"])
+        except SlackApiError as exc:
+            error = exc.response.get("error", "")
+            if error == "message_not_found":
+                # Ya no estaba: alguien lo borró a mano. Se anota igual y se sigue.
+                print(f"  {a['aviso_ts']}: ya no existía")
+            else:
+                print(f"  {a['aviso_ts']}: no se pudo borrar -> {error}")
+                continue
+        borrados += 1
+        # El aviso deja de contar como publicado: si no, el tope diario seguiría
+        # creyendo que el cupo está gastado.
+        db.execute(
+            "update eventos_canal set estado = 'omitida', motivo = 'aviso borrado', "
+            "aviso_ts = null where id = %s",
+            (a["id"],),
+        )
+    print(f"\nBorrados {borrados} de {len(lista)}.")
+
+
+if __name__ == "__main__":
+    main()
