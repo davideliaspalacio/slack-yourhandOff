@@ -32,6 +32,13 @@ CAUSA_EXTERNA = "%credit_balance_exhausted%"
 # porque el modelo devolvía 429 (`signals/detector.py`, rama `except Exception`).
 APAGON_DESDE = "2026-10-14 15:10:00+00"
 
+# Y cuándo terminó: se recargó el saldo y el modelo volvió a responder. El corte de
+# arriba sin este de abajo sería una trampa -- a partir de aquí, un `detectada = false`
+# es una clasificación de verdad ("este mensaje no pide nada"), y borrarla haría que el
+# detector pagase otra vez por el mismo mensaje. Con los dos cortes, correr este script
+# de nuevo no puede hacer daño: la ventana del apagón está cerrada.
+APAGON_HASTA = "2026-10-16 01:15:00+00"
+
 
 def candidatos(patron: str) -> list[dict]:
     return db.fetch_all(
@@ -57,7 +64,7 @@ def candidatos(patron: str) -> list[dict]:
     )
 
 
-def senales_borrables(desde: str) -> int:
+def senales_borrables(desde: str, hasta: str) -> int:
     """Cuántos mensajes volvería a mirar el detector si se limpian sus filas.
 
     Solo los que siguen dentro de la ventana de edad de una alerta: más viejos, el
@@ -70,14 +77,15 @@ def senales_borrables(desde: str) -> int:
           join slack_messages sm on sm.channel_id = ms.channel_id and sm.ts = ms.ts
          where ms.detectada = false
            and ms.created_at >= %s
+           and ms.created_at < %s
            and sm.ts::numeric >= extract(epoch from now() - make_interval(hours => %s))
         """,
-        (desde, procesar.edad_maxima_horas()),
+        (desde, hasta, procesar.edad_maxima_horas()),
     )
     return fila["n"] if fila else 0
 
 
-def limpiar_senales(desde: str) -> int:
+def limpiar_senales(desde: str, hasta: str) -> int:
     """Borra esas filas. Solo `detectada = false`: nunca se toca una señal real."""
     return db.execute(
         """
@@ -86,9 +94,10 @@ def limpiar_senales(desde: str) -> int:
          where sm.channel_id = ms.channel_id and sm.ts = ms.ts
            and ms.detectada = false
            and ms.created_at >= %s
+           and ms.created_at < %s
            and sm.ts::numeric >= extract(epoch from now() - make_interval(hours => %s))
         """,
-        (desde, procesar.edad_maxima_horas()),
+        (desde, hasta, procesar.edad_maxima_horas()),
     )
 
 
@@ -102,16 +111,17 @@ def main() -> None:
         help="además, dejar que el detector vuelva a mirar los mensajes del apagón",
     )
     parser.add_argument("--desde", default=APAGON_DESDE, help="cuándo empezó el apagón")
+    parser.add_argument("--hasta", default=APAGON_HASTA, help="cuándo volvió el saldo")
     args = parser.parse_args()
 
     if args.senales:
-        n = senales_borrables(args.desde)
+        n = senales_borrables(args.desde, args.hasta)
         horas = procesar.edad_maxima_horas()
         print(f"\nSeñales: {n} mensajes del apagón siguen dentro de la ventana de {horas}h.")
         if not args.aplicar:
             print("  Ensayo. Con --senales --aplicar se limpian y el detector los vuelve a mirar.")
         else:
-            print(f"  Limpiadas {limpiar_senales(args.desde)} filas de 'sin señal'.")
+            print(f"  Limpiadas {limpiar_senales(args.desde, args.hasta)} filas.")
         print()
 
     gente = candidatos(args.patron)
