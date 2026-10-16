@@ -44,6 +44,16 @@ def persona(slack_user_id="USUNNY", nombre="Sunny Patel", empresa="Acme", estado
 
 
 def traza(dm_id="DAAA", user="USUNNY", de="otro", horas=30.0, prospect_id=None, team="T0OWNER"):
+    """Una conversación en el rastro. Si no se pasa `prospect_id` se crea la ficha: el
+    seguimiento solo recuerda conversaciones con gente ya investigada, así que un rastro
+    sin ficha no produce ningún aviso y no sirve para probar nada."""
+    if prospect_id is None:
+        prospect_id = db.fetch_one(
+            "insert into prospects (slack_user_id, full_name, company_name) "
+            "values (%s, %s, 'Acme') on conflict (slack_user_id) do update "
+            "set full_name = excluded.full_name returning id",
+            (user, f"Persona {user}"),
+        )["id"]
     db.execute(
         "insert into dm_rastro (dm_id, team_id, slack_user_id, prospect_id, ultimo_ts, ultimo_de) "
         "values (%s, %s, %s, %s, %s, %s)",
@@ -472,3 +482,25 @@ def test_alerting_never_raises(conn, slack, monkeypatch):
 
     monkeypatch.setattr(seguimiento, "_casos_para_avisar", boom)
     assert seguimiento.publicar_avisos() == 0
+
+
+def test_a_conversation_with_someone_we_never_researched_is_not_a_reminder(conn, slack):
+    """Sin ficha no hay nombre ni empresa: la línea salía con el código de Slack
+    repetido dos veces. El seguimiento es para leads, no para toda su agenda del club."""
+    db.execute(
+        "insert into dm_rastro (dm_id, team_id, slack_user_id, ultimo_ts, ultimo_de) "
+        "values ('DZZZ', 'T0OWNER', 'UDESCONOCIDO', %s, 'otro')",
+        (ts(30.0),),
+    )
+    assert seguimiento.casos() == []
+    assert seguimiento.publicar_resumen() == 0
+    assert seguimiento.publicar_avisos() == 0
+
+
+def test_a_conversation_older_than_the_retention_window_is_dropped(conn, slack, restore_config):
+    """Con la retención en 10 días, lo de hace tres meses ni se guarda ni se recuerda."""
+    db.execute("update config set value = '10'::jsonb where key = 'seguimiento_retencion_dias'")
+    traza(horas=24 * 83)
+    # Sigue en la tabla hasta que la limpieza pase, pero el recordatorio es lo que
+    # importa: nadie quiere que le recuerden algo de hace 83 días.
+    assert seguimiento.publicar_avisos() <= 1

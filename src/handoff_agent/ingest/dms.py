@@ -135,11 +135,19 @@ def _guardar(dm_id: str, team_id: str, slack_user_id: str, ts: str, de: str) -> 
     conversación cambió, así que el caso vuelve a estar vivo."""
     db.execute(
         """
-        insert into dm_rastro (dm_id, team_id, slack_user_id, prospect_id, ultimo_ts, ultimo_de)
+        insert into dm_rastro (dm_id, team_id, slack_user_id, prospect_id, ultimo_ts,
+                               ultimo_de, avisado_at)
         values (
             %(dm_id)s, nullif(%(team_id)s, ''), %(slack_user_id)s,
             (select id from prospects where slack_user_id = %(slack_user_id)s),
-            %(ts)s, %(de)s
+            %(ts)s, %(de)s,
+            -- Nace como si ya se hubiera avisado, y es lo que evita el golpe de la
+            -- primera pasada: al descubrir el rastro por primera vez hay decenas de
+            -- conversaciones que llevan meses pasadas de plazo, y sin esto todas
+            -- cruzarían la línea a la vez. Una conversación recién vista no es una
+            -- novedad: la novedad es que SIGA esperando cuando pase la ventana del
+            -- recordatorio, y entonces sí avisa (delivery/seguimiento._casos_para_avisar).
+            now()
         )
         on conflict (dm_id) do update set
             team_id = coalesce(nullif(%(team_id)s, ''), dm_rastro.team_id),

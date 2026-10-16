@@ -243,3 +243,36 @@ def test_an_event_costs_nothing(conn, lector, slack):
     eventos.publicar_pendientes(lector)
     assert db.fetch_one("select count(*) as n from llm_calls")["n"] == 0
     assert db.fetch_one("select count(*) as n from cost_events")["n"] == 0
+
+
+# ---------------------------------------------------------------------------------
+# Nada de histórico: el fallo que esto evita costó 40 mensajes en el canal.
+# ---------------------------------------------------------------------------------
+
+
+def test_an_old_message_is_never_announced(conn, lector, slack, restore_config):
+    """`slack_messages` lleva meses de histórico de los canales vigilados. Sin el corte
+    de edad, la primera pasada anuncia como recién llegadas decenas de presentaciones y
+    menciones de hace semanas -- que es exactamente lo que pasó la primera vez."""
+    con_canal_de_intros(conn)
+    viejo = f"{time.time() - 40 * 86400:.6f}"
+    mensaje("Hi everyone, I'm new!", canal=CANAL, ts=viejo)
+    mensaje(f"<@{DUENO}> mira esto", ts=viejo)
+    assert eventos.publicar_pendientes(lector) == 0
+    assert filas() == []
+
+
+def test_the_whole_history_of_the_introductions_channel_stays_quiet(
+    conn, lector, slack, restore_config
+):
+    con_canal_de_intros(conn)
+    for n in range(30):
+        mensaje(f"intro {n}", canal=CANAL, user=f"U{n}", ts=f"{time.time() - (n + 2) * 86400:.6f}")
+    assert eventos.publicar_pendientes(lector) == 0
+    assert slack == []
+
+
+def test_a_recent_message_still_gets_through(conn, lector, slack, restore_config):
+    con_canal_de_intros(conn)
+    mensaje("Hi, just joined", canal=CANAL, ts=f"{time.time() - 600:.6f}")
+    assert eventos.publicar_pendientes(lector) == 1

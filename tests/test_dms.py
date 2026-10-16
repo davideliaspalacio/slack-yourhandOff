@@ -327,3 +327,18 @@ def test_the_database_refuses_an_unknown_author(conn):
             "insert into dm_rastro (dm_id, slack_user_id, ultimo_ts, ultimo_de) "
             "values ('DAAA', 'U1', '1.1', 'alguien')"
         )
+
+
+def test_a_newly_discovered_conversation_does_not_alert_at_once(conn):
+    """El rastro nace avisado, y es lo que evita el golpe de la primera pasada.
+
+    Al descubrir los DMs por primera vez hay decenas de conversaciones que llevan meses
+    pasadas de plazo. Sin esto, todas cruzan la línea a la vez y el canal recibe el tope
+    diario de avisos de golpe -- que es lo que pasó la primera vez que se desplegó."""
+    reader = FakeReader()
+    reader.add_dm("DAAA", "USUNNY")
+    reader.add_profile("USUNNY", "Sunny Patel")
+    reader.post("DAAA", "USUNNY", "hola", f"{time.time() - 30 * 86400:.6f}")
+    dms.rastro_tick(reader)
+    fila = db.fetch_one("select avisado_at from dm_rastro where dm_id = 'DAAA'")
+    assert fila["avisado_at"] is not None

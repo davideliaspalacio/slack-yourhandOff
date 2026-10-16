@@ -166,6 +166,12 @@ def _casos_dm(tipo: str, limite_ts: float, ahora: datetime) -> list[Caso]:
     ayer ya se avisara. Si el resumen descontara lo avisado, con recordatorios cada
     pocas horas saldría vacío todos los días.
 
+    Solo conversaciones con gente que ya pasó por el research (`join`, no `left join`).
+    Sin ficha no hay nombre ni empresa y la línea salía con el código de Slack repetido
+    dos veces -- "U0BCQGYDU64 · U0BCQGYDU64 replied 83 days ago" --, que no es un
+    recordatorio sino ruido. El seguimiento es para leads; el resto de sus conversaciones
+    del club no son trabajo nuestro.
+
     A un descartado no se le avisa nunca, igual que en `signals/alertas.py`."""
     de = "otro" if tipo == RESPONDER else "dueno"
     filas = db.fetch_all(
@@ -173,10 +179,10 @@ def _casos_dm(tipo: str, limite_ts: float, ahora: datetime) -> list[Caso]:
         select r.dm_id, r.team_id, r.slack_user_id, r.ultimo_ts, p.id::text as prospect_id,
                p.full_name, p.company_name, p.company_name_override
           from dm_rastro r
-          left join prospects p on p.id = r.prospect_id
+          join prospects p on p.id = r.prospect_id
          where r.ultimo_de = %s
            and r.ultimo_ts::numeric < %s
-           and (p.state is null or p.state <> 'descartado')
+           and p.state <> 'descartado'
            and (p.sin_tarjeta is null or not p.sin_tarjeta)
          order by r.ultimo_ts::numeric
         """,
@@ -344,14 +350,14 @@ def _casos_para_avisar(ahora: datetime) -> list[Caso]:
             select r.dm_id, r.team_id, r.slack_user_id, r.ultimo_ts, p.id::text as prospect_id,
                    p.full_name, p.company_name, p.company_name_override
               from dm_rastro r
-              left join prospects p on p.id = r.prospect_id
+              join prospects p on p.id = r.prospect_id
              where r.ultimo_de = %(de)s
                and r.ultimo_ts::numeric < %(limite)s
                -- Nunca avisada, o avisada hace más de lo que toca recordar.
                and (r.avisado_at is null
                     or r.avisado_at < %(ahora)s - make_interval(hours => %(recordar)s))
-               and (p.state is null or p.state <> 'descartado')
-               and (p.sin_tarjeta is null or not p.sin_tarjeta)
+               and p.state <> 'descartado'
+               and not p.sin_tarjeta
              order by r.ultimo_ts::numeric
             """,
             {"de": de, "limite": limite_ts, "ahora": ahora, "recordar": recordar},

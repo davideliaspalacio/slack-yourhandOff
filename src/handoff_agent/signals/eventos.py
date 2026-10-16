@@ -25,13 +25,14 @@ convierta en enlace ni en mención nada de lo que alguien escribió.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import db, db_config, ledger
 from ..config import load_settings
 from ..delivery import card, slack_writer
 from ..slack_client import SlackUnavailable
+from . import procesar
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +72,25 @@ def _publicados_hoy(tipo: str, ahora: datetime) -> int:
 
 
 def detectar(owner_id: str) -> int:
-    """Apunta los eventos de los mensajes que todavía no se habían mirado.
+    """Apunta los eventos de los mensajes recientes que todavía no se habían mirado.
 
     No publica: solo deja las filas en `pendiente`. Devuelve cuántas creó.
+
+    **Solo mira lo reciente**, y no es un detalle: `slack_messages` lleva meses de
+    histórico de los canales vigilados, así que sin este corte la primera pasada
+    anunciaría como recién llegadas decenas de presentaciones y menciones de hace
+    semanas. Es la misma regla que `signals/procesar.py` aplica a las señales y que
+    `ingest/watcher.py` aplica a la lectura ("no backfill, on purpose"): avisar de algo
+    que pasó hace días no le sirve a nadie, y hacerlo a montones es peor que no avisar,
+    porque se dejan de leer los avisos. El corte es `alertas_edad_maxima_horas`, el
+    mismo que decide hasta cuándo una señal merece alerta.
 
     Los mensajes del dueño quedan fuera por dos vías: el watcher los marca `ignorado`
     y además se exige que el autor no sea él -- mencionarse a sí mismo o presentarse
     en su propio club no es un aviso.
     """
     canal_presentaciones = str(db_config.value("canal_presentaciones", "") or "").strip().upper()
+    desde = (datetime.now(UTC) - timedelta(hours=procesar.edad_maxima_horas())).timestamp()
     creados = 0
 
     # Mención: su id aparece como `<@U...>` en el texto, que es como Slack lo guarda.
@@ -92,11 +103,12 @@ def detectar(owner_id: str) -> int:
          where sm.status <> 'ignorado'
            and sm.user_id is not null
            and sm.user_id <> %(dueno)s
+           and sm.ts::numeric >= %(desde)s
            and position(%(aguja)s in coalesce(sm.text, '')) > 0
            and (p.state is null or p.state <> 'descartado')
         on conflict (channel_id, ts, tipo) do nothing
         """,
-        {"tipo": MENCION, "dueno": owner_id, "aguja": f"<@{owner_id}>"},
+        {"tipo": MENCION, "dueno": owner_id, "aguja": f"<@{owner_id}>", "desde": desde},
     )
 
     # Presentación: cualquier mensaje de persona en el canal de presentaciones.
@@ -111,11 +123,17 @@ def detectar(owner_id: str) -> int:
                and sm.user_id is not null
                and sm.user_id <> %(dueno)s
                and upper(sm.channel_id) = %(canal)s
+               and sm.ts::numeric >= %(desde)s
                and btrim(coalesce(sm.text, '')) <> ''
                and (p.state is null or p.state <> 'descartado')
             on conflict (channel_id, ts, tipo) do nothing
             """,
-            {"tipo": PRESENTACION, "dueno": owner_id, "canal": canal_presentaciones},
+            {
+                "tipo": PRESENTACION,
+                "dueno": owner_id,
+                "canal": canal_presentaciones,
+                "desde": desde,
+            },
         )
     return creados
 
