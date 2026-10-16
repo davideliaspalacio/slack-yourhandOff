@@ -17,7 +17,7 @@ import psycopg
 
 from .. import canales, db
 from ..slack_client import SlackUnavailable
-from . import queue
+from . import descubrimiento, queue
 
 logger = logging.getLogger(__name__)
 
@@ -158,12 +158,24 @@ def watch_tick(
     channels: list[str],
     lookback_hours: float,
     now: Callable[[], float] = time.time,
+    rotando: bool = False,
 ) -> TickResult:
-    """Read every channel once. SlackAuthFailed propagates: it needs a person."""
+    """Read every channel once. SlackAuthFailed propagates: it needs a person.
+
+    `rotando` es el modo automático (`canales.modo_todos()`, migración 0028): la lista
+    que llega no son todos los canales vigilados sino los que les tocaba, y hay que
+    apuntar el resultado para que a cada uno le toque otra vez cuando corresponda. Trae
+    además la lista de miembros a su propio ritmo, mucho más lento, porque es la llamada
+    más cara y un miembro nuevo no tiene prisa.
+
+    Apagado -- el camino de siempre -- nada de esto corre: se leen todos los canales de
+    la lista y se revisan sus miembros en cada vuelta, exactamente como antes.
+    """
     result = TickResult()
     owner_id, result.team = reader.identity()
     result.user_id = owner_id
     for channel in channels:
+        nuevos_aqui = 0
         try:
             _refrescar_nombre(reader, channel)
             history = reader.history(channel, oldest=_oldest(channel, lookback_hours, now))
@@ -179,10 +191,23 @@ def watch_tick(
                 if _store(channel, message, status):
                     if status == "nuevo":
                         result.messages_new += 1
+                        nuevos_aqui += 1
                     else:
                         result.messages_ignored += 1
-            _diff_members(reader, channel, owner_id, result)
+            if not rotando or canales.toca_miembros(channel):
+                _diff_members(reader, channel, owner_id, result)
+                if rotando:
+                    descubrimiento.marcar_miembros(channel)
             result.channels_read += 1
         except SlackUnavailable as exc:
             result.errors.append(f"{channel}: {exc}")
+        finally:
+            # Se apunta pase lo que pase: si este canal falló, su escalón sube igual y
+            # no se queda atascado al principio de la cola pidiendo turno en cada vuelta
+            # mientras los demás esperan.
+            if rotando:
+                try:
+                    descubrimiento.marcar_sondeado(channel, nuevos_aqui)
+                except psycopg.Error:
+                    logger.warning("no se pudo apuntar el sondeo del canal %s", channel)
     return result

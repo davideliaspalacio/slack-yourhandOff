@@ -541,8 +541,13 @@ def canales_listar() -> dict:
     salieron de ahí. Dice además cuál es el canal donde el agente publica sus tarjetas,
     que NUNCA puede vigilarse. Los nombres los pone el worker en su ciclo de lectura, así
     que un canal recién añadido puede tardar un sondeo en tener nombre. Para cambiar la
-    lista están `canal_agregar` y `canal_quitar`."""
-    vigilados = list(secretos.slack_channel_ids())
+    lista están `canal_agregar` y `canal_quitar`.
+
+    Si el modo automático está encendido (`modo_todos` en la respuesta), los canales no
+    son la lista a mano sino todos los que el descubrimiento vio con la cuenta lectora
+    dentro; `canales_disponibles` los enseña con más detalle."""
+    todos = canales.modo_todos()
+    vigilados = list(canales.vigilados_automaticos() if todos else secretos.slack_channel_ids())
     tarjetas = (load_settings().handoff_channel_id or "").strip().upper() or None
     with _lectura() as cur:
         nombres = canales.nombres(cur, [*vigilados, tarjetas])
@@ -562,8 +567,9 @@ def canales_listar() -> dict:
         conteos = {f["canal"]: f for f in cur.fetchall()}
     return {
         "dias": DIAS_CANALES,
+        "modo_todos": todos,
         "total": len(vigilados),
-        "maximo": canales.MAXIMO,
+        "maximo": None if todos else canales.MAXIMO,
         "canales": [
             {
                 "canal": c,
@@ -581,6 +587,55 @@ def canales_listar() -> dict:
             "vigilable": False,
             "nota": "this is where the agent posts its cards; it can never be watched",
         },
+    }
+
+
+@mcp.tool()
+def canales_disponibles() -> dict:
+    """TODOS los canales del Founders Club que el agente conoce, para elegir cuáles
+    vigilar sin buscar códigos a mano. De cada uno dice su nombre, si la cuenta lectora
+    está dentro, si ya se vigila, cuántos mensajes de personas ha traído y cuándo se leyó
+    por última vez. Los rellena el descubrimiento del worker con `conversations.list`, de
+    solo lectura, cuando el modo automático está encendido; apagado, la tabla solo tiene
+    los canales que ya se vigilaban. Un canal donde la cuenta NO está no se puede leer, y
+    el agente nunca se une por nadie: unirse se vería en el canal. Para cambiar la lista a
+    mano están `canal_agregar` y `canal_quitar`; para vigilarlos todos de golpe, el
+    interruptor de Settings en el panel."""
+    vigilados = set(secretos.slack_channel_ids())
+    tarjetas = (load_settings().handoff_channel_id or "").strip().upper() or None
+    with _lectura() as cur:
+        cur.execute(
+            """
+            select channel_id, nombre, es_miembro, mensajes_vistos,
+                   sondeado_at, visto_at
+              from canales
+             order by es_miembro desc nulls last, mensajes_vistos desc, nombre, channel_id
+            """
+        )
+        filas = cur.fetchall()
+
+    def fila(f: dict) -> dict:
+        return {
+            "canal": f["channel_id"],
+            "nombre": canales.etiqueta(f["channel_id"], f["nombre"]),
+            "es_miembro": f["es_miembro"],
+            "vigilado": f["channel_id"] in vigilados,
+            "mensajes_vistos": f["mensajes_vistos"],
+            "ultima_lectura": f["sondeado_at"].isoformat() if f["sondeado_at"] else None,
+            "nota": None
+            if f["es_miembro"]
+            else "the reader account is not in this channel, so its history cannot be read",
+        }
+
+    dentro = [f for f in filas if f["es_miembro"]]
+    return {
+        "modo_todos": canales.modo_todos(),
+        "total": len(filas),
+        "con_la_cuenta_dentro": len(dentro),
+        "vigilados_a_mano": len(vigilados),
+        "maximo_a_mano": canales.MAXIMO,
+        "canal_de_tarjetas": tarjetas,
+        "canales": [fila(f) for f in filas],
     }
 
 

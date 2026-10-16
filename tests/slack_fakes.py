@@ -19,6 +19,12 @@ class FakeReader:
         self.conversations: list[dict] = []
         self.last_message_calls: list[str] = []
         self.dms_error: Exception | None = None
+        # Los canales del workspace, tal como los devuelve conversations.list, y el
+        # registro de a quién se le pidió la lista de miembros: es la llamada más cara
+        # que hay y el modo automático la hace a su propio ritmo.
+        self.workspace: list[dict] = []
+        self.member_calls: list[str] = []
+        self.canales_error: Exception | None = None
 
     # --- la misma superficie que FoundersClubReader ---
     def identity(self) -> tuple[str, str]:
@@ -47,7 +53,15 @@ class FakeReader:
         return self.channel_names.get(channel, "")
 
     def members(self, channel: str) -> set[str]:
+        self.member_calls.append(channel)
         return set(self.channel_members.get(channel, set()))
+
+    def canales(self, incluir_privados: bool = True) -> list[dict]:
+        if self.auth_error:
+            raise self.auth_error
+        if self.canales_error:
+            raise self.canales_error
+        return list(self.workspace)
 
     def user_profile(self, user_id: str) -> UserProfile:
         if self.auth_error:

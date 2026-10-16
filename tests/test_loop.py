@@ -106,7 +106,9 @@ def test_a_channels_callable_is_resolved_on_every_poll(wiring, monkeypatch):
     """Los canales del panel cambian sin reiniciar: el bucle los pide en cada sondeo."""
     seen = []
     monkeypatch.setattr(
-        loop, "watch_tick", lambda reader, channels, hours: seen.append(channels) or TickResult()
+        loop,
+        "watch_tick",
+        lambda reader, channels, hours, **k: seen.append(channels) or TickResult(),
     )
     lists = iter([["C1"], ["C1", "C2"], ["C3"]])
     clock = FakeClock()
@@ -318,7 +320,7 @@ def test_a_successful_poll_writes_the_heartbeat_with_user_team_and_channels(wiri
     monkeypatch.setattr(
         loop,
         "watch_tick",
-        lambda *a: TickResult(user_id="UANTHONY", team="Handoff", channels_read=3),
+        lambda *a, **k: TickResult(user_id="UANTHONY", team="Handoff", channels_read=3),
     )
     run(FakeClock(), max_cycles=1)
     assert wiring["ok"] == [("UANTHONY", "Handoff", 3)]
@@ -335,7 +337,7 @@ def test_a_successful_poll_writes_the_heartbeat_with_user_team_and_channels(wiri
 def test_a_failing_poll_writes_the_heartbeat_and_still_follows_the_usual_path(
     wiring, monkeypatch, error
 ):
-    def boom(*a):
+    def boom(*a, **k):
         raise error
 
     monkeypatch.setattr(loop, "watch_tick", boom)
@@ -445,7 +447,9 @@ def test_a_healthy_poll_sends_no_notice(wiring):
 
 
 def test_another_failure_of_the_poll_does_not_notify_about_the_credential(wiring, monkeypatch):
-    monkeypatch.setattr(loop, "watch_tick", lambda *a: (_ for _ in ()).throw(RuntimeError("db")))
+    monkeypatch.setattr(
+        loop, "watch_tick", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db"))
+    )
     run(FakeClock(), max_cycles=1)
     assert wiring["avisos"] == 0
 
@@ -509,3 +513,76 @@ def test_a_failing_summary_does_not_stop_the_loop(wiring, monkeypatch):
     monkeypatch.setattr(loop.seguimiento, "publicar_resumen", boom)
     assert run(FakeClock(), max_cycles=2) == 2
     assert wiring["alerts"] == []
+
+
+# ---------------------------------------------------------------------------------
+# Modo automático de canales (0028): el descubrimiento y de dónde salen los canales.
+# ---------------------------------------------------------------------------------
+
+
+def test_the_usual_path_never_discovers_channels(wiring, monkeypatch):
+    """Apagado el modo automático, el bucle no le pregunta a Slack qué canales hay:
+    usa la lista del panel, como siempre."""
+    monkeypatch.setattr(loop.canales, "modo_todos", lambda: False)
+    reader = FakeReader()
+    clock = FakeClock()
+    loop.run_loop(
+        reader,
+        channels=["C00001"],
+        lookback_hours=1,
+        poll_seconds=100,
+        sleep=clock.sleep,
+        clock=clock.clock,
+        max_cycles=10,
+    )
+    assert reader.workspace == []  # nadie pidió la lista
+    assert wiring["watch"] >= 1
+
+
+def test_the_automatic_mode_takes_its_channels_from_the_table(wiring, monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        loop,
+        "watch_tick",
+        lambda reader, channels, hours, **k: seen.append((channels, k)) or TickResult(),
+    )
+    monkeypatch.setattr(loop.canales, "modo_todos", lambda: True)
+    monkeypatch.setattr(
+        loop.descubrimiento, "guardar_descubrimiento", lambda *a: {"vistos": 2, "dentro": 2}
+    )
+    monkeypatch.setattr(loop.canales, "por_sondear", lambda: ["C00007", "C00008"])
+    clock = FakeClock()
+    loop.run_loop(
+        FakeReader(),
+        # La lista del panel está puesta y se ignora a propósito: manda la tabla.
+        channels=["C00001"],
+        lookback_hours=1,
+        poll_seconds=100,
+        sleep=clock.sleep,
+        clock=clock.clock,
+        max_cycles=3,
+    )
+    assert seen[0][0] == ["C00007", "C00008"]
+    assert seen[0][1] == {"rotando": True}
+
+
+def test_discovery_failing_does_not_stop_the_poll(wiring, monkeypatch):
+    """Si Slack no contesta a la lista de canales, se sigue con los que la tabla ya sabe."""
+    monkeypatch.setattr(loop.canales, "modo_todos", lambda: True)
+    monkeypatch.setattr(loop.canales, "por_sondear", lambda: ["C00007"])
+    reader = FakeReader()
+    reader.canales_error = RuntimeError("slack caído")
+    clock = FakeClock()
+    assert (
+        loop.run_loop(
+            reader,
+            channels=["C00001"],
+            lookback_hours=1,
+            poll_seconds=100,
+            sleep=clock.sleep,
+            clock=clock.clock,
+            max_cycles=2,
+        )
+        == 2
+    )
+    assert wiring["watch"] >= 1

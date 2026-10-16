@@ -111,6 +111,7 @@ def test_the_reader_only_exposes_reads():
         "history",
         "last_message",
         "dms",
+        "canales",
         "members",
         "user_profile",
         "permalink",

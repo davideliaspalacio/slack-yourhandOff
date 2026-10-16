@@ -6,7 +6,9 @@ lectura del worker (`ingest/watcher.py`) con `conversations.info`, un método de
 lectura. El nombre puede faltar siempre (la llamada falla, el canal es privado): entonces
 se muestra el código, como hasta ahora, y nada se rompe.
 
-Este módulo solo LEE y formatea, y las lecturas que sirven al MCP remoto van con el
+Este módulo solo LEE y formatea -- lo que el modo automático escribe vive en
+`ingest/descubrimiento.py`, porque un test comprueba que aquí no haya una sola
+sentencia de escritura: lo importa el servidor de lectura del MCP --, y las lecturas que sirven al MCP remoto van con el
 cursor de quien llama (su transacción es `READ ONLY`): así puede entrar en el servidor de
 lectura sin abrirle ningún camino de escritura. Quien guarda es el watcher.
 """
@@ -105,3 +107,89 @@ def resolver(cur, referencia: str, vigilados=()) -> str:
             f"ambiguous channel {bruto!r}: {', '.join(coincidencias)} share that name; use the code"
         )
     raise CanalDesconocido(f"unknown channel {bruto!r}; channels to choose from: {pista}")
+
+
+# ---------------------------------------------------------------------------------
+# Modo automático: vigilar todos los canales donde está la cuenta lectora.
+#
+# Apagado por omisión, y apagado el camino de siempre no cambia: `secretos` resuelve
+# la lista a mano y `watch_tick` la lee entera en cada vuelta. Encendido, los canales
+# salen de la tabla y cada uno lleva su propio ritmo. Migración 0028.
+# ---------------------------------------------------------------------------------
+
+CLAVE_MODO_TODOS = "slack_canales_todos"
+
+# La escalera del retroceso, en minutos: un canal que trae mensajes se vuelve a mirar
+# enseguida; uno que lleva vueltas vacías se va alejando hasta el último escalón. Con la
+# cola larga del club casi muerta, el estado estable son unos pocos canales en el primer
+# escalón y el resto en el último.
+ESCALERA_MINUTOS = (2, 5, 15, 30, 60)
+
+# Cada cuánto se revisa la lista de miembros de un canal. Es la llamada más cara que hay
+# (siete páginas en un canal de 1.400 personas) y un miembro nuevo no tiene prisa.
+HORAS_ENTRE_MIEMBROS = 6
+
+# Cada cuánto se le pregunta a Slack qué canales hay. Una llamada, con paginación.
+MINUTOS_ENTRE_DESCUBRIMIENTOS = 30
+
+# Tope de canales por vuelta: aunque a muchos les toque a la vez (el primer arranque,
+# o tras un rato sin worker), una vuelta no puede quedarse una hora hablando con Slack
+# mientras la cola de research espera. Los que no entran, en la siguiente.
+MAXIMO_POR_VUELTA = 12
+
+
+def modo_todos() -> bool:
+    """Si se vigilan todos los canales de la cuenta en vez de la lista a mano."""
+    from . import db_config
+
+    return bool(db_config.value(CLAVE_MODO_TODOS, False))
+
+
+def por_sondear(limite: int = MAXIMO_POR_VUELTA) -> list[str]:
+    """Los canales a los que ya les toca, los más atrasados primero.
+
+    Un canal recién descubierto (`siguiente_sondeo_at` nulo) va antes que todos: nunca
+    se ha leído y es donde puede haber algo esperando.
+    """
+    from . import db
+
+    filas = db.fetch_all(
+        """
+        select channel_id from canales
+         where es_miembro
+           and (siguiente_sondeo_at is null or siguiente_sondeo_at <= now())
+         order by siguiente_sondeo_at nulls first
+         limit %s
+        """,
+        (limite,),
+    )
+    return [f["channel_id"] for f in filas]
+
+
+def toca_miembros(channel_id: str) -> bool:
+    """Si a este canal le toca revisar su lista de miembros.
+
+    Solo lo pregunta el modo automático: en el modo a mano la revisión sigue siendo en
+    cada vuelta, como siempre, para no cambiar lo que ya funciona.
+    """
+    from . import db
+
+    fila = db.fetch_one(
+        "select miembros_revisados_at from canales where channel_id = %s", (channel_id,)
+    )
+    if fila is None or fila["miembros_revisados_at"] is None:
+        return True
+    return fila["miembros_revisados_at"] < datetime.now(UTC) - timedelta(hours=HORAS_ENTRE_MIEMBROS)
+
+
+def vigilados_automaticos() -> tuple[str, ...]:
+    """Los canales que el modo automático vigila: los que el descubrimiento vio con la
+    cuenta lectora dentro. Es lo que el panel y el MCP enseñan cuando el modo está
+    encendido, en lugar de la lista a mano."""
+    from . import db
+
+    filas = db.fetch_all(
+        "select channel_id from canales where es_miembro order by mensajes_vistos desc, "
+        "nombre, channel_id"
+    )
+    return tuple(f["channel_id"] for f in filas)

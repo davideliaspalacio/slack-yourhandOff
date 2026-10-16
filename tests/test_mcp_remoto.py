@@ -23,6 +23,7 @@ HERRAMIENTAS_LECTURA = {
     "senales_recientes",
     "seguimientos_pendientes",
     "canales_listar",
+    "canales_disponibles",
     "resumen_costes",
     "estado_sistema",
 }
@@ -262,6 +263,7 @@ async def test_no_tool_writes_anything(datos):
         ("senales_recientes", {"canal": "C1"}),
         ("personas_buscar", {"canal": "C1"}),
         ("canales_listar", {}),
+        ("canales_disponibles", {}),
         ("resumen_costes", {"dias": 30}),
         ("estado_sistema", {}),
     ]
@@ -646,3 +648,44 @@ def test_seguimientos_pendientes_caps_the_limit(datos):
     assert mcp_remoto.seguimientos_pendientes(limite=2)["total"] == 2
     # Un límite absurdo se acota, no falla (igual que en personas_buscar).
     assert mcp_remoto.seguimientos_pendientes(limite=-3)["total"] == 1
+
+
+# ---------------------------------------------------------------------------------
+# canales_disponibles (0028): la lista entera para poder elegir.
+# ---------------------------------------------------------------------------------
+
+
+def test_canales_disponibles_lists_everything_it_knows(con_canales):
+    db.execute("update canales set es_miembro = true, mensajes_vistos = 9 where channel_id = 'C1'")
+    db.execute(
+        "insert into canales (channel_id, nombre, es_miembro) "
+        "values ('C0MIRON', 'solo-mirando', false)"
+    )
+    r = mcp_remoto.canales_disponibles()
+    por_codigo = {c["canal"]: c for c in r["canales"]}
+    assert por_codigo["C1"]["es_miembro"] is True
+    assert por_codigo["C1"]["mensajes_vistos"] == 9
+    assert por_codigo["C1"]["nota"] is None
+    # El canal donde la cuenta no está se enseña, pero diciendo que no se puede leer.
+    assert por_codigo["C0MIRON"]["es_miembro"] is False
+    assert "not in this channel" in por_codigo["C0MIRON"]["nota"]
+    assert r["con_la_cuenta_dentro"] == 1
+    json.dumps(r)
+
+
+def test_canales_disponibles_says_which_ones_are_already_watched(con_canales):
+    r = mcp_remoto.canales_disponibles()
+    por_codigo = {c["canal"]: c for c in r["canales"]}
+    # C1 y C2 son los vigilados del fixture.
+    assert por_codigo["C1"]["vigilado"] is True
+    db.execute("insert into canales (channel_id, nombre) values ('C0OTRO', 'otro')")
+    assert mcp_remoto.canales_disponibles()["canales"][-1]["vigilado"] is False
+
+
+def test_canales_disponibles_reports_the_mode(con_canales, restore_config):
+    assert mcp_remoto.canales_disponibles()["modo_todos"] is False
+    db.execute(
+        "insert into config (key, value) values ('slack_canales_todos', 'true'::jsonb) "
+        "on conflict (key) do update set value = excluded.value"
+    )
+    assert mcp_remoto.canales_disponibles()["modo_todos"] is True

@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
-  guardarExigirEvidencia, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
+  guardarCanalesTodos, guardarExigirEvidencia, guardarPausaUnipile, guardarSeguimientoActivo,
+  guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
@@ -83,7 +84,7 @@ export default async function Ajustes() {
     .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR),
       ...Object.keys(EDITABLES_SEGUIMIENTO), "seguimiento_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
-      "lector_estado", "exigir_evidencia"]);
+      "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
   const canalesValor = valores.get("slack_channel_ids");
   const canales = Array.isArray(canalesValor)
@@ -91,7 +92,8 @@ export default async function Ajustes() {
     : [];
   // Los nombres que el worker ya averiguó (conversations.info, solo lectura): un código
   // de canal no le dice nada a nadie.
-  const { data: nombresData } = await supabase.from("canales").select("channel_id, nombre");
+  const { data: nombresData } = await supabase.from("canales")
+    .select("channel_id, nombre, es_miembro, mensajes_vistos, sondeado_at");
   const nombrePorCanal = new Map(
     (nombresData ?? []).map((c) => [c.channel_id as string, c.nombre as string | null]),
   );
@@ -110,6 +112,13 @@ export default async function Ajustes() {
   const exigirEvidencia = valores.get("exigir_evidencia") !== false;
   // Activado salvo que la base diga false, igual que en el worker (ingest/dms.py).
   const seguimientoActivo = valores.get("seguimiento_activo") !== false;
+  // Apagado salvo que la base diga true: el mismo valor por defecto que el worker
+  // (canales.modo_todos()). Encendido, los canales salen del descubrimiento.
+  const canalesTodos = valores.get("slack_canales_todos") === true;
+  const descubiertos = (nombresData ?? []).filter((c) => c.es_miembro === true);
+  const masActivos = [...descubiertos]
+    .sort((a, b) => Number(b.mensajes_vistos ?? 0) - Number(a.mensajes_vistos ?? 0))
+    .slice(0, 8);
   const zona = String(valores.get("unipile_zona") ?? "America/New_York");
   const desde = inicioDelDia(zona);
 
@@ -191,11 +200,45 @@ export default async function Ajustes() {
       </section>
       <section style={{ marginBottom: 24 }}>
         <h2>Watched channels</h2>
-        <p>
-          {canales.length > 0
-            ? canales.map(canalVisible).join(", ")
-            : "No channels configured — the agent is not reading anything"}
-        </p>
+        <table>
+          <tbody>
+            <tr>
+              <td>Watch every channel the reader account belongs to, and pick up new ones
+                on its own. Busy channels are read every couple of minutes and quiet ones
+                much less often, so adding channels costs very little. The agent never
+                joins a channel: it only reads the ones the account is already in.
+                <div className="muted" style={{ fontSize: 12 }}>slack_canales_todos</div></td>
+              <td>
+                <form action={guardarCanalesTodos} className="inline">
+                  <input type="hidden" name="value" value={canalesTodos ? "false" : "true"} />
+                  <span>{canalesTodos ? "On" : "Off"}</span>
+                  <button type="submit">{canalesTodos ? "Turn off" : "Turn on"}</button>
+                </form>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        {canalesTodos ? (
+          <>
+            <p>
+              {descubiertos.length > 0
+                ? `Watching ${descubiertos.length} ${
+                    descubiertos.length === 1 ? "channel" : "channels"
+                  } — busiest: ${masActivos.map((c) => canalVisible(c.channel_id)).join(", ")}`
+                : "The worker has not discovered the channels yet — this takes one poll."}
+            </p>
+            <p className="notice">
+              The list below is not in use while this is on. It is kept as it is and takes
+              over again if you turn it off.
+            </p>
+          </>
+        ) : (
+          <p>
+            {canales.length > 0
+              ? canales.map(canalVisible).join(", ")
+              : "No channels configured — the agent is not reading anything"}
+          </p>
+        )}
         <CanalesForm key={canales.join(",")} actuales={canales} />
       </section>
       <p className="notice">The emergency shutdown and the money caps aren&apos;t changed from here,

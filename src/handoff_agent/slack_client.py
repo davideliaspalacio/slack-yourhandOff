@@ -192,6 +192,33 @@ class FoundersClubReader:
             if not cursor:
                 return conversaciones
 
+    def canales(self, incluir_privados: bool = True) -> list[dict]:
+        """Los canales del workspace, con `is_member` para saber en cuáles está él.
+
+        Para elegir qué vigilar sin cazar códigos en la URL, y para medir antes de
+        ampliar la lista. Pide canales, no DMs (`dms()` es el otro extremo del mismo
+        método de Slack). Listar no abre nada ni marca nada como leído.
+
+        Un canal con `is_member` falso se devuelve igual, para poder enseñarlo, pero su
+        historial no se puede leer con un token de usuario que no está dentro: el agente
+        nunca se une por él, porque unirse sí se vería en el canal.
+        """
+        tipos = "public_channel,private_channel" if incluir_privados else "public_channel"
+        canales: list[dict] = []
+        cursor = None
+        while True:
+            page = self._call(
+                "conversations_list",
+                types=tipos,
+                exclude_archived=True,
+                limit=PAGE_SIZE,
+                cursor=cursor,
+            )
+            canales.extend(page.get("channels") or [])
+            cursor = (page.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                return canales
+
     def last_message(self, channel: str) -> dict | None:
         """El último mensaje de una conversación, y solo ese (`limit=1`).
 

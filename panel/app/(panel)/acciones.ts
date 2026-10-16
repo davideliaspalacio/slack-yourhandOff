@@ -367,3 +367,16 @@ export async function revocarSesionOauth(id: string): Promise<{ error?: string }
   revalidatePath("/ajustes");
   return {};
 }
+
+// slack_canales_todos también es un booleano: el modo automático de canales. La política
+// panel_ajusta_canales_todos (0028) es la que permite tocar esta clave, y solo con true o
+// false. Encendido, el worker vigila todos los canales donde está la cuenta lectora y la
+// lista de abajo deja de usarse (no se borra: vuelve a gobernar al apagarlo).
+export async function guardarCanalesTodos(formData: FormData) {
+  const todos = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: todos, updated_at: new Date().toISOString() })
+    .eq("key", "slack_canales_todos");
+  revalidatePath("/ajustes");
+}

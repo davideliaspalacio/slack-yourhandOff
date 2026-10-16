@@ -19,13 +19,13 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 
-from .. import estado_lector, guards, ops_alerts
+from .. import canales, estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
 from ..delivery import aviso_lector, seguimiento
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas
 from ..slack_client import SlackAuthFailed
-from . import dms, queue
+from . import descubrimiento, dms, queue
 from .research_runner import run_next_job
 from .resolver import resolve_pending
 from .watcher import watch_tick
@@ -142,6 +142,36 @@ def _rastro_dms(reader) -> None:
         logger.warning("DMs: %s", error)
 
 
+def _descubrir_canales(reader) -> None:
+    """Le pregunta a Slack qué canales hay y en cuáles está la cuenta lectora.
+
+    Solo corre en el modo automático (0028). Es `conversations.list`, de solo lectura y
+    ya en la lista blanca del lector. Protegido como el radar y las señales: si falla, se
+    sigue con lo que la tabla ya sabe -- los canales descubiertos antes no se olvidan --
+    y se reintenta en el próximo descubrimiento. La credencial caducada sí se trata,
+    porque es lo que hay que avisarle a quien pega el token."""
+    from ..config import load_settings
+
+    try:
+        vistos = reader.canales()
+    except SlackAuthFailed as exc:
+        _credencial_caducada(exc)
+        return
+    except Exception:
+        logger.exception("no se pudieron descubrir los canales; se sigue con los conocidos")
+        return
+    try:
+        conteo = descubrimiento.guardar_descubrimiento(vistos, load_settings().handoff_channel_id)
+    except Exception:
+        logger.exception("no se pudo guardar el descubrimiento de canales")
+        return
+    logger.info(
+        "canales: %d vistos en el workspace, %d con la cuenta dentro",
+        conteo["vistos"],
+        conteo["dentro"],
+    )
+
+
 def _seguimiento() -> None:
     """El resumen diario de las conversaciones que se enfrían. `publicar_resumen`
     ya gestiona por dentro los frenos y no lanza; esta guarda es la segunda
@@ -183,6 +213,9 @@ def run_loop(
     # conversación que se enfría no tiene prisa, y cada pasada habla con Slack
     # una vez por conversación.
     next_rastro = clock()
+    # El descubrimiento de canales va a su propio ritmo y solo en modo automático: la
+    # lista de canales de un workspace no cambia cada dos minutos.
+    next_descubrimiento = clock()
     cycles = 0
     failing = False
     try:
@@ -197,10 +230,22 @@ def run_loop(
                 next_watch = clock() + poll_seconds
                 _reclaim_stale()
                 try:
-                    # Un callable se resuelve en cada sondeo (los canales del panel).
-                    current = list(channels() if callable(channels) else channels)
+                    # Modo automático (0028): los canales salen de la tabla y cada uno
+                    # lleva su ritmo, así que la lista de esta vuelta son los que les
+                    # tocaba, no todos. Apagado, el camino de siempre: la lista del
+                    # panel, resuelta en cada sondeo porque es un callable.
+                    rotando = canales.modo_todos()
+                    if rotando:
+                        if clock() >= next_descubrimiento:
+                            next_descubrimiento = (
+                                clock() + canales.MINUTOS_ENTRE_DESCUBRIMIENTOS * 60
+                            )
+                            _descubrir_canales(reader)
+                        current = canales.por_sondear()
+                    else:
+                        current = list(channels() if callable(channels) else channels)
                     try:
-                        tick = watch_tick(reader, current, lookback_hours)
+                        tick = watch_tick(reader, current, lookback_hours, rotando=rotando)
                     except Exception as exc:
                         # El latido va aparte del aviso: lo lee el panel, no el equipo
                         # de operaciones. Se vuelve a lanzar tal cual.
