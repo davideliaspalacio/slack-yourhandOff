@@ -30,6 +30,11 @@ COLUMNAS = {
     # unas horas. Una marca de tiempo más, igual que las de arriba: sigue sin haber
     # dónde guardar lo que nadie dijo.
     "avisado_at",
+    # `sin_leer` y `leido_hasta` (0031): lo que `conversations.info` dice de lo no leído.
+    # Son marcas, no contenido. El texto vive en `dm_mensajes`, otra tabla, detrás de su
+    # propio interruptor; esta sigue sin poder guardar una palabra.
+    "sin_leer",
+    "leido_hasta",
     "actualizado_at",
 }
 # Nada que huela a contenido puede aparecer como columna.
