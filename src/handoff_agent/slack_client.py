@@ -46,6 +46,9 @@ READ_METHODS = frozenset(
         "conversations_info",
         "conversations_list",
         "conversations_members",
+        # Las respuestas de un hilo (0032). Solo lista: no publica, no reacciona y no
+        # marca nada como leído.
+        "conversations_replies",
         "users_info",
         "chat_getPermalink",
     }

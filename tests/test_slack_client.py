@@ -15,6 +15,8 @@ READ_METHODS = {
     "conversations_info",
     "conversations_list",
     "conversations_members",
+    # Las respuestas de un hilo (0032): solo lista, no escribe ni marca como leído.
+    "conversations_replies",
     "users_info",
     "chat_getPermalink",
 }
