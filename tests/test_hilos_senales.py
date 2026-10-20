@@ -197,7 +197,12 @@ def test_a_reply_is_judged_with_its_thread_and_the_signal_keeps_thread_ts(conn, 
     principal = guardar(hace(30), "U2", "Anyone recommend a closer agency?", status="archivado")
     consejo = guardar(hace(5), "U3", "Talk to Acme Sales", thread_ts=principal)
     guardar(hace(4), "U1", "following", thread_ts=principal)
-    guardar(hace(3), "UOWN", "we sell this!", thread_ts=principal, status="ignorado")
+    # Un bot en el hilo: `ignorado` y con subtipo de sistema, así que no es contexto.
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text, thread_ts, status, subtype) "
+        "values ('C1', %s, 'UBOT', 'we sell this!', %s, 'ignorado', 'bot_message')",
+        (hace(3), principal),
+    )
     guardar(hace(2.5), "U4", "otro hilo", thread_ts="999.0")
     respuesta_ts = guardar(hace(2), "U1", "we need the same, 2 closers", thread_ts=principal)
     # Una respuesta posterior a la que se juzga no es su contexto.
@@ -288,3 +293,21 @@ def test_a_discarded_replier_is_skipped_like_any_author(conn, modelo):
     respuesta_ts = guardar(hace(1), "U1", "we need the same", principal)
     procesar.procesar_pendientes()
     assert senal_de(respuesta_ts) is None
+
+
+def test_anthonys_own_post_is_context_for_the_replies(conn, modelo):
+    """Sus mensajes se marcan `ignorado` para que no se investigue a sí mismo, pero como
+    contexto hacen falta: las respuestas a un "¿quién necesita ayuda con soporte?" de
+    Anthony son lo más valioso del club, y sin su mensaje no se entienden."""
+    principal = guardar(
+        hace(30), "UOWN", "Who needs help with customer support?", status="ignorado"
+    )
+    guardar(hace(2), "U1", "we do, 2 reps", thread_ts=principal)
+
+    procesar.procesar_pendientes()
+
+    llamadas = {respuesta_juzgada(prompt_de(c)): prompt_de(c) for c in modelo.calls}
+    contexto = VALLA.findall(llamadas["we do, 2 reps"])[0]
+    assert "Who needs help with customer support?" in contexto
+    # Su mensaje es contexto, nunca algo que se juzgue.
+    assert senal_de(principal) is None

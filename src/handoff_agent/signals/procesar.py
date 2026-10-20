@@ -75,14 +75,21 @@ def _hilo(mensaje: dict) -> list[dict]:
 
     El principal se busca por su `ts` y no por su `thread_ts`: si el watcher lo
     guardó antes de que tuviera respuestas, su `thread_ts` está a null. Entran
-    las filas `archivado` (son justo el contexto) y no las `ignorado` (dueño de
-    la credencial y bots). Sin tope aquí: el detector recorta a lo que cabe."""
+    las filas `archivado` (son justo el contexto).
+
+    De las `ignorado`, entran las que escribió una persona (con autor y sin subtipo de
+    sistema): en la práctica, los mensajes del propio Anthony, que el watcher marca
+    `ignorado` para no investigarse a sí mismo. Como contexto hacen falta: si Anthony
+    abre un hilo preguntando "¿quién necesita ayuda con soporte?", las respuestas son lo
+    más valioso de todo el club, y sin su mensaje el modelo no sabe a qué responden.
+    Siguen fuera los bots y los avisos de sistema (uniones, mensajes borrados), que
+    tienen subtipo. Sin tope aquí: el detector recorta a lo que cabe."""
     filas = db.fetch_all(
         """
         select ts, user_id, text from slack_messages
         where channel_id = %s
           and (ts = %s or (thread_ts = %s and ts::numeric < %s::numeric))
-          and status <> 'ignorado'
+          and (status <> 'ignorado' or (user_id is not null and subtype is null))
           and btrim(coalesce(text, '')) <> ''
         order by ts::numeric
         """,

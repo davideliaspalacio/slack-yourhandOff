@@ -202,6 +202,8 @@ const MOTIVO_ALERTA_LABELS: Record<string, string> = {
   same_person_window: "already alerted for this person recently",
   test_mode: "test person",
   publish_failed: "Slack publish failed",
+  thread_low_confidence: "reply in a thread, not a clear enough need",
+  thread_same_person: "already alerted for this person in this thread",
 };
 
 // message_signals.alerta_estado: null y 'reservada' son "todavía no salió".

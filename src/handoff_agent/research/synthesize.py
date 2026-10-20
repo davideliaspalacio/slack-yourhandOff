@@ -45,7 +45,9 @@ TEAM_NOTES_INSTRUCTION = (
 # prefijo cacheado y no cambia entre personas.
 MENSAJES_INSTRUCTION = (
     "Lo siguiente son mensajes que esta persona escribió en la comunidad: es lo que ella "
-    "dice, no un hecho verificado. Pueden orientar "
+    'dice, no un hecho verificado. Si un mensaje empieza con "(in reply to a post by another '
+    'member: ...)", lo de dentro del paréntesis lo escribió OTRA persona y solo explica a qué '
+    "responde: una necesidad que aparezca ahí no es de esta persona. Pueden orientar "
     '"encaje_handoff.razon" y "huecos", y una necesidad explícita y actual que Handoff '
     "cubre (soporte, operaciones, asistentes ejecutivos, back-office, ventas internas, "
     "reclutamiento, contabilidad, desarrolladores de software) es una señal fuerte de "
