@@ -22,6 +22,7 @@ HERRAMIENTAS_LECTURA = {
     "persona_ver",
     "senales_recientes",
     "seguimientos_pendientes",
+    "sugerencia_dm",
     "canales_listar",
     "canales_disponibles",
     "resumen_costes",
@@ -248,7 +249,20 @@ def _huella():
     }
 
 
-async def test_no_tool_writes_anything(datos):
+async def test_no_tool_writes_anything(datos, restore_config):
+    # Con una conversación con texto y sin sugerencia guardada, y el interruptor
+    # encendido: el caso en que un servidor que generase tendría algo que escribir.
+    db.execute("update config set value = 'true'::jsonb where key = 'dm_texto_activo'")
+    _traza("DAAA", "U1", "otro", 1, datos["ada"]["id"])
+    db.execute(
+        "insert into dm_mensajes (dm_id, ts, de, texto) "
+        "select dm_id, ultimo_ts, 'otro', 'how fast can you staff 2 reps?' from dm_rastro"
+    )
+    _traza("DBBB", "U2", "otro", 1, datos["bob"]["id"])
+    db.execute(
+        "insert into dm_sugerencias (dm_id, ultimo_ts, contexto, sugerencia) "
+        "select dm_id, ultimo_ts, 'c', 's' from dm_rastro where dm_id = 'DBBB'"
+    )
     antes = _huella()
     ada = str(datos["ada"]["id"])
 
@@ -264,6 +278,9 @@ async def test_no_tool_writes_anything(datos):
         ("personas_buscar", {"canal": "C1"}),
         ("canales_listar", {}),
         ("canales_disponibles", {}),
+        ("sugerencia_dm", {"id_o_slack_user_id": ada}),
+        ("sugerencia_dm", {"id_o_slack_user_id": "U2"}),
+        ("sugerencia_dm", {"id_o_slack_user_id": "no-existe"}),
         ("resumen_costes", {"dias": 30}),
         ("estado_sistema", {}),
     ]
@@ -689,3 +706,83 @@ def test_canales_disponibles_reports_the_mode(con_canales, restore_config):
         "on conflict (key) do update set value = excluded.value"
     )
     assert mcp_remoto.canales_disponibles()["modo_todos"] is True
+
+
+# --- sugerencia_dm (0031): solo lee la que ya existe -------------------------------
+
+SECRETO_DM = "send me the signed contract and the bank details"
+
+
+def _con_sugerencia(datos, contexto="She asked about timing; waiting on you.", al_dia=True):
+    _traza("DAAA", "U1", "otro", 2, datos["ada"]["id"])
+    db.execute(
+        "insert into dm_mensajes (dm_id, ts, de, texto) "
+        "select dm_id, ultimo_ts, 'otro', %s from dm_rastro where dm_id = 'DAAA'",
+        (SECRETO_DM,),
+    )
+    db.execute(
+        "insert into dm_sugerencias (dm_id, ultimo_ts, contexto, sugerencia) "
+        "select dm_id, case when %s then ultimo_ts else '1.0' end, %s, %s "
+        "from dm_rastro where dm_id = 'DAAA'",
+        (al_dia, contexto, "Usually 2-3 weeks. " + INYECCION),
+    )
+
+
+def test_sugerencia_dm_returns_the_stored_one_fenced(datos):
+    _con_sugerencia(datos)
+    r = mcp_remoto.sugerencia_dm(str(datos["ada"]["id"]))
+    s = r["sugerencia"]
+    assert "She asked about timing" in s["contexto"]
+    assert "Usually 2-3 weeks." in s["respuesta"]
+    for campo in (s["contexto"], s["respuesta"], r["persona"]["nombre"]):
+        assert campo.startswith(f"<{TAG} ") and campo.rstrip().endswith(f"</{TAG}>")
+        assert campo.count(f"</{TAG}>") == 1
+    assert s["al_dia"] is True
+    # Por slack_user_id también.
+    assert mcp_remoto.sugerencia_dm("U1")["sugerencia"]["respuesta"] == s["respuesta"]
+
+
+def test_sugerencia_dm_says_when_a_newer_message_arrived(datos):
+    _con_sugerencia(datos, al_dia=False)
+    assert mcp_remoto.sugerencia_dm("U1")["sugerencia"]["al_dia"] is False
+
+
+def test_sugerencia_dm_never_returns_the_conversation(datos):
+    _con_sugerencia(datos)
+    r = mcp_remoto.sugerencia_dm("U1")
+    assert SECRETO_DM not in json.dumps(r, default=str)
+
+
+def test_sugerencia_dm_without_a_conversation_or_a_suggestion(datos):
+    assert mcp_remoto.sugerencia_dm("no-existe")["persona"] is None
+    sin_dm = mcp_remoto.sugerencia_dm("U2")
+    assert sin_dm["sugerencia"] is None
+    assert sin_dm["motivo"] == "no direct conversation with this person"
+    _traza("DBBB", "U2", "otro", 2, datos["bob"]["id"])
+    sin = mcp_remoto.sugerencia_dm("U2")
+    assert sin["sugerencia"] is None
+    assert sin["motivo"] == "no suggestion yet for this conversation"
+
+
+def test_sugerencia_dm_never_generates(datos, restore_config, monkeypatch):
+    """Ni con el interruptor encendido, texto guardado y nada en caché: el servidor de
+    lectura no llama al modelo ni escribe. Generar es cosa del aviso de seguimiento."""
+    from handoff_agent import llm
+
+    def prohibido(*a, **k):
+        raise AssertionError("the read server must never call the model")
+
+    monkeypatch.setattr(llm, "complete", prohibido)
+    db.execute("update config set value = 'true'::jsonb where key = 'dm_texto_activo'")
+    _traza("DAAA", "U1", "otro", 2, datos["ada"]["id"])
+    db.execute(
+        "insert into dm_mensajes (dm_id, ts, de, texto) "
+        "select dm_id, ultimo_ts, 'otro', 'hello' from dm_rastro"
+    )
+    r = mcp_remoto.sugerencia_dm("U1")
+    assert r["sugerencia"] is None and r["activo"] is True
+    assert db.fetch_one("select count(*) as n from dm_sugerencias")["n"] == 0
+    # Y el módulo que genera no entra en el servidor de lectura.
+    importados = _importados(Path(mcp_remoto.__file__).read_text())
+    assert not [m for m in importados if "delivery" in m or "sugerencia" in m]
+    assert "llm" not in importados

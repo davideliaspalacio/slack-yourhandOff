@@ -4,9 +4,9 @@ Servidor aparte de `mcp_server.py` (el local, por stdio, del desarrollador). Aqu
 expone `investigar_persona` (gasta dinero) y `buscar_decisor` (consume Unipile); este
 se abre a internet con un token por persona, así que expone dos listas cerradas:
 
-- LECTURA, siete herramientas definidas en este archivo: `personas_buscar`,
-  `persona_ver`, `senales_recientes`, `seguimientos_pendientes`, `canales_listar`,
-  `resumen_costes` y `estado_sistema`.
+- LECTURA, nueve herramientas definidas en este archivo: `personas_buscar`,
+  `persona_ver`, `senales_recientes`, `seguimientos_pendientes`, `sugerencia_dm`,
+  `canales_listar`, `canales_disponibles`, `resumen_costes` y `estado_sistema`.
 - ESCRITURA, seis, definidas en `mcp_escritura.py` y registradas al final de este
   archivo: `persona_cambiar_estado`, `persona_ayudar_research`, `persona_reinvestigar`,
   `ajustar_umbral`, `canal_agregar` y `canal_quitar`. Lo mismo que el panel, y nada más
@@ -14,7 +14,7 @@ se abre a internet con un token por persona, así que expone dos listas cerradas
 
 Garantías, cada una con su test:
 
-- Lista blanca. Las herramientas expuestas son exactamente esas trece; si alguien añade
+- Lista blanca. Las herramientas expuestas son exactamente esas quince; si alguien añade
   otra, `tests/test_mcp_remoto.py` falla hasta que se decida a conciencia, en la lista
   de lectura o en la de escritura.
 - La lectura no escribe. Cada consulta corre en una transacción de solo lectura
@@ -412,8 +412,9 @@ def seguimientos_pendientes(dias: int | None = None, limite: int = 25) -> dict:
     (`seguimiento_horas_para_responder`, `seguimiento_dias_sin_respuesta`).
 
     De cada conversación se sabe con quién es, quién escribió el último mensaje,
-    cuándo y el enlace para abrirla. El contenido de los mensajes directos NO se
-    guarda en ninguna parte, así que esta herramienta no puede decir qué se dijo.
+    cuándo y el enlace para abrirla. Esta herramienta no dice qué se dijo: el texto de
+    los mensajes directos no sale nunca del worker. Lo único que se enseña de una
+    conversación es la respuesta sugerida, con `sugerencia_dm`.
     """
     limite = _acotar(limite, 1, LIMITE_MAXIMO, 25)
     dias = None if dias is None else _acotar(dias, 0, DIAS_MAXIMOS, 1)
@@ -532,6 +533,82 @@ def seguimientos_pendientes(dias: int | None = None, limite: int = 25) -> dict:
     ]
     casos.sort(key=lambda c: -c["dias_esperando"])
     return {"activo": True, "total": len(casos[:limite]), "casos": casos[:limite]}
+
+
+@mcp.tool()
+def sugerencia_dm(id_o_slack_user_id: str) -> dict:
+    """La respuesta sugerida para tu conversación directa de Slack con una persona, y
+    una línea de contexto sobre en qué punto está. Acepta el id de `personas_buscar` o
+    su slack_user_id.
+
+    Solo devuelve la última que el agente ya generó (las genera el aviso de
+    seguimiento cuando alguien espera tu respuesta); esta herramienta nunca genera una
+    nueva. `al_dia` dice si se escribió para el último mensaje de la conversación o si
+    llegó otro después. Nunca devuelve el texto de la conversación. Es una sugerencia
+    para que la mandes tú, si te sirve: el agente no envía nada."""
+    referencia = id_o_slack_user_id.strip()
+    try:
+        por_id = str(uuid.UUID(referencia))
+    except ValueError:
+        por_id = None
+    with _lectura() as cur:
+        if por_id:
+            cur.execute("select * from prospects where id = %s", (por_id,))
+        else:
+            cur.execute("select * from prospects where slack_user_id = %s", (referencia,))
+        p = cur.fetchone()
+        if p is None:
+            return {"persona": None, "motivo": "no hay nadie con ese id"}
+        cur.execute("select value from config where key = 'dm_texto_activo'")
+        interruptor = cur.fetchone()
+        # Por la persona o por su código de Slack, como el panel: el enlace del rastro con
+        # la ficha puede hacerse más tarde que la conversación.
+        cur.execute(
+            """
+            select r.dm_id, r.ultimo_ts as ultimo_de_la_conversacion,
+                   s.ultimo_ts, s.contexto, s.sugerencia, s.created_at
+              from dm_rastro r
+              left join dm_sugerencias s on s.dm_id = r.dm_id
+             where r.prospect_id = %s or r.slack_user_id = %s
+             order by s.created_at desc nulls last
+             limit 1
+            """,
+            (p["id"], p["slack_user_id"]),
+        )
+        fila = cur.fetchone()
+
+    persona = jsonable(
+        {
+            "id": p["id"],
+            "slack_user_id": p["slack_user_id"],
+            "nombre": _f(p["full_name"], "nombre-en-slack"),
+            "estado": p["state"],
+        }
+    )
+    activo = bool(interruptor and interruptor["value"] is True)
+    if fila is None or fila["sugerencia"] is None:
+        return {
+            "persona": persona,
+            "activo": activo,
+            "sugerencia": None,
+            "motivo": "no direct conversation with this person"
+            if fila is None
+            else "no suggestion yet for this conversation",
+        }
+    return {
+        "persona": persona,
+        "activo": activo,
+        # Las dos cadenas las escribió un modelo leyendo lo que escribió un tercero:
+        # delimitadas, como cualquier otro texto ajeno.
+        "sugerencia": jsonable(
+            {
+                "contexto": _f(fila["contexto"], "contexto-de-dm-sugerido"),
+                "respuesta": _f(fila["sugerencia"], "respuesta-de-dm-sugerida"),
+                "creada": fila["created_at"],
+                "al_dia": fila["ultimo_ts"] == fila["ultimo_de_la_conversacion"],
+            }
+        ),
+    }
 
 
 @mcp.tool()

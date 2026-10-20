@@ -9,6 +9,7 @@ import {
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
 import { SinAcceso } from "../../SinAcceso";
 import { AyudarResearchForm } from "./AyudarResearchForm";
+import { CopiarSugerencia } from "./CopiarSugerencia";
 
 type Senal = { hecho?: string; fuente?: string };
 type Lugar = { ciudad?: string; region?: string; pais?: string };
@@ -99,6 +100,17 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
   ]);
   // Nombres de canal (los pone el worker, con una llamada de solo lectura a Slack): son
   // pocos y se traen todos de una vez.
+  // La respuesta sugerida para esa conversación (dm_sugerencias, 0031) y si leer el
+  // texto de los DMs está encendido. El panel nunca ve el texto de la conversación
+  // (dm_mensajes no tiene permisos para él): solo la sugerencia y su línea de contexto.
+  const [{ data: sugerida }, { data: textoActivo }] = await Promise.all([
+    conversacion.data
+      ? supabase.from("dm_sugerencias").select("ultimo_ts, contexto, sugerencia, created_at")
+          .eq("dm_id", conversacion.data.dm_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase.from("config").select("value").eq("key", "dm_texto_activo").maybeSingle(),
+  ]);
+  const leeTexto = textoActivo?.value === true;
   const { data: nombresCanal } = await supabase.from("canales").select("channel_id, nombre");
   const nombrePorCanal = new Map(
     (nombresCanal ?? []).map((c) => [c.channel_id as string, c.nombre as string | null]),
@@ -137,6 +149,9 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
         const cuando = fechaDesdeTs(dm.ultimo_ts as string | null);
         const enlace = enlaceDm(dm.team_id as string | null, dm.dm_id as string | null);
         const esperando = dm.ultimo_de === "otro";
+        // Escrita para un mensaje anterior: llegó otro después y la siguiente alerta
+        // traerá una nueva. Se enseña igual, avisando.
+        const atrasada = sugerida && sugerida.ultimo_ts !== dm.ultimo_ts;
         return (
           <div className="card conversation">
             <h2 style={{ marginTop: 0 }}>Conversation</h2>
@@ -145,8 +160,24 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
               {cuando && <> · {hace(cuando)} <span className="muted">({fecha(cuando)})</span></>}
               {esperando && <> · <span className="pill awaiting">awaiting your reply</span></>}
             </p>
+            {sugerida && (
+              <>
+                <h3 style={{ marginBottom: 4 }}>Suggested reply</h3>
+                {/* Escrito por un modelo a partir de un tercero: siempre como texto. */}
+                <p style={{ margin: "4px 0" }}><span className="muted">Where it stands:</span>{" "}
+                  {sugerida.contexto}</p>
+                <CopiarSugerencia texto={sugerida.sugerencia as string} />
+                <p className="muted">
+                  Written by the agent {hace(sugerida.created_at as string)} — review it before
+                  sending. Nothing is ever sent for you.
+                  {atrasada && " A newer message arrived after it was written; the next alert will bring a fresh one."}
+                </p>
+              </>
+            )}
             <p className="muted">
-              Only the timing is tracked — what was said in a direct message is never stored.
+              {leeTexto
+                ? "The agent reads this conversation only to suggest a reply; the messages themselves are never shown here."
+                : "Only the timing is tracked — what was said in a direct message is not read."}
             </p>
             {enlace && (
               <p><a href={enlace} target="_blank" rel="noreferrer">Open the conversation in Slack ↗</a></p>
