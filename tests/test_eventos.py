@@ -276,3 +276,39 @@ def test_a_recent_message_still_gets_through(conn, lector, slack, restore_config
     con_canal_de_intros(conn)
     mensaje("Hi, just joined", canal=CANAL, ts=f"{time.time() - 600:.6f}")
     assert eventos.publicar_pendientes(lector) == 1
+
+
+# ---------------------------------------------------------------------------------
+# Hilos (0032): una respuesta en el canal de presentaciones no es una presentación.
+# ---------------------------------------------------------------------------------
+
+
+def respuesta(texto, thread_ts, canal=CANAL, user="UOTRO"):
+    ts = f"{time.time():.6f}"
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text, thread_ts) "
+        "values (%s, %s, %s, %s, %s)",
+        (canal, ts, user, texto, thread_ts),
+    )
+    return ts
+
+
+def test_a_welcome_reply_is_not_an_introduction(conn, lector, slack, restore_config):
+    """Lo que pasó la primera noche con los hilos: los "Welcome Dajana!" de las
+    respuestas salieron como presentaciones nuevas."""
+    con_canal_de_intros(conn)
+    principal = mensaje("Hi all, I'm Dajana, I run a clinic", canal=CANAL, user="UDAJANA")
+    respuesta("Welcome Dajana! Would love to connect", principal)
+    respuesta("Sounds like an incredible business! Welcome to FC", principal)
+
+    assert eventos.publicar_pendientes(lector) == 1
+    (unica,) = filas(eventos.PRESENTACION)
+    assert unica["ts"] == principal
+
+
+def test_a_mention_inside_a_thread_still_counts(conn, lector, slack):
+    """Etiquetar a Anthony dentro de un hilo sí es una mención de verdad."""
+    principal = mensaje("Anyone know a good closer agency?", user="UOTRO")
+    respuesta(f"<@{DUENO}> you might know someone", principal, canal=OTRO_CANAL, user="UMIKE")
+    assert eventos.publicar_pendientes(lector) == 1
+    assert filas(eventos.MENCION)

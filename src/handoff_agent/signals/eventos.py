@@ -123,6 +123,12 @@ def detectar(owner_id: str) -> int:
                and sm.user_id is not null
                and sm.user_id <> %(dueno)s
                and upper(sm.channel_id) = %(canal)s
+               -- Solo mensajes principales. Desde que se leen los hilos (0032), en este
+               -- canal también hay respuestas, y una respuesta a una presentación es un
+               -- "Welcome Dajana!", no alguien presentándose: contarlas así publicó 20
+               -- avisos falsos la primera noche. Las menciones sí miran las respuestas:
+               -- etiquetar a Anthony dentro de un hilo es una mención de verdad.
+               and (sm.thread_ts is null or sm.thread_ts = sm.ts)
                and sm.ts::numeric >= %(desde)s
                and btrim(coalesce(sm.text, '')) <> ''
                and (p.state is null or p.state <> 'descartado')
