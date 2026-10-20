@@ -650,17 +650,42 @@ def test_the_alert_carries_the_context_and_the_suggestion_in_a_code_block(conn, 
 
 def test_every_dm_case_gets_its_own_suggestion(conn, slack, sugeridas):
     sugeridas.por_dm["DAAA"] = Sugerencia(contexto="A context.", texto="Reply for Uno.")
-    sugeridas.por_dm["DCCC"] = Sugerencia(contexto="C context.", texto="Nudge for Tres.")
+    no_leido("DAAA", user="U1", prospect_id=persona("U1", "Uno"))
+    traza("DBBB", "U2", de="otro", horas=30, prospect_id=persona("U2", "Dos"))
+    assert seguimiento.publicar_avisos() == 2
+    assert sorted(sugeridas.llamadas) == ["DAAA", "DBBB"]
+    texto = slack[0]["json"]
+    assert "```Reply for Uno.```" in texto
+    # Dos no tiene sugerencia: su línea sale igual, sin bloque de código.
+    assert texto.count("```") == 2
+    assert "*Dos*" in texto
+
+
+def test_only_what_waits_on_him_interrupts(conn, slack, sugeridas):
+    """Lo que no depende de él no corta su día: se queda en el resumen.
+
+    Con las cuatro clases interrumpiendo por igual salieron 18 mensajes en 13 horas, y
+    15 de las 20 conversaciones eran "escribió y no le contestan". Recordárselo cada
+    pocas horas no le deja hacer nada distinto."""
     no_leido("DAAA", user="U1", prospect_id=persona("U1", "Uno"))
     traza("DBBB", "U2", de="otro", horas=30, prospect_id=persona("U2", "Dos"))
     traza("DCCC", "U3", de="dueno", horas=24 * 4, prospect_id=persona("U3", "Tres"))
-    assert seguimiento.publicar_avisos() == 3
-    assert sorted(sugeridas.llamadas) == ["DAAA", "DBBB", "DCCC"]
+    persona("U4", "Cuatro", estado="contactado")
+    db.execute(
+        "update prospects set updated_at = now() - interval '6 days' where full_name = 'Cuatro'"
+    )
+
+    assert seguimiento.publicar_avisos() == 2
     texto = slack[0]["json"]
-    assert "```Reply for Uno.```" in texto and "```Nudge for Tres.```" in texto
-    # Dos no tiene sugerencia: su línea sale igual, sin bloque de código.
-    assert texto.count("```") == 4
-    assert "*Dos*" in texto
+    assert "*Uno*" in texto and "*Dos*" in texto
+    assert "*Tres*" not in texto and "*Cuatro*" not in texto
+
+    # Pero el resumen del día sí los cuenta: es la foto completa. Uno no sale porque su
+    # mensaje es reciente y todavía no llega al plazo de "le contestaron"; lo no leído
+    # nunca entra en el resumen, solo interrumpe.
+    assert seguimiento.publicar_resumen() == 3
+    resumen = slack[1]["json"]
+    assert "*Tres*" in resumen and "*Cuatro*" in resumen and "*Dos*" in resumen
 
 
 def test_without_suggestions_the_alert_is_exactly_as_before(conn, slack, sugeridas):

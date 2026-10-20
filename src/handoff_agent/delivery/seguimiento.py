@@ -384,23 +384,26 @@ def _casos_para_avisar(ahora: datetime) -> list[Caso]:
     desde el último aviso (`avisado_at`, 0029). Un mensaje nuevo de cualquiera de los
     dos cambia `ultimo_ts` y la conversación entra otra vez desde cero.
 
-    Solo los casos que nacen de un DM. "Marcado contactado y sin conversación" se
-    queda en el resumen diario: lleva tres días esperando, no es algo que acabe de
-    pasar, y avisar de eso cada cuatro horas sería ruido sin nada nuevo que contar.
+    Solo interrumpe lo que espera algo DE ÉL: un mensaje sin abrir y "le contestaron y
+    no ha respondido". "Escribió y no le contestan" y "marcado contactado sin
+    conversación" se quedan en el resumen diario.
+
+    La diferencia no es de volumen sino de naturaleza, y se aprendió mandando: con las
+    cuatro clases interrumpiendo por igual salieron 18 mensajes en 13 horas, uno cada 45
+    minutos, y 15 de las 20 conversaciones eran de las que no dependen de él. Recordarle
+    cada pocas horas que alguien no le ha contestado no le deja hacer nada distinto: él
+    ya hizo su parte. Lo que sí le puede costar un lead es la persona que está esperando
+    su respuesta, y eso es lo único que corta su día.
 
     Lo no leído (0031) entra primero y una conversación sale una sola vez por pasada:
     con `seguimiento_horas_para_responder` por debajo de 24, un mismo mensaje sin abrir
     podría ser a la vez "no leído" y "contestó", y no son dos avisos.
     """
     horas_responder = db_config.value("seguimiento_horas_para_responder", 24)
-    dias_sin = db_config.value("seguimiento_dias_sin_respuesta", 3)
     recordar = db_config.value("seguimiento_recordar_horas", RECORDAR_HORAS)
     casos: list[Caso] = []
-    for tipo, limite_ts in (
-        (RESPONDER, ahora.timestamp() - horas_responder * 3600),
-        (SIN_RESPUESTA, ahora.timestamp() - dias_sin * 86400),
-    ):
-        de = "otro" if tipo == RESPONDER else "dueno"
+    for tipo, limite_ts in ((RESPONDER, ahora.timestamp() - horas_responder * 3600),):
+        de = "otro"
         filas = db.fetch_all(
             """
             select r.dm_id, r.team_id, r.slack_user_id, r.ultimo_ts, p.id::text as prospect_id,

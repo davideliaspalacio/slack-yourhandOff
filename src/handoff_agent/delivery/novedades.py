@@ -71,6 +71,25 @@ NOVEDADES: tuple[Novedad, ...] = (
             ("It's off for now. Turn it on in Settings → Watched channels → Read thread replies."),
         ),
     ),
+    Novedad(
+        id="2026-10-20-seguimiento-mas-tranquilo",
+        titulo="Fewer follow-up messages",
+        lineas=(
+            (
+                "Follow-up alerts were too noisy: 18 messages in 13 hours. That is fixed, "
+                "and they are much quieter now."
+            ),
+            (
+                "Only conversations waiting on YOU interrupt: an unread message from a "
+                "lead, or someone who replied and is waiting for your answer."
+            ),
+            (
+                '"You wrote and nobody answered" no longer sends alerts. It stays in the '
+                "once-a-day summary, where it belongs."
+            ),
+            "Each conversation is brought up once a day at most, instead of every 4 hours.",
+        ),
+    ),
 )
 
 
