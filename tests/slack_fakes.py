@@ -29,6 +29,11 @@ class FakeReader:
         # le preguntó (0031).
         self.estados: dict[str, dict] = {}
         self.estado_calls: list[str] = []
+        # Las respuestas de cada hilo, por (canal, ts del principal), y el registro de
+        # cada conversations.replies (0032): el canal, el hilo y el `oldest` pedido.
+        self.threads: dict[tuple[str, str], list[dict]] = {}
+        self.replies_calls: list[tuple[str, str, str | None]] = []
+        self.unavailable_threads: set[str] = set()
 
     # --- la misma superficie que FoundersClubReader ---
     def identity(self) -> tuple[str, str]:
@@ -106,11 +111,40 @@ class FakeReader:
             raise SlackUnavailable(f"conversations_info: {dm_id}: internal_error")
         return dict(self.estados.get(dm_id, {"sin_leer": 0, "leido_hasta": None}))
 
+    def respuestas(self, channel: str, thread_ts: str, oldest: str | None = None) -> list[dict]:
+        """Como el Slack real: primero el principal (siempre), luego las respuestas
+        posteriores a `oldest`, que es exclusivo."""
+        self.replies_calls.append((channel, thread_ts, oldest))
+        if self.auth_error:
+            raise self.auth_error
+        if thread_ts in self.unavailable_threads:
+            raise SlackUnavailable(f"conversations_replies: {thread_ts}: internal_error")
+        principal = [m for m in self.messages.get(channel, []) if m["ts"] == thread_ts]
+        replies = [
+            m
+            for m in self.threads.get((channel, thread_ts), [])
+            if oldest is None or float(m["ts"]) > float(oldest)
+        ]
+        return principal + sorted(replies, key=lambda m: float(m["ts"]))
+
     # --- ayudas para los tests ---
     def post(self, channel: str, user: str, text: str, ts: str, **extra) -> None:
         self.messages.setdefault(channel, []).append(
             {"user": user, "text": text, "ts": ts, **extra}
         )
+
+    def reply(self, channel: str, parent_ts: str, user: str, text: str, ts: str, **extra) -> None:
+        """Una respuesta en el hilo de `parent_ts`. Actualiza el principal como lo hace
+        Slack en conversations.history: `thread_ts`, `reply_count` y `latest_reply`."""
+        self.threads.setdefault((channel, parent_ts), []).append(
+            {"user": user, "text": text, "ts": ts, "thread_ts": parent_ts, **extra}
+        )
+        for message in self.messages.get(channel, []):
+            if message["ts"] == parent_ts:
+                message["thread_ts"] = parent_ts
+                message["reply_count"] = message.get("reply_count", 0) + 1
+                if float(ts) > float(message.get("latest_reply") or 0):
+                    message["latest_reply"] = ts
 
     def set_members(self, channel: str, *user_ids: str) -> None:
         self.channel_members[channel] = set(user_ids)

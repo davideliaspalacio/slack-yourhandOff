@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarExigirEvidencia,
-  guardarDmTextoActivo, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
+  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
@@ -52,6 +52,13 @@ const EDITABLES_EVENTOS: Record<string, string> = {
   presentaciones_por_dia: "Maximum \"new introduction\" alerts per day",
 };
 
+// Respuestas de los hilos (0032_hilos.sql): los numéricos que la política
+// panel_ajusta_hilos deja tocar. leer_hilos va aparte porque es un booleano.
+const EDITABLES_HILOS: Record<string, string> = {
+  hilos_dias: "Days back the agent looks for new replies in older threads",
+  hilos_por_vuelta: "Maximum threads read in one poll",
+};
+
 const EDITABLES_RADAR: Record<string, string> = {
   radar_auto_min: "Minimum score for a role to be pursued automatically (0–10)",
   radar_horas_entre_escaneos: "Hours between scans of the same account",
@@ -97,6 +104,7 @@ export default async function Ajustes() {
   const { data } = await supabase.from("config").select("key, value, updated_at")
     .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR),
       ...Object.keys(EDITABLES_SEGUIMIENTO), ...Object.keys(EDITABLES_EVENTOS),
+      ...Object.keys(EDITABLES_HILOS), "leer_hilos",
       "canal_presentaciones", "seguimiento_activo", "dm_texto_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
@@ -133,6 +141,8 @@ export default async function Ajustes() {
   // Apagado salvo que la base diga true: el mismo valor por defecto que el worker
   // (canales.modo_todos()). Encendido, los canales salen del descubrimiento.
   const canalesTodos = valores.get("slack_canales_todos") === true;
+  // Apagado salvo que la base diga true, igual que en el worker (ingest/watcher.py).
+  const leerHilos = valores.get("leer_hilos") === true;
   const canalIntros = String(valores.get("canal_presentaciones") ?? "");
   const descubiertos = (nombresData ?? []).filter((c) => c.es_miembro === true);
   const masActivos = [...descubiertos]
@@ -235,6 +245,20 @@ export default async function Ajustes() {
                 </form>
               </td>
             </tr>
+            <tr>
+              <td>Read thread replies. The agent reads replies inside threads, with the
+                whole thread as context, so it can find people who say they need the same
+                thing. It only reads, never writes.
+                <div className="muted" style={{ fontSize: 12 }}>leer_hilos</div></td>
+              <td>
+                <form action={guardarLeerHilos} className="inline">
+                  <input type="hidden" name="value" value={leerHilos ? "false" : "true"} />
+                  <span>{leerHilos ? "On" : "Off"}</span>
+                  <button type="submit">{leerHilos ? "Turn off" : "Turn on"}</button>
+                </form>
+              </td>
+            </tr>
+            {Object.entries(EDITABLES_HILOS).map(fila)}
           </tbody>
         </table>
         {canalesTodos ? (

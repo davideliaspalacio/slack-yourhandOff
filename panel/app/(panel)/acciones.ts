@@ -395,6 +395,19 @@ export async function guardarCanalesTodos(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// leer_hilos también es un booleano: leer las respuestas de los hilos de los canales
+// vigilados. La política panel_ajusta_hilos (0032) es la que permite tocar esta clave, y
+// solo con true o false. Es de lectura (conversations.replies): encenderlo no escribe nada
+// en el Founders Club. hilos_dias y hilos_por_vuelta pasan por guardarUmbral.
+export async function guardarLeerHilos(formData: FormData) {
+  const leer = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: leer, updated_at: new Date().toISOString() })
+    .eq("key", "leer_hilos");
+  revalidatePath("/ajustes");
+}
+
 // canal_presentaciones es una cadena (el id del canal) y no un número, así que no pasa
 // por guardarUmbral. La política panel_ajusta_eventos (0030) es la que permite tocarla,
 // y solo con una cadena. Vacío = no se avisa de presentaciones.

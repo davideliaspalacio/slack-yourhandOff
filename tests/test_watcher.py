@@ -225,3 +225,46 @@ def test_a_dead_token_still_stops_the_read(conn, reader):
     with pytest.raises(SlackAuthFailed):
         tick(reader)
     assert db.fetch_one("select count(*) as n from canales")["n"] == 0
+
+
+# --- el marcador de lectura y los hilos (migración 0032) ---
+
+
+def test_a_stored_reply_does_not_push_the_read_past_unread_posts(conn, reader):
+    """Regresión: el marcador de lectura es el último mensaje PRINCIPAL guardado. Una
+    respuesta reciente a un hilo (thread_ts distinto de su ts) no puede adelantarlo: la
+    lectura siguiente empezaría después de mensajes principales que nadie ha leído."""
+    reader.post("C1", "U1", "principal", ts(600))
+    tick(reader)
+    # Una respuesta guardada de un hilo, más nueva que lo que falta por leer.
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text, thread_ts, status) "
+        "values ('C1', %s, 'U9', '+1', %s, 'nuevo')",
+        (ts(60), ts(600)),
+    )
+    reader.post("C1", "U2", "sin leer todavía", ts(300))
+    assert tick(reader).messages_new == 1
+    assert reader.history_calls[-1][1] == ts(600)
+    assert db.fetch_one("select 1 as x from slack_messages where ts = %s", (ts(300),))
+
+
+def test_a_stored_parent_still_counts_for_the_read_watermark(conn, reader):
+    """El principal de un hilo se guarda con thread_ts = ts, y sí cuenta como leído."""
+    reader.post(
+        "C1", "U1", "con hilo", ts(600), thread_ts=ts(600), reply_count=1, latest_reply=ts(500)
+    )
+    tick(reader)
+    tick(reader)
+    assert reader.history_calls[-1][1] == ts(600)
+
+
+def test_with_threads_off_nothing_reads_replies_or_sweeps(conn, reader):
+    """`leer_hilos` nace apagado: ni conversations.replies ni el barrido de una semana."""
+    reader.post("C1", "U1", "who needs X?", ts(600))
+    reader.reply("C1", ts(600), "U2", "+1, we need this too", ts(300))
+    result = tick(reader)
+    assert reader.replies_calls == []
+    assert len(reader.history_calls) == 1  # solo la lectura normal
+    assert (result.threads_read, result.replies_new) == (0, 0)
+    assert db.fetch_one("select count(*) as n from slack_messages")["n"] == 1
+    assert db.fetch_one("select count(*) as n from hilos")["n"] == 0

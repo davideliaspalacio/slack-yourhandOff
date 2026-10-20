@@ -248,6 +248,30 @@ class FoundersClubReader:
             if not page.get("has_more") or not cursor:
                 return messages
 
+    def respuestas(self, channel: str, thread_ts: str, oldest: str | None = None) -> list[dict]:
+        """Los mensajes de un hilo: primero el principal, luego las respuestas (0032).
+
+        Es `conversations.replies`, de lectura como el resto de la clase: no publica, no
+        reacciona y no marca nada como leído. `oldest` es el marcador del hilo (la última
+        respuesta ya traída), para no volver a bajar lo que ya está guardado; Slack lo
+        trata como exclusivo y devuelve el principal igualmente, así que quien llama
+        descarta lo que no sea más nuevo."""
+        messages: list[dict] = []
+        cursor = None
+        while True:
+            page = self._call(
+                "conversations_replies",
+                channel=channel,
+                ts=thread_ts,
+                oldest=oldest,
+                limit=PAGE_SIZE,
+                cursor=cursor,
+            )
+            messages.extend(page.get("messages") or [])
+            cursor = (page.get("response_metadata") or {}).get("next_cursor")
+            if not page.get("has_more") or not cursor:
+                return messages
+
     def members(self, channel: str) -> set[str]:
         found: set[str] = set()
         cursor = None

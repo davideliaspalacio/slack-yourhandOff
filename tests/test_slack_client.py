@@ -121,6 +121,8 @@ def test_the_reader_only_exposes_reads():
         # Lo no leído de un DM (0031): conversations.info, la misma llamada que
         # channel_name. Preguntar no marca nada como leído.
         "dm_estado",
+        # Las respuestas de un hilo (0032): conversations.replies, solo lista.
+        "respuestas",
     }
 
 

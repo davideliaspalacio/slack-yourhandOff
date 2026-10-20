@@ -331,8 +331,11 @@ def run_loop(
                     estado_lector.registrar_ok(tick.user_id, tick.team, tick.channels_read)
                     resolved = resolve_pending()
                     logger.info(
-                        "slack: %d mensajes nuevos, %d miembros nuevos; %d encolados",
+                        "slack: %d mensajes nuevos, %d respuestas nuevas en %d hilos, "
+                        "%d miembros nuevos; %d encolados",
                         tick.messages_new,
+                        tick.replies_new,
+                        tick.threads_read,
                         tick.members_new,
                         resolved.enqueued,
                     )
