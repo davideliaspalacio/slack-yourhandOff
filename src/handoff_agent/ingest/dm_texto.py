@@ -98,23 +98,36 @@ def _purgar(limite: float) -> int:
     """Borra lo que ya no se puede guardar: lo viejo, y lo de conversaciones que
     han dejado de ser de un lead (descartado, sin tarjeta o desenlazado).
 
+    Las sugerencias corren la misma suerte que el texto del que salieron. Sin esto,
+    un lead descartado seguía enseñando su sugerencia en el panel y en Claude, y una
+    sugerencia sobrevivía a la retención del texto que la produjo: la línea de
+    contexto resume ese texto, así que caduca con él.
+
     `ts` es texto (así lo da Slack); se compara como número, igual que el
     rastro con `ultimo_ts`."""
-    return db.execute(
-        """
-        delete from dm_mensajes m
-        where m.ts::numeric < %s
-           or not exists (
-               select 1
-               from dm_rastro r
-               join prospects p on p.id = r.prospect_id
-               where r.dm_id = m.dm_id
-                 and p.state <> 'descartado'
-                 and not p.sin_tarjeta
-           )
-        """,
-        (limite,),
-    )
+    no_es_lead = """
+        not exists (
+            select 1
+            from dm_rastro r
+            join prospects p on p.id = r.prospect_id
+            where r.dm_id = {tabla}.dm_id
+              and p.state <> 'descartado'
+              and not p.sin_tarjeta
+        )
+    """
+    with db.transaction() as cur:
+        cur.execute(
+            f"delete from dm_mensajes m where m.ts::numeric < %s or {no_es_lead.format(tabla='m')}",
+            (limite,),
+        )
+        borrados = cur.rowcount
+        cur.execute(
+            "delete from dm_sugerencias s where s.ultimo_ts::numeric < %s or "
+            f"{no_es_lead.format(tabla='s')}",
+            (limite,),
+        )
+        borrados += cur.rowcount
+    return borrados
 
 
 def _candidatas(limite: float) -> list[dict]:

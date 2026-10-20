@@ -166,6 +166,48 @@ def test_someone_discarded_after_the_fact_loses_their_stored_text(encendido, rea
     assert reader.history_calls == []
 
 
+def sugerencia_guardada(dm_id: str, ultimo_ts: str) -> None:
+    db.execute(
+        "insert into dm_sugerencias (dm_id, ultimo_ts, contexto, sugerencia) "
+        "values (%s, %s, 'She asked about support reps.', 'Happy to help, how many?')",
+        (dm_id, ultimo_ts),
+    )
+
+
+def sugerencias() -> list[str]:
+    return [f["dm_id"] for f in db.fetch_all("select dm_id from dm_sugerencias")]
+
+
+def test_someone_discarded_after_the_fact_loses_their_suggestion_too(encendido, reader):
+    """La sugerencia corre la suerte del texto del que salió: un lead descartado no
+    puede seguir enseñándola en el panel ni en Claude."""
+    lead("DAAA", "UANA")
+    guardar("DAAA", ts(1), "hola")
+    sugerencia_guardada("DAAA", ts(1))
+    db.execute("update prospects set state = 'descartado' where slack_user_id = 'UANA'")
+
+    dm_texto.pasada(reader)
+
+    assert sugerencias() == []
+
+
+def test_a_suggestion_older_than_the_retention_goes_with_its_text(encendido, reader):
+    """La línea de contexto resume el texto: cuando el texto caduca, ella también."""
+    lead("DAAA", "UANA")
+    sugerencia_guardada("DAAA", ts(24 * 30))
+
+    dm_texto.pasada(reader)
+
+    assert sugerencias() == []
+
+
+def test_a_live_leads_recent_suggestion_stays(encendido, reader):
+    lead("DAAA", "UANA")
+    sugerencia_guardada("DAAA", ts(1))
+    dm_texto.pasada(reader)
+    assert sugerencias() == ["DAAA"]
+
+
 def test_the_pass_is_capped(encendido, reader, monkeypatch):
     monkeypatch.setattr(dm_texto, "LIMITE_POR_PASADA", 2)
     for i, horas in enumerate([5.0, 1.0, 3.0]):
