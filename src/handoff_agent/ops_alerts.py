@@ -18,6 +18,17 @@ from .config import load_settings
 logger = logging.getLogger(__name__)
 WEBHOOK_TIMEOUT_SECONDS = 10
 
+# Lo que se lee en el Slack de Handoff. Todo lo que el agente publica va en inglés; los
+# tipos internos (`kind`) siguen en español porque son identificadores del ledger. Un
+# tipo sin título sale con su identificador, que es mejor que no avisar.
+TITLES = {
+    "slack_auth": "The Founders Club session expired — paste a new token in Settings",
+    "parada_del_sistema": "The agent paused itself (kill switch or monthly budget)",
+    "ciclo_fallido": "A worker cycle failed and will be retried",
+    "tareas_recuperadas": "Research jobs left hanging were put back in the queue",
+    "unipile_pausado": "LinkedIn lookups are paused — turn them back on in Settings",
+}
+
 
 def alert(kind: str, message: str) -> None:
     logger.critical("ALERTA %s: %s", kind, message)
@@ -36,7 +47,7 @@ def alert(kind: str, message: str) -> None:
     try:
         httpx.post(
             url,
-            json={"text": f":rotating_light: *{kind}*: {message}"},
+            json={"text": f":rotating_light: *{TITLES.get(kind, kind)}*\nDetails: {message}"},
             timeout=WEBHOOK_TIMEOUT_SECONDS,
         ).raise_for_status()
     except httpx.HTTPStatusError as exc:

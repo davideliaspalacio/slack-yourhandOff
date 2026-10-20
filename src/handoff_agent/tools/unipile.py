@@ -180,7 +180,7 @@ def _frenar(motivo: str) -> None:
     if cambiado:
         ops_alerts.alert(
             "unipile_pausado",
-            f"{motivo}. Nada toca LinkedIn hasta reactivar unipile_pausado (Settings del panel).",
+            f"{motivo}. Nothing touches LinkedIn until unipile_pausado is turned off in Settings.",
         )
 
 

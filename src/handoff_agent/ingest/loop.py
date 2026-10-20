@@ -48,7 +48,7 @@ def _reclaim_stale() -> None:
         # pagado el research dos veces. Tiene que poder verse después.
         ops_alerts.alert(
             "tareas_recuperadas",
-            f"{reclaimed} tarea(s) abandonada(s) devueltas a la cola",
+            f"{reclaimed} research job(s) put back in the queue",
         )
 
 

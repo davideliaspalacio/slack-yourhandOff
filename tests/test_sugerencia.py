@@ -426,7 +426,8 @@ def test_the_system_prompt_states_the_rules():
     p = sugerencia.SYSTEM_PROMPT
     for regla in (
         "Never invent facts",
-        "language the conversation uses",
+        # Todo lo que sale del agente va en inglés, también lo que Anthony copia y manda.
+        "Always write in English",
         "at most one",
         "no pitch",
         "Never include links",

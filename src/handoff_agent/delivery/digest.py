@@ -142,15 +142,15 @@ def _line(prefix: str, row: dict) -> str:
 
 def _format(day: date, data: DigestData) -> tuple[str, str]:
     parts = [f"<h2>Founders Club — {day.isoformat()}</h2>"]
-    parts.append(f"<p>Señales de banda baja: {len(data.low)}</p>")
+    parts.append(f"<p>Low-band signals: {len(data.low)}</p>")
     if data.low:
-        parts.append("<ul>" + "".join(_line("Señal baja", r) for r in data.low) + "</ul>")
-    parts.append(f"<p>Miembros nuevos investigados: {data.new_members_count}</p>")
+        parts.append("<ul>" + "".join(_line("Low signal", r) for r in data.low) + "</ul>")
+    parts.append(f"<p>New members researched: {data.new_members_count}</p>")
     if data.new_member_lines:
-        lines = "".join(_line("Miembro nuevo", r) for r in data.new_member_lines)
+        lines = "".join(_line("New member", r) for r in data.new_member_lines)
         parts.append(f"<ul>{lines}</ul>")
-    parts.append(f"<p>Gasto del día: ${data.spend:.4f}</p>")
-    subject = f"Founders Club — {len(data.low)} señales bajas, ${data.spend:.2f}"
+    parts.append(f"<p>Spend today: ${data.spend:.4f}</p>")
+    subject = f"Founders Club — {len(data.low)} low signals, ${data.spend:.2f}"
     return subject, "".join(parts)
 
 

@@ -239,7 +239,7 @@ def test_a_top_score_without_evidence_gets_no_card_and_no_sms_but_reaches_the_di
     assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
     body = digest_today()
     assert "Ada Ruiz" in body
-    assert "Señales de banda baja: 1" in body
+    assert "Low-band signals: 1" in body
 
 
 def test_the_real_case_a_guessed_fit_2_no_longer_publishes_a_card(restore_config, monkeypatch):

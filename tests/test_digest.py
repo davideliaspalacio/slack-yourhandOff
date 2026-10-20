@@ -54,7 +54,7 @@ def test_the_digest_lists_low_band_people(conn):
     _set_created_at(person["id"], IN_WINDOW)
     _, body = digest.build(TODAY)
     assert "Ada Ruiz" in body
-    assert "señal baja" in body.lower()
+    assert "low signal" in body.lower()
 
 
 def test_the_digest_lists_new_members_researched(conn):
@@ -65,8 +65,8 @@ def test_the_digest_lists_new_members_researched(conn):
         "values ('U1', 'miembro_nuevo', 'hecho')"
     )
     _, body = digest.build(TODAY)
-    assert "miembro nuevo" in body.lower()
-    assert "Miembros nuevos investigados: 1" in body
+    assert "new member" in body.lower()
+    assert "New members researched: 1" in body
 
 
 def test_the_digest_shows_the_spend_of_the_day(conn):
@@ -93,7 +93,7 @@ def test_medium_band_is_not_a_low_signal_either(conn):
     _set_created_at(person["id"], IN_WINDOW)
     _, body = digest.build(TODAY)
     assert "Ada Ruiz" not in body
-    assert "Señales de banda baja: 0" in body
+    assert "Low-band signals: 0" in body
 
 
 def test_a_discarded_person_never_appears(conn):
@@ -101,7 +101,7 @@ def test_a_discarded_person_never_appears(conn):
     _set_created_at(person["id"], IN_WINDOW)
     _, body = digest.build(TODAY)
     assert "Ada Ruiz" not in body
-    assert "Señales de banda baja: 0" in body
+    assert "Low-band signals: 0" in body
 
 
 def test_a_contacted_person_never_appears_either(conn):
@@ -109,7 +109,7 @@ def test_a_contacted_person_never_appears_either(conn):
     _set_created_at(person["id"], IN_WINDOW)
     _, body = digest.build(TODAY)
     assert "Ada Ruiz" not in body
-    assert "Señales de banda baja: 0" in body
+    assert "Low-band signals: 0" in body
 
 
 def test_a_new_member_in_high_band_is_counted_but_not_listed(conn):
@@ -122,7 +122,7 @@ def test_a_new_member_in_high_band_is_counted_but_not_listed(conn):
         "values ('U1', 'miembro_nuevo', 'hecho')"
     )
     _, body = digest.build(TODAY)
-    assert "Miembros nuevos investigados: 1" in body
+    assert "New members researched: 1" in body
     assert "Ada Ruiz" not in body
 
 
@@ -447,7 +447,7 @@ def test_a_score_without_evidence_is_listed_as_a_low_signal(conn, score):
     _with_fit(score, "ninguna")
     _, body = digest.build(TODAY)
     assert "Ada Ruiz" in body
-    assert "Señales de banda baja: 1" in body
+    assert "Low-band signals: 1" in body
 
 
 @pytest.mark.parametrize("evidencia", ["vacantes", "necesidad_declarada", "equipo_relevante"])
@@ -455,4 +455,4 @@ def test_a_score_with_evidence_stays_out_of_the_digest_like_before(conn, evidenc
     _with_fit(3, evidencia)
     _, body = digest.build(TODAY)
     assert "Ada Ruiz" not in body
-    assert "Señales de banda baja: 0" in body
+    assert "Low-band signals: 0" in body
