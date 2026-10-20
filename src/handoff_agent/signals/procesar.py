@@ -14,6 +14,13 @@ Quedan fuera los mensajes del dueño de la credencial y de bots (el watcher ya
 los marca `ignorado`), los de personas en estado `descartado` y los sin texto.
 Las personas contactadas sí entran: una necesidad nueva de alguien ya
 contactado es justo el momento de volver.
+
+Las respuestas de un hilo (migración 0032: `thread_ts` no nulo y distinto de
+`ts`) pasan por el mismo camino, pero el detector recibe además lo anterior del
+hilo: el mensaje principal y las respuestas previas, sin los `ignorado`. Las
+`archivado` de un hilo son contexto viejo y nunca se clasifican, aunque cayeran
+dentro de la edad máxima. La fila de la señal guarda su `thread_ts` para que
+`alertas.py` agrupe en un solo aviso todo lo que sale de un mismo hilo.
 """
 
 from __future__ import annotations
@@ -40,10 +47,13 @@ def _pendientes(limit: int) -> list[dict]:
     desde = (datetime.now(UTC) - timedelta(hours=edad_maxima_horas())).timestamp()
     return db.fetch_all(
         """
-        select sm.channel_id, sm.ts, sm.user_id, sm.text, p.id::text as prospect_id
+        select sm.channel_id, sm.ts, sm.user_id, sm.text, p.id::text as prospect_id,
+               case when sm.thread_ts is not null and sm.thread_ts <> sm.ts
+                    then sm.thread_ts end as thread_ts
         from slack_messages sm
         left join prospects p on p.slack_user_id = sm.user_id
         where sm.status <> 'ignorado'
+          and not (sm.status = 'archivado' and sm.thread_ts is not null)
           and sm.user_id is not null
           and btrim(coalesce(sm.text, '')) <> ''
           and (p.state is null or p.state <> 'descartado')
@@ -59,11 +69,46 @@ def _pendientes(limit: int) -> list[dict]:
     )
 
 
+def _hilo(mensaje: dict) -> list[dict]:
+    """Lo anterior del hilo de una respuesta, del más antiguo al más reciente,
+    como lo espera `detector.consultar`.
+
+    El principal se busca por su `ts` y no por su `thread_ts`: si el watcher lo
+    guardó antes de que tuviera respuestas, su `thread_ts` está a null. Entran
+    las filas `archivado` (son justo el contexto) y no las `ignorado` (dueño de
+    la credencial y bots). Sin tope aquí: el detector recorta a lo que cabe."""
+    filas = db.fetch_all(
+        """
+        select ts, user_id, text from slack_messages
+        where channel_id = %s
+          and (ts = %s or (thread_ts = %s and ts::numeric < %s::numeric))
+          and status <> 'ignorado'
+          and btrim(coalesce(text, '')) <> ''
+        order by ts::numeric
+        """,
+        (mensaje["channel_id"], mensaje["thread_ts"], mensaje["thread_ts"], mensaje["ts"]),
+    )
+    hilo = []
+    for fila in filas:
+        mismo = fila["user_id"] is not None and fila["user_id"] == mensaje["user_id"]
+        if fila["ts"] == mensaje["thread_ts"]:
+            entrada = {"quien": "original_post", "texto": fila["text"]}
+            if mismo:
+                # Extensión del contrato: el detector solo la usa para decirle al
+                # modelo que la necesidad del principal es de quien responde.
+                entrada["mismo_autor"] = True
+        else:
+            entrada = {"quien": "same_person" if mismo else "another_member", "texto": fila["text"]}
+        hilo.append(entrada)
+    return hilo
+
+
 def _guardar(mensaje: dict, senal: detector.Senal) -> None:
     db.execute(
         """
-        insert into message_signals (prospect_id, channel_id, ts, detectada, tipo, cita, confianza)
-        values (%s, %s, %s, %s, %s, %s, %s)
+        insert into message_signals
+            (prospect_id, channel_id, ts, detectada, tipo, cita, confianza, thread_ts)
+        values (%s, %s, %s, %s, %s, %s, %s, %s)
         on conflict (channel_id, ts) do nothing
         """,
         (
@@ -74,6 +119,7 @@ def _guardar(mensaje: dict, senal: detector.Senal) -> None:
             senal.tipo if senal.detectada else None,
             senal.cita if senal.detectada else None,
             senal.confianza if senal.detectada else None,
+            mensaje["thread_ts"],
         ),
     )
 
@@ -90,7 +136,8 @@ def _parada(motivo: Exception) -> None:
 def procesar_pendientes(limit: int = BATCH) -> list[dict]:
     """Clasifica hasta `limit` mensajes pendientes y devuelve las señales
     detectadas: dicts con prospect_id (None si quien escribe aún no es un
-    prospect), slack_user_id, channel_id, ts, tipo, cita y confianza."""
+    prospect), slack_user_id, channel_id, ts, tipo, cita y confianza, y además
+    thread_ts si el mensaje es una respuesta en un hilo."""
     if not db_config.value("senales_activas", True):
         return []
     try:
@@ -103,7 +150,12 @@ def procesar_pendientes(limit: int = BATCH) -> list[dict]:
     detectadas: list[dict] = []
     for mensaje in _pendientes(limit):
         try:
-            senal = detector.consultar(mensaje["text"], mensaje["prospect_id"])
+            if mensaje["thread_ts"]:
+                senal = detector.consultar(
+                    mensaje["text"], mensaje["prospect_id"], hilo=_hilo(mensaje)
+                )
+            else:
+                senal = detector.consultar(mensaje["text"], mensaje["prospect_id"])
         except (guards.KillSwitchActive, guards.MonthlyBudgetExceeded) as exc:
             # Parada a mitad de lote: este mensaje no se leyó, así que no se
             # marca; lo recogerá la primera vuelta tras la parada.
@@ -115,15 +167,17 @@ def procesar_pendientes(limit: int = BATCH) -> list[dict]:
             logger.exception("señales: no se pudo guardar la fila de %s", mensaje["ts"])
             continue
         if senal.detectada:
-            detectadas.append(
-                {
-                    "prospect_id": mensaje["prospect_id"],
-                    "slack_user_id": mensaje["user_id"],
-                    "channel_id": mensaje["channel_id"],
-                    "ts": mensaje["ts"],
-                    "tipo": senal.tipo,
-                    "cita": senal.cita,
-                    "confianza": senal.confianza,
-                }
-            )
+            detectada = {
+                "prospect_id": mensaje["prospect_id"],
+                "slack_user_id": mensaje["user_id"],
+                "channel_id": mensaje["channel_id"],
+                "ts": mensaje["ts"],
+                "tipo": senal.tipo,
+                "cita": senal.cita,
+                "confianza": senal.confianza,
+            }
+            if mensaje["thread_ts"]:
+                # Solo en las respuestas: lo de un mensaje principal no cambia.
+                detectada["thread_ts"] = mensaje["thread_ts"]
+            detectadas.append(detectada)
     return detectadas

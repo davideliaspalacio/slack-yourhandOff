@@ -66,27 +66,60 @@ def _prospect_overrides(slack_user_id: str) -> dict | None:
 MAX_MENSAJES = 5
 HORAS_MENSAJES = 48
 MAX_CHARS_MENSAJE = 2_000
+# Una respuesta en un hilo ("we need the same") no dice nada sin el mensaje al
+# que contesta, así que va con él delante, recortado: es contexto, no lo que se
+# investiga, y no debe comerse el prompt.
+MAX_CHARS_PRINCIPAL = 500
+
+
+def _con_principal(texto: str, principal: str | None, autor_propio: bool) -> str:
+    """El texto de una respuesta con el principal de su hilo delante. Se dice de
+    quién es el principal porque la síntesis puntúa "necesidad_declarada" con lo
+    que la persona pide en SUS mensajes: la necesidad de otro miembro no puede
+    pasar por suya. Todo sigue siendo texto de terceros y va entero dentro de la
+    misma valla `mensajes` que el resto (research/synthesize.py)."""
+    if not principal or not principal.strip():
+        return texto
+    principal = " ".join(principal.split())
+    if len(principal) > MAX_CHARS_PRINCIPAL:
+        principal = principal[: MAX_CHARS_PRINCIPAL - 3].rstrip() + "..."
+    de_quien = "their own earlier post" if autor_propio else "a post by another member"
+    return f'(in reply to {de_quien}: "{principal}")\n{texto}'
 
 
 def _person_messages(slack_user_id: str) -> tuple[str, ...]:
     """Lo que esta persona escribió hace poco en la comunidad, del más antiguo
     al más reciente. Los ignorados (ruido del lector) y los mensajes sin texto
-    no cuentan. Sin mensajes devuelve () y el research queda como siempre."""
+    no cuentan. Sin mensajes devuelve () y el research queda como siempre.
+
+    Si un mensaje es una respuesta en un hilo (`thread_ts` distinto de su `ts`,
+    migración 0032), lleva delante el texto del principal ("in reply to: ..."),
+    también si el principal es viejo (`archivado`), pero no si es `ignorado`:
+    la misma regla que usa el detector de señales para el contexto del hilo."""
     rows = db.fetch_all(
         """
-        select left(text, %s) as text from (
-            select text, ts from slack_messages
+        select left(recientes.text, %s) as text, principal.text as principal,
+               principal.user_id = recientes.user_id as autor_propio
+        from (
+            select channel_id, ts, thread_ts, user_id, text from slack_messages
             where user_id = %s and status <> 'ignorado'
               and btrim(coalesce(text, '')) <> ''
               and ts::numeric > extract(epoch from now()) - %s * 3600
             order by ts::numeric desc
             limit %s
         ) recientes
-        order by ts::numeric
+        left join slack_messages principal
+          on recientes.thread_ts is not null and recientes.thread_ts <> recientes.ts
+         and principal.channel_id = recientes.channel_id
+         and principal.ts = recientes.thread_ts
+         and principal.status <> 'ignorado'
+        order by recientes.ts::numeric
         """,
         (MAX_CHARS_MENSAJE, slack_user_id, HORAS_MENSAJES, MAX_MENSAJES),
     )
-    return tuple(row["text"] for row in rows)
+    return tuple(
+        _con_principal(row["text"], row["principal"], bool(row["autor_propio"])) for row in rows
+    )
 
 
 @dataclass(frozen=True)

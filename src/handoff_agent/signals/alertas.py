@@ -30,6 +30,21 @@ siguiente, hasta `MAX_INTENTOS` veces; después queda `omitida`.
 
 Nada de esto puede propagarse: las señales son un extra, no pueden tumbar el
 bucle ni el research.
+
+Las señales que salen de respuestas en un hilo (`message_signals.thread_ts`,
+migración 0032) tienen reglas más estrictas, porque en un hilo casi todo lo que
+se contesta no es una necesidad y un aviso por cada "+1" sería ruido:
+
+- Solo avisan con `confianza = 'alta'`; con `media` o `baja` quedan `omitida`
+  con motivo `thread_low_confidence`.
+- Las pendientes de un mismo hilo salen en UNA alerta, con cada persona y su
+  cita, hasta `alerta_card.MAX_PERSONAS_HILO`; las que no caben esperan a la
+  vuelta siguiente. Esa alerta cuenta una sola vez contra `alertas_por_dia`, y
+  `alertas_dias_misma_persona` sigue aplicándose a cada persona.
+- Una alerta por persona y hilo: quien ya salió en una alerta de ese hilo, o el
+  autor del principal si ya hubo alerta por el principal, no vuelve a salir.
+- Se reservan todas las señales del grupo antes de publicar, y todas quedan con
+  el mismo `alerta_channel_id`/`alerta_ts`.
 """
 
 from __future__ import annotations
@@ -57,6 +72,10 @@ MOTIVO_MISMA_PERSONA = "same_person_window"
 # alerta, igual que no sale su tarjeta de research.
 MOTIVO_SIN_TARJETA = "test_mode"
 MOTIVO_FALLO = "publish_failed"
+# Hilos: una respuesta sin confianza alta no avisa, y una persona sale una sola
+# vez por hilo (aunque responda dos veces, o sea la autora del principal).
+MOTIVO_HILO_CONFIANZA = "thread_low_confidence"
+MOTIVO_HILO_REPETIDA = "thread_same_person"
 
 
 def _parada(exc: Exception) -> None:
@@ -73,9 +92,20 @@ def _inicio_del_dia(ahora: datetime) -> datetime:
 
 
 def _publicadas_desde(desde: datetime) -> int:
+    """Alertas (no señales) salidas o en curso desde `desde`. Las señales de un
+    hilo publicadas juntas comparten `alerta_ts`; mientras están reservadas aún
+    no lo tienen, pero comparten `alerta_at` (las reservó una sola sentencia, y
+    `now()` es el mismo para todas). Así un aviso de tres personas cuenta uno."""
     return db.fetch_one(
-        "select count(*) as n from message_signals "
-        "where alerta_estado in ('reservada', 'publicada') and alerta_at >= %s",
+        """
+        select count(distinct case
+            when alerta_ts is not null then 'p:' || coalesce(alerta_channel_id, '') || ':' || alerta_ts
+            when thread_ts is not null then 'h:' || channel_id || ':' || thread_ts || ':' || alerta_at::text
+            else 's:' || id::text
+        end) as n
+        from message_signals
+        where alerta_estado in ('reservada', 'publicada') and alerta_at >= %s
+        """,
         (desde,),
     )["n"]
 
@@ -112,12 +142,24 @@ def _caducar(ahora: datetime, horas: int) -> None:
     )
 
 
+def _omitir_hilos_dudosos() -> None:
+    """Una respuesta en un hilo solo avisa con confianza alta. Es una decisión
+    final, como la edad: no depende del cupo de hoy, así que no espera a él."""
+    db.execute(
+        "update message_signals set alerta_estado = 'omitida', alerta_motivo = %s, "
+        "alerta_at = now() "
+        "where detectada and alerta_estado is null and thread_ts is not null "
+        "and confianza is distinct from 'alta'",
+        (MOTIVO_HILO_CONFIANZA,),
+    )
+
+
 def _pendientes() -> list[dict]:
     """Señales detectadas sin decisión: las de más confianza primero, y a igual
     confianza las más recientes. El join con slack_messages da quién escribió."""
     return db.fetch_all(
         """
-        select ms.id::text as id, ms.channel_id, ms.ts, ms.tipo, ms.cita,
+        select ms.id::text as id, ms.channel_id, ms.ts, ms.thread_ts, ms.tipo, ms.cita,
                ms.alerta_intentos, sm.user_id as slack_user_id
         from message_signals ms
         join slack_messages sm on sm.channel_id = ms.channel_id and sm.ts = ms.ts
@@ -226,6 +268,167 @@ def _publicar_una(senal: dict, persona: dict | None, reader) -> bool:
     return True
 
 
+def _persona_y_motivo(senal: dict, ventana: datetime) -> tuple[dict | None, str | None]:
+    """La fila de `prospects` de quien escribió y, si no debe recibir alerta, el
+    motivo. Los mismos frenos para un mensaje principal y para una respuesta."""
+    persona = db.fetch_one(
+        "select * from prospects where slack_user_id = %s", (senal["slack_user_id"],)
+    )
+    if persona and persona["state"] == "descartado":
+        return persona, MOTIVO_DESCARTADO
+    if persona and persona["sin_tarjeta"]:
+        return persona, MOTIVO_SIN_TARJETA
+    if _misma_persona_reciente(senal["slack_user_id"], ventana):
+        return persona, MOTIVO_MISMA_PERSONA
+    return persona, None
+
+
+def _publicar_suelta(senal: dict, reader, ventana: datetime) -> bool | None:
+    """Un mensaje principal: una alerta por señal, como siempre. None si no se
+    publicó nada (omitida, o reservada por otro), True/False según Slack."""
+    persona, motivo = _persona_y_motivo(senal, ventana)
+    if motivo:
+        _omitir(senal["id"], motivo)
+        return None
+    if not _reservar(senal):
+        return None
+    return _publicar_una(senal, persona, reader)
+
+
+def _ya_avisada_en_hilo(slack_user_id: str, channel_id: str, thread_ts: str) -> bool:
+    """¿Esta persona ya salió en una alerta de este hilo, o en la del principal?
+    El `ms.ts = thread_ts` es la alerta del principal: por el join con su autor,
+    solo cuenta para quien lo escribió."""
+    return (
+        db.fetch_one(
+            "select 1 as hay from message_signals ms "
+            "join slack_messages sm on sm.channel_id = ms.channel_id and sm.ts = ms.ts "
+            "where ms.channel_id = %s and sm.user_id = %s "
+            "and (ms.thread_ts = %s or ms.ts = %s) "
+            "and ms.alerta_estado in ('reservada', 'publicada') limit 1",
+            (channel_id, slack_user_id, thread_ts, thread_ts),
+        )
+        is not None
+    )
+
+
+def _reservar_grupo(ids: list[str]) -> set[str]:
+    """Reserva de una vez todas las señales de un hilo. Una sola sentencia: si
+    otro worker ya tenía alguna, esa no vuelve y la alerta sale sin ella, en vez
+    de duplicarse. Por la misma razón comparten `alerta_at` (ver
+    `_publicadas_desde`)."""
+    filas = db.fetch_all(
+        "update message_signals set alerta_estado = 'reservada', alerta_at = now(), "
+        "alerta_intentos = alerta_intentos + 1 "
+        "where id = any(%s::uuid[]) and alerta_estado is null returning id::text as id",
+        (ids,),
+    )
+    return {fila["id"] for fila in filas}
+
+
+def _publicar_hilo(grupo: list[dict], reader, ventana: datetime) -> bool | None:
+    """Las señales pendientes de un mismo hilo, en una sola alerta. None si no
+    quedó nadie a quien avisar, True/False según Slack."""
+    channel_id, thread_ts = grupo[0]["channel_id"], grupo[0]["thread_ts"]
+    elegidas: list[tuple[dict, dict | None]] = []
+    vistos: set[str] = set()
+    # Del más antiguo al más reciente: si alguien respondió dos veces, se queda
+    # la primera vez que lo dijo.
+    for senal in sorted(grupo, key=lambda s: float(s["ts"])):
+        uid = senal["slack_user_id"]
+        if uid in vistos:
+            _omitir(senal["id"], MOTIVO_HILO_REPETIDA)
+            continue
+        if len(elegidas) >= alerta_card.MAX_PERSONAS_HILO:
+            # Sin decisión: sigue pendiente y saldrá en la vuelta siguiente.
+            continue
+        if _ya_avisada_en_hilo(uid, channel_id, thread_ts):
+            _omitir(senal["id"], MOTIVO_HILO_REPETIDA)
+            continue
+        persona, motivo = _persona_y_motivo(senal, ventana)
+        if motivo:
+            _omitir(senal["id"], motivo)
+            continue
+        vistos.add(uid)
+        elegidas.append((senal, persona))
+    if not elegidas:
+        return None
+
+    reservadas = _reservar_grupo([senal["id"] for senal, _ in elegidas])
+    elegidas = [(s, p) for s, p in elegidas if s["id"] in reservadas]
+    if not elegidas:
+        return None
+    ids = [senal["id"] for senal, _ in elegidas]
+
+    try:
+        principal = db.fetch_one(
+            "select text from slack_messages where channel_id = %s and ts = %s",
+            (channel_id, thread_ts),
+        )
+        entradas = [
+            {"senal": senal, "person": persona, "permalink": _permalink(reader, senal)}
+            for senal, persona in elegidas
+        ]
+        bloques = alerta_card.build_hilo(principal["text"] if principal else None, entradas)
+        canal, ts = slack_writer.post_card(bloques, alerta_card.summary_hilo(entradas))
+    except Exception as exc:
+        logger.exception("alertas: no se pudo publicar la alerta del hilo %s", thread_ts)
+        for senal, _ in elegidas:
+            try:
+                _liberar(senal)
+            except Exception:
+                logger.exception("alertas: no se pudo liberar la reserva de %s", senal["id"])
+        _registrar(
+            ACCION_FALLIDA,
+            {"motivo": f"{type(exc).__name__}: {exc}", "senal_ids": ids, "hilo": thread_ts},
+        )
+        return False
+
+    try:
+        db.execute(
+            "update message_signals set alerta_estado = 'publicada', alerta_channel_id = %s, "
+            "alerta_ts = %s where id = any(%s::uuid[])",
+            (canal, ts, ids),
+        )
+    except Exception:
+        # Igual que en `_publicar_una`: reservadas y no duplicadas.
+        logger.exception(
+            "alertas: publicada (canal=%s, ts=%s) pero no se pudo anotar el hilo %s",
+            canal,
+            ts,
+            thread_ts,
+        )
+    _registrar(
+        ACCION_PUBLICADA,
+        {
+            "senal_ids": ids,
+            "hilo": thread_ts,
+            "tipo": elegidas[0][0]["tipo"],
+            "canal": canal,
+            "ts": ts,
+        },
+    )
+    return True
+
+
+def _unidades(pendientes: list[dict]) -> list[dict | list[dict]]:
+    """Cada señal de un mensaje principal es su propia alerta; las de un mismo
+    hilo van juntas, en el puesto de la primera que aparece (la de más
+    confianza, o la más reciente), para que el orden de siempre se respete."""
+    unidades: list[dict | list[dict]] = []
+    grupos: dict[tuple[str, str], list[dict]] = {}
+    for senal in pendientes:
+        if senal["thread_ts"] is None:
+            unidades.append(senal)
+            continue
+        clave = (senal["channel_id"], senal["thread_ts"])
+        if clave not in grupos:
+            grupos[clave] = []
+            unidades.append(grupos[clave])
+        grupos[clave].append(senal)
+    return unidades
+
+
 def _publicar(reader, ahora: datetime) -> int:
     if not db_config.value("senales_activas", True):
         return 0
@@ -252,6 +455,7 @@ def _publicar(reader, ahora: datetime) -> int:
         logger.exception("alertas: el detector falló; se publica lo pendiente")
 
     _caducar(ahora, procesar.edad_maxima_horas())
+    _omitir_hilos_dudosos()
 
     hoy = _publicadas_desde(_inicio_del_dia(ahora))
     cupo = db_config.value("alertas_por_dia", 5) - hoy
@@ -261,24 +465,17 @@ def _publicar(reader, ahora: datetime) -> int:
     ventana = ahora - timedelta(days=db_config.value("alertas_dias_misma_persona", 7))
 
     publicadas = 0
-    for senal in _pendientes():
+    for unidad in _unidades(_pendientes()):
         if publicadas >= cupo:
             break
-        persona = db.fetch_one(
-            "select * from prospects where slack_user_id = %s", (senal["slack_user_id"],)
-        )
-        if persona and persona["state"] == "descartado":
-            _omitir(senal["id"], MOTIVO_DESCARTADO)
+        if isinstance(unidad, list):
+            resultado = _publicar_hilo(unidad, reader, ventana)
+        else:
+            resultado = _publicar_suelta(unidad, reader, ventana)
+        if resultado is None:
             continue
-        if persona and persona["sin_tarjeta"]:
-            _omitir(senal["id"], MOTIVO_SIN_TARJETA)
-            continue
-        if _misma_persona_reciente(senal["slack_user_id"], ventana):
-            _omitir(senal["id"], MOTIVO_MISMA_PERSONA)
-            continue
-        if not _reservar(senal):
-            continue
-        if _publicar_una(senal, persona, reader):
+        if resultado:
+            # Una alerta de hilo cuenta una vez, tenga las personas que tenga.
             publicadas += 1
         else:
             # Slack probablemente está caído: no se insiste con las demás.

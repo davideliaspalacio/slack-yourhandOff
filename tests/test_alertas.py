@@ -2,6 +2,7 @@
 
 import json
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -465,4 +466,280 @@ def test_alerts_do_not_touch_deliveries_and_research_cards_still_go_out(conn, sl
             "n"
         ]
         == 1
+    )
+
+
+# -- respuestas en hilos (0032) -------------------------------------------------------------
+
+
+def principal_hilo(user="UP", horas=3, texto="Anyone recommend a closer agency?", channel="C1"):
+    """El mensaje principal de un hilo, sin señal. Devuelve su ts (= thread_ts)."""
+    ts = f"{time.time() - horas * 3600:.6f}"
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text, thread_ts, status) "
+        "values (%s, %s, %s, %s, %s, 'pendiente_scoring')",
+        (channel, ts, user, texto, ts),
+    )
+    return ts
+
+
+def respuesta_hilo(
+    thread_ts, user, horas, cita="we need the same, 2 closers", confianza="alta", channel="C1"
+) -> str:
+    """Una respuesta en el hilo con su señal ya detectada. Devuelve su ts."""
+    ts = f"{time.time() - horas * 3600:.6f}"
+    db.execute(
+        "insert into slack_messages (channel_id, ts, user_id, text, thread_ts, status) "
+        "values (%s, %s, %s, %s, %s, 'pendiente_scoring')",
+        (channel, ts, user, cita, thread_ts),
+    )
+    db.execute(
+        "insert into message_signals (channel_id, ts, detectada, tipo, cita, confianza, thread_ts) "
+        "values (%s, %s, true, 'ventas', %s, %s, %s)",
+        (channel, ts, cita, confianza, thread_ts),
+    )
+    return ts
+
+
+def test_a_thread_reply_without_high_confidence_never_alerts(conn, slack):
+    hilo = principal_hilo()
+    media = respuesta_hilo(hilo, "U1", 0.5, confianza="media")
+    baja = respuesta_hilo(hilo, "U2", 0.4, confianza="baja")
+    assert alertas.publicar_pendientes() == 0
+    assert slack == []
+    for ts in (media, baja):
+        fila = estado(ts)
+        assert (fila["alerta_estado"], fila["alerta_motivo"]) == (
+            "omitida",
+            "thread_low_confidence",
+        )
+
+
+def test_a_top_level_signal_with_medium_confidence_still_alerts(conn, slack):
+    """Regresión: la exigencia de confianza alta es solo para los hilos."""
+    ts = senal(confianza="media")
+    assert alertas.publicar_pendientes() == 1
+    assert estado(ts)["alerta_estado"] == "publicada"
+
+
+def test_three_replies_in_one_thread_become_one_alert_with_three_names(conn, slack):
+    hilo = principal_hilo(texto="Anyone recommend a closer agency? Need help fast")
+    tses = [
+        respuesta_hilo(hilo, "U1", 0.6, cita="we need the same, 2 closers"),
+        respuesta_hilo(hilo, "U2", 0.5, cita="we're looking for this too"),
+        respuesta_hilo(hilo, "U3", 0.4, cita="same problem, need 3 SDRs"),
+    ]
+    assert alertas.publicar_pendientes() == 1
+    (alerta,) = slack
+    texto = alerta["json"]
+    assert "In a thread:" in texto
+    assert "Anyone recommend a closer agency? Need help fast" in texto
+    for nombre, cita in (
+        ("U1", "we need the same, 2 closers"),
+        ("U2", "we're looking for this too"),
+        ("U3", "same problem, need 3 SDRs"),
+    ):
+        assert f"*{nombre}*" in texto and cita in texto
+    # El orden es el del hilo: la primera que respondió va primero.
+    assert texto.index("*U1*") < texto.index("*U2*") < texto.index("*U3*")
+    assert alerta["text"] == "They asked in a thread: sales · U1 +2"
+    # Las tres señales quedan con la misma alerta.
+    filas = [estado(ts) for ts in tses]
+    assert {(f["alerta_estado"], f["alerta_channel_id"], f["alerta_ts"]) for f in filas} == {
+        ("publicada", "CHANDOFF", "1700000000.000001")
+    }
+    (accion,) = acciones("alerta_publicada")
+    assert accion["payload"]["hilo"] == hilo and len(accion["payload"]["senal_ids"]) == 3
+
+
+def test_the_same_person_replying_twice_is_one_entry(conn, slack):
+    hilo = principal_hilo()
+    primera = respuesta_hilo(hilo, "U1", 0.6, cita="we need the same")
+    segunda = respuesta_hilo(hilo, "U1", 0.5, cita="actually we need 4 of them")
+    otra = respuesta_hilo(hilo, "U2", 0.4, cita="we need this too")
+    assert alertas.publicar_pendientes() == 1
+    texto = slack[0]["json"]
+    assert texto.count("*U1*") == 1
+    assert "we need the same" in texto and "actually we need 4" not in texto
+    assert estado(primera)["alerta_estado"] == estado(otra)["alerta_estado"] == "publicada"
+    fila = estado(segunda)
+    assert (fila["alerta_estado"], fila["alerta_motivo"]) == ("omitida", "thread_same_person")
+    # Y en la vuelta siguiente no sale nada más de ese hilo.
+    assert alertas.publicar_pendientes() == 0
+
+
+def test_a_grouped_alert_counts_once_against_the_daily_cap(conn, slack, restore_config):
+    db.execute("update config set value = '2'::jsonb where key = 'alertas_por_dia'")
+    hilo = principal_hilo()
+    for i, horas in enumerate((0.6, 0.5, 0.4)):
+        respuesta_hilo(hilo, f"U{i}", horas, cita=f"we need {i + 2} closers")
+    suelta = senal(user="V1", horas=1)
+    espera = senal(user="V2", horas=2)
+    # El hilo (tres personas) y una suelta: dos alertas, no cuatro.
+    assert alertas.publicar_pendientes() == 2
+    assert len(slack) == 2
+    assert estado(suelta)["alerta_estado"] == "publicada"
+    assert estado(espera)["alerta_estado"] is None
+    assert alertas._publicadas_desde(alertas._inicio_del_dia(datetime.now(UTC))) == 2
+    assert alertas.publicar_pendientes() == 0
+
+
+def test_a_reserved_group_also_counts_once(conn, slack):
+    """Atascada tras publicar (sin `alerta_ts`), la reserva de un grupo sigue
+    contando una vez: sus filas comparten `alerta_at`."""
+    hilo = principal_hilo()
+    ids = [
+        db.fetch_one("select id::text as id from message_signals where ts = %s", (ts,))["id"]
+        for ts in (respuesta_hilo(hilo, "U1", 0.6), respuesta_hilo(hilo, "U2", 0.5))
+    ]
+    assert alertas._reservar_grupo(ids) == set(ids)
+    assert alertas._publicadas_desde(alertas._inicio_del_dia(datetime.now(UTC))) == 1
+
+
+def test_the_parent_author_is_not_alerted_again_for_their_own_reply(conn, slack, restore_config):
+    # Sin ventana por persona, para que la regla del hilo sea la única que actúa.
+    db.execute("update config set value = '0'::jsonb where key = 'alertas_dias_misma_persona'")
+    hilo = principal_hilo(user="UP", texto="We need 2 SDRs, any agency?")
+    db.execute(
+        "insert into message_signals (channel_id, ts, detectada, tipo, cita, confianza, "
+        "alerta_estado, alerta_channel_id, alerta_ts, alerta_at) "
+        "values ('C1', %s, true, 'ventas', 'We need 2 SDRs', 'alta', 'publicada', 'CH', '1.0', "
+        "now() - interval '1 hour')",
+        (hilo,),
+    )
+    propia = respuesta_hilo(hilo, "UP", 0.5, cita="still need them!")
+    ajena = respuesta_hilo(hilo, "U2", 0.4, cita="we need the same")
+    assert alertas.publicar_pendientes() == 1
+    assert "*UP*" not in slack[0]["json"] and "*U2*" in slack[0]["json"]
+    assert estado(propia)["alerta_motivo"] == "thread_same_person"
+    assert estado(ajena)["alerta_estado"] == "publicada"
+
+
+def test_one_alert_per_person_per_thread_across_rounds(conn, slack, restore_config):
+    db.execute("update config set value = '0'::jsonb where key = 'alertas_dias_misma_persona'")
+    hilo = principal_hilo()
+    respuesta_hilo(hilo, "U1", 0.6, cita="we need the same")
+    assert alertas.publicar_pendientes() == 1
+    otra_vez = respuesta_hilo(hilo, "U1", 0.3, cita="we still need it")
+    assert alertas.publicar_pendientes() == 0
+    assert estado(otra_vez)["alerta_motivo"] == "thread_same_person"
+
+
+def test_the_per_person_window_still_applies_inside_a_thread(conn, slack):
+    viejo = senal(user="U1", horas=30)
+    db.execute(
+        "update message_signals set alerta_estado = 'publicada', alerta_channel_id = 'CH', "
+        "alerta_ts = '1.0', alerta_at = now() - interval '3 days' where ts = %s",
+        (viejo,),
+    )
+    hilo = principal_hilo()
+    u1 = respuesta_hilo(hilo, "U1", 0.6)
+    respuesta_hilo(hilo, "U2", 0.5)
+    assert alertas.publicar_pendientes() == 1
+    assert "*U1*" not in slack[0]["json"] and "*U2*" in slack[0]["json"]
+    assert estado(u1)["alerta_motivo"] == "same_person_window"
+
+
+def test_a_discarded_or_test_mode_replier_is_left_out_of_the_group(conn, slack):
+    persona("U1", state="descartado")
+    persona("U2")
+    db.execute("update prospects set sin_tarjeta = true where slack_user_id = 'U2'")
+    hilo = principal_hilo()
+    u1 = respuesta_hilo(hilo, "U1", 0.6)
+    u2 = respuesta_hilo(hilo, "U2", 0.5)
+    assert alertas.publicar_pendientes() == 0
+    assert slack == []
+    assert estado(u1)["alerta_motivo"] == "discarded"
+    assert estado(u2)["alerta_motivo"] == "test_mode"
+
+
+def test_at_most_five_names_and_the_rest_wait_for_the_next_round(conn, slack):
+    hilo = principal_hilo()
+    tses = [respuesta_hilo(hilo, f"U{i}", 0.9 - i / 10, cita=f"we need {i} reps") for i in range(7)]
+    # La primera vuelta saca cinco; las dos que no cupieron siguen pendientes.
+    assert alertas.publicar_pendientes() == 1
+    assert [estado(ts)["alerta_estado"] for ts in tses] == ["publicada"] * 5 + [None] * 2
+    # Y salen en la vuelta siguiente, en otra alerta del mismo hilo.
+    assert alertas.publicar_pendientes() == 1
+    primera, segunda = slack
+    assert [f"*U{i}*" in primera["json"] for i in range(7)] == [True] * 5 + [False] * 2
+    assert "*U5*" in segunda["json"] and "*U6*" in segunda["json"]
+    assert all(estado(ts)["alerta_estado"] == "publicada" for ts in tses)
+
+
+def test_each_person_gets_a_link_to_their_own_reply(conn, slack):
+    hilo = principal_hilo()
+    u1 = respuesta_hilo(hilo, "U1", 0.6)
+    u2 = respuesta_hilo(hilo, "U2", 0.5)
+    alertas.publicar_pendientes(FakeReader())
+    texto = slack[0]["json"]
+    for ts in (u1, u2):
+        assert f"https://fake.slack.com/archives/C1/p{ts.replace('.', '')}" in texto
+    assert texto.count("View reply") == 2
+    # Ningún botón que repinte la tarjeta y se lleve los de los demás.
+    assert '"action_id": "contactado"' not in texto
+
+
+def test_a_slack_failure_releases_the_whole_group_and_it_goes_out_once(conn, slack, monkeypatch):
+    hilo = principal_hilo()
+    tses = [respuesta_hilo(hilo, "U1", 0.6), respuesta_hilo(hilo, "U2", 0.5)]
+    failing(monkeypatch)
+    assert alertas.publicar_pendientes() == 0
+    for ts in tses:
+        assert (estado(ts)["alerta_estado"], estado(ts)["alerta_intentos"]) == (None, 1)
+    posted = []
+    monkeypatch.setattr(
+        alertas.slack_writer,
+        "post_card",
+        lambda blocks, text: posted.append(text) or ("CHANDOFF", "1700000000.000009"),
+    )
+    assert alertas.publicar_pendientes() == 1
+    assert alertas.publicar_pendientes() == 0
+    assert len(posted) == 1
+    assert {estado(ts)["alerta_ts"] for ts in tses} == {"1700000000.000009"}
+
+
+def test_a_failure_noting_a_group_never_duplicates_it(conn, slack, monkeypatch):
+    hilo = principal_hilo()
+    tses = [respuesta_hilo(hilo, "U1", 0.6), respuesta_hilo(hilo, "U2", 0.5)]
+    real_execute = db.execute
+
+    def execute(sql, params=()):
+        if "alerta_estado = 'publicada'" in sql:
+            raise RuntimeError("db blip")
+        return real_execute(sql, params)
+
+    with monkeypatch.context() as parcial:
+        parcial.setattr(alertas.db, "execute", execute)
+        assert alertas.publicar_pendientes() == 1
+    assert {estado(ts)["alerta_estado"] for ts in tses} == {"reservada"}
+    assert alertas.publicar_pendientes() == 0
+    assert len(slack) == 1
+
+
+def test_a_thread_goes_from_slack_to_one_alert_through_the_real_detector(conn, slack, monkeypatch):
+    """De punta a punta: el principal, un consejo y dos "we need" en el hilo. El
+    detector solo da señal a quien dice necesitarlo, y sale una sola alerta."""
+    from tests.test_hilos_senales import modelo_de_hilos
+
+    monkeypatch.setattr(alertas.procesar, "procesar_pendientes", detector_real)
+    monkeypatch.setattr(llm, "_client", lambda: FakeOpenAI(modelo_de_hilos))
+    hilo = principal_hilo(user="UP", texto="Anyone recommend a closer agency?")
+    for user, horas, texto in (
+        ("U1", 0.5, "Talk to Acme Sales, they're great"),
+        ("U2", 0.4, "we need the same"),
+        ("U3", 0.3, "we need closers too"),
+    ):
+        db.execute(
+            "insert into slack_messages (channel_id, ts, user_id, text, thread_ts, status) "
+            "values ('C1', %s, %s, %s, %s, 'pendiente_scoring')",
+            (f"{time.time() - horas * 3600:.6f}", user, texto, hilo),
+        )
+    assert alertas.publicar_pendientes() == 1
+    texto = slack[0]["json"]
+    assert "In a thread:" in texto and "Anyone recommend a closer agency?" in texto
+    assert "*U2*" in texto and "*U3*" in texto and "*U1*" not in texto
+    assert (
+        db.fetch_one("select count(*) as n from message_signals where thread_ts = %s", (hilo,))["n"]
+        == 3
     )

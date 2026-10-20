@@ -203,3 +203,122 @@ def test_a_fully_hostile_alert_card_never_leaks_syntax_or_breaks_a_limit(monkeyp
     big = alerta_card.build({**senal, "cita": "&" * 5000}, person, None, None)
     assert all(len(b["text"]["text"]) <= 3000 for b in big if b["type"] == "section")
     assert not re.search(r"&(?!amp;|lt;|gt;)", "".join(_mrkdwn_texts(big)))
+
+
+# -- alerta de un hilo ------------------------------------------------------------------
+
+POST = "Anyone recommend a closer agency? We're scaling outbound next quarter."
+
+
+def entrada(user, cita, person=None, permalink=None, tipo="ventas"):
+    return {
+        "senal": {"slack_user_id": user, "tipo": tipo, "cita": cita},
+        "person": person,
+        "permalink": permalink,
+    }
+
+
+def test_a_thread_alert_shows_the_original_post_and_each_person():
+    blocks = alerta_card.build_hilo(
+        POST,
+        [
+            entrada("U1", "we need the same", PERSON, PERMALINK),
+            entrada("U2", "we're looking for this too", None, PERMALINK + "2"),
+        ],
+    )
+    header = blocks[0]["text"]["text"]
+    assert header.splitlines()[0] == "🗣️ *THEY ASKED · sales*"
+    assert "2 people in the same thread" in header
+    contexto = blocks[1]["text"]["text"]
+    assert contexto.startswith("*In a thread:*\n")
+    assert card.quote(POST) in contexto
+    texto = text_of(blocks)
+    assert "*Ada Ruiz* — Acme" in texto and "*U2*" in texto
+    assert card.quote("we need the same") in texto
+    assert card.quote("we're looking for this too") in texto
+    assert texto.index("Ada Ruiz") < texto.index("*U2*")
+    # Un enlace a la respuesta de cada uno, y ningún botón que repinte la tarjeta.
+    acciones = [e for b in blocks if b["type"] == "actions" for e in b["elements"]]
+    assert [e["url"] for e in acciones if e["action_id"] == "ver_original"] == [
+        PERMALINK,
+        PERMALINK + "2",
+    ]
+    assert {e["text"]["text"] for e in acciones} <= {"View reply", "Open in panel"}
+    assert all(e["action_id"] not in ("contactado", "descartar") for e in acciones)
+
+
+def test_the_original_post_is_truncated_with_an_ellipsis():
+    largo = "word " * 400
+    blocks = alerta_card.build_hilo(largo, [entrada("U1", "we need it")])
+    linea = blocks[1]["text"]["text"].splitlines()[1]
+    assert linea.endswith("...`")
+    assert len(linea) <= alerta_card.POST_CHARS + 4
+
+
+def test_without_the_original_post_the_card_says_so():
+    blocks = alerta_card.build_hilo(None, [entrada("U1", "we need it")])
+    assert blocks[1]["text"]["text"] == "*In a thread* (the original post is not available)."
+
+
+def test_a_thread_alert_shows_at_most_five_people():
+    entradas = [entrada(f"U{i}", f"we need {i}") for i in range(8)]
+    texto = text_of(alerta_card.build_hilo(POST, entradas))
+    assert [f"*U{i}*" in texto for i in range(8)] == [True] * 5 + [False] * 3
+
+
+def test_a_different_need_inside_the_thread_is_labelled():
+    blocks = alerta_card.build_hilo(
+        POST,
+        [
+            entrada("U1", "we need closers"),
+            entrada("U2", "we need a bookkeeper", tipo="contabilidad"),
+        ],
+    )
+    texto = text_of(blocks)
+    assert "*U2* · accounting" in texto and "*U1* ·" not in texto
+
+
+def test_the_open_in_panel_button_only_for_known_people(monkeypatch):
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
+    blocks = alerta_card.build_hilo(
+        POST, [entrada("U1", "we need it", PERSON), entrada("U2", "we need it too")]
+    )
+    acciones = [e for b in blocks if b["type"] == "actions" for e in b["elements"]]
+    assert [e["url"] for e in acciones] == [f"https://panel.example.com/personas/{PERSON['id']}"]
+
+
+def test_the_thread_summary_names_the_first_person_and_counts_the_rest():
+    entradas = [entrada("U1", "a", PERSON), entrada("U2", "b"), entrada("U3", "c")]
+    assert alerta_card.summary_hilo(entradas) == "They asked in a thread: sales · Ada Ruiz +2"
+    assert alerta_card.summary_hilo(entradas[1:2]) == "They asked in a thread: sales · U2"
+    assert "<!channel>" not in alerta_card.summary_hilo([entrada("<!channel>", "x")])
+
+
+def test_a_fully_hostile_thread_alert_never_leaks_syntax_or_breaks_a_limit(monkeypatch):
+    monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
+    hostile = "<!channel> <@U1> <#C1|x> & " * 400
+    person = {**PERSON, "full_name": hostile, "company_name": hostile, "slack_user_id": hostile}
+    entradas = [
+        {
+            "senal": {"slack_user_id": hostile, "tipo": hostile, "cita": hostile},
+            "person": who,
+            "permalink": link,
+        }
+        for who in (person, None)
+        for link in ("https://slack.com/p1", "https://x.com/a|<!channel>", None)
+    ]
+    for post in (hostile, "&" * 5000, None, "  "):
+        blocks = alerta_card.build_hilo(post, entradas)
+        _assert_card_under_limits_no_syntax_leak(blocks)
+        assert len(blocks) <= 50
+    # Ni el principal ni las citas pueden colar un enlace clicable.
+    for url_quote in HOSTILE_URL_QUOTES:
+        blocks = alerta_card.build_hilo(url_quote, [entrada("U1", url_quote)])
+        assert_quote_is_not_autolinkable(blocks)
+    botones = [
+        e
+        for b in alerta_card.build_hilo(None, entradas)
+        if b["type"] == "actions"
+        for e in b["elements"]
+    ]
+    assert botones and all("|" not in e.get("url", "") for e in botones)

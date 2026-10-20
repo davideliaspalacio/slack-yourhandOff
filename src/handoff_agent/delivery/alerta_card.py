@@ -25,6 +25,17 @@ bloque `context`):
              (código en línea para que ninguna URL se autoenlace, ver card._quote) ~ 1505
   dossier:   "Dossier: fit " + NUM_CHARS + "/3 · " + etiqueta fija              ~  60
 Todo muy por debajo de los topes.
+
+La alerta de un hilo (`build_hilo`) junta en una tarjeta a todas las personas
+que, en un mismo hilo, dijeron tener la necesidad: "In a thread:" con el
+mensaje principal citado y recortado, y por cada persona su nombre, su cita y un
+enlace a su respuesta. Sin "Contacted"/"Discard": el receptor repinta la tarjeta
+quitando TODOS los bloques de acciones (`web/app.py::_repaint`), así que un clic
+sobre una persona se llevaría los botones de las demás. Solo botones de enlace
+("View reply", "Open in panel"), que el receptor ignora. Peor caso por bloque:
+el principal es "*In a thread:*\n" + una cita como la de arriba (~1520), y cada
+persona repite los bloques de nombre y cita; con `MAX_PERSONAS_HILO` personas son
+2 + 3 x 5 = 17 bloques, lejos del tope de 50.
 """
 
 from __future__ import annotations
@@ -161,4 +172,93 @@ def build(
     # Slack rechaza un bloque de acciones vacío.
     if elements:
         blocks.append({"type": "actions", "elements": elements})
+    return blocks
+
+
+# Cuántas personas caben en una alerta de hilo. `signals/alertas.py` usa el mismo
+# número para decidir cuántas entran; las demás esperan a la vuelta siguiente.
+MAX_PERSONAS_HILO = 5
+# El principal es contexto: lo justo para entender a qué contestan. `_quote` ya
+# corta en QUOTE_CHARS, pero sin avisar; aquí se recorta antes y con "...".
+POST_CHARS = 280
+
+
+def _recorte(texto: str, tope: int) -> str:
+    texto = " ".join(texto.split())
+    return texto if len(texto) <= tope else texto[: tope - 3].rstrip() + "..."
+
+
+def summary_hilo(entradas: list[dict]) -> str:
+    """Texto de la notificación push de una alerta de hilo."""
+    primera = entradas[0] if entradas else {}
+    senal, person = primera.get("senal") or {}, primera.get("person")
+    who = (person or {}).get("full_name") or senal.get("slack_user_id") or "someone"
+    resto = f" +{len(entradas) - 1}" if len(entradas) > 1 else ""
+    return (
+        f"They asked in a thread: {tipo_label(senal.get('tipo'))} · "
+        f"{_escape_and_cap(who, NAME_CHARS)}{resto}"
+    )
+
+
+def _botones_persona(person: dict | None, permalink: str | None) -> list[dict]:
+    elements: list[dict] = []
+    if permalink and _is_safe_link(permalink):
+        elements.append(
+            {
+                "type": "button",
+                "action_id": "ver_original",
+                "text": {"type": "plain_text", "text": "View reply"},
+                "url": permalink,
+            }
+        )
+    person_id = str((person or {}).get("id") or "")
+    panel_url = load_settings().panel_url if person_id else None
+    if person_id and panel_url:
+        panel_link = f"{panel_url}/personas/{person_id}"
+        if _is_safe_link(panel_link):
+            elements.append(
+                {
+                    "type": "button",
+                    "action_id": "abrir_panel",
+                    "text": {"type": "plain_text", "text": "Open in panel"},
+                    "url": panel_link,
+                }
+            )
+    return elements
+
+
+def build_hilo(post: str | None, entradas: list[dict]) -> list[dict]:
+    """`post`: texto del mensaje principal del hilo, o None si no está guardado.
+    `entradas`: una por persona, en orden, como dicts con `senal` (la de
+    signals/alertas: tipo, cita, slack_user_id...), `person` (fila de `prospects`
+    o None) y `permalink` (de su respuesta, o None). Se pintan como mucho
+    `MAX_PERSONAS_HILO`; quien llama ya no debería mandar más."""
+    entradas = entradas[:MAX_PERSONAS_HILO]
+    tipo = tipo_label(((entradas[0] if entradas else {}).get("senal") or {}).get("tipo"))
+    n = len(entradas)
+    gente = "1 person" if n == 1 else f"{n} people"
+    header = f"🗣️ *THEY ASKED · {tipo}*\n{gente} in the same thread said they need it."
+    blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": header}}]
+
+    if isinstance(post, str) and post.strip():
+        contexto = "*In a thread:*\n" + _quote(_recorte(post, POST_CHARS))
+    else:
+        contexto = "*In a thread* (the original post is not available)."
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": contexto}})
+
+    for entrada in entradas:
+        senal = entrada.get("senal") or {}
+        person = entrada.get("person")
+        linea = _who(senal, person, None)
+        propio = tipo_label(senal.get("tipo"))
+        if propio != tipo:
+            # Cada uno puede necesitar algo distinto aunque estén en el mismo hilo.
+            linea += f" · {propio}"
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": linea}})
+        cita = senal.get("cita")
+        if isinstance(cita, str) and cita.strip():
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": _quote(cita)}})
+        botones = _botones_persona(person, entrada.get("permalink"))
+        if botones:
+            blocks.append({"type": "actions", "elements": botones})
     return blocks
