@@ -48,7 +48,30 @@ class Novedad:
 # Las entradas, de la más vieja a la más nueva. Al añadir una funcionalidad, se añade
 # aquí su entrada en el mismo commit. Lo ya anunciado no hace falta borrarlo: no vuelve a
 # salir, y queda como historial de lo que se ha ido contando.
-NOVEDADES: tuple[Novedad, ...] = ()
+NOVEDADES: tuple[Novedad, ...] = (
+    Novedad(
+        id="2026-10-20-hilos",
+        titulo="Reading thread replies",
+        lineas=(
+            (
+                "The agent can now read the replies inside threads, not just the main posts. "
+                'That\'s where people often write "+1, we need this too".'
+            ),
+            "It reads the whole thread as context, so it knows what a reply is answering.",
+            (
+                "It only flags someone who clearly states a need of their own, not people "
+                "answering, recommending someone, offering their services or just following "
+                "along."
+            ),
+            "Several people in the same thread become one alert, not many.",
+            (
+                "It only reads: it never writes, reacts or joins a channel, and it never marks "
+                "anything as read."
+            ),
+            ("It's off for now. Turn it on in Settings → Watched channels → Read thread replies."),
+        ),
+    ),
+)
 
 
 def _anunciadas() -> set[str]:
