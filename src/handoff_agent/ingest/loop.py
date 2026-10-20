@@ -23,7 +23,7 @@ from collections.abc import Callable, Sequence
 
 from .. import canales, estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
-from ..delivery import aviso_lector, seguimiento
+from ..delivery import aviso_lector, novedades, seguimiento
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas, eventos
 from ..slack_client import SlackAuthFailed
@@ -218,6 +218,20 @@ def _descubrir_canales(reader) -> None:
     )
 
 
+def _novedades() -> None:
+    """El "What's new" de un despliegue (delivery/novedades.py). Va con cada sondeo de
+    Slack: es una consulta pequeña, y así un anuncio que falló por Slack se reintenta en
+    minutos y no en el próximo despliegue. `publicar_pendientes` no lanza; esta guarda es
+    la segunda línea."""
+    try:
+        anunciadas = novedades.publicar_pendientes()
+    except Exception:
+        logger.exception("novedades fallidas; se reintenta en el siguiente sondeo")
+        return
+    if anunciadas:
+        logger.info("novedades: %d anunciada(s) en el canal", anunciadas)
+
+
 def _seguimiento() -> None:
     """El resumen diario de las conversaciones que se enfrían. `publicar_resumen`
     ya gestiona por dentro los frenos y no lanza; esta guarda es la segunda
@@ -291,6 +305,7 @@ def run_loop(
             if clock() >= next_watch:
                 next_watch = clock() + poll_seconds
                 _reclaim_stale()
+                _novedades()
                 try:
                     # Modo automático (0028): los canales salen de la tabla y cada uno
                     # lleva su ritmo, así que la lista de esta vuelta son los que les
