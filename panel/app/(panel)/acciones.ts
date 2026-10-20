@@ -276,6 +276,20 @@ export async function guardarSeguimientoActivo(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// dm_texto_activo también es un booleano: el interruptor de leer el texto de los
+// DMs de Anthony con sus leads para sugerirle respuestas. La política
+// panel_ajusta_dm_texto (0031) es la que permite tocar esta clave, y solo con true
+// o false. El panel no puede borrar el texto (dm_mensajes no tiene permisos para
+// él): al apagarlo, lo borra el worker en su pasada siguiente (ingest/dm_texto.py).
+export async function guardarDmTextoActivo(formData: FormData) {
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", "dm_texto_activo");
+  revalidatePath("/ajustes");
+}
+
 export async function salir() {
   const supabase = await createClient();
   await supabase.auth.signOut();

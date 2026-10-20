@@ -2,7 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarExigirEvidencia,
-  guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
+  guardarDmTextoActivo, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
@@ -36,6 +36,10 @@ const EDITABLES_SEGUIMIENTO: Record<string, string> = {
   seguimiento_recordar_horas:
     "Hours before a conversation that is still waiting is brought up again",
   seguimiento_avisos_por_dia: "Maximum follow-up alerts posted per day",
+  // Sugerencias de respuesta (0031): los numéricos que deja tocar la política
+  // panel_ajusta_dm_texto. dm_texto_activo va aparte porque es un booleano.
+  dm_texto_retencion_dias: "Days the text of a conversation is kept for reply suggestions",
+  dm_sugerencias_por_dia: "Maximum reply suggestions per day",
 };
 
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la
@@ -93,7 +97,7 @@ export default async function Ajustes() {
   const { data } = await supabase.from("config").select("key, value, updated_at")
     .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR),
       ...Object.keys(EDITABLES_SEGUIMIENTO), ...Object.keys(EDITABLES_EVENTOS),
-      "canal_presentaciones", "seguimiento_activo",
+      "canal_presentaciones", "seguimiento_activo", "dm_texto_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
@@ -123,6 +127,9 @@ export default async function Ajustes() {
   const exigirEvidencia = valores.get("exigir_evidencia") !== false;
   // Activado salvo que la base diga false, igual que en el worker (ingest/dms.py).
   const seguimientoActivo = valores.get("seguimiento_activo") !== false;
+  // Apagado salvo que la base diga true, igual que en el worker (ingest/dm_texto.py):
+  // leer el texto de sus conversaciones solo pasa si alguien lo enciende.
+  const dmTextoActivo = valores.get("dm_texto_activo") === true;
   // Apagado salvo que la base diga true: el mismo valor por defecto que el worker
   // (canales.modo_todos()). Encendido, los canales salen del descubrimiento.
   const canalesTodos = valores.get("slack_canales_todos") === true;
@@ -303,7 +310,8 @@ export default async function Ajustes() {
       <p>
         The agent keeps track of which one-to-one conversations in the Founders Club are
         waiting — who wrote last and when — and posts one summary a day in the cards channel.
-        It never writes there and <b>never stores what was said</b>: only the timing.
+        It never writes there. Unless reply suggestions are turned on below, it{" "}
+        <b>never stores what was said</b>: only the timing.
       </p>
       <table>
         <tbody>
@@ -316,6 +324,21 @@ export default async function Ajustes() {
                 <input type="hidden" name="value" value={seguimientoActivo ? "false" : "true"} />
                 <span>{seguimientoActivo ? "On" : "Off"}</span>
                 <button type="submit">{seguimientoActivo ? "Turn off" : "Turn on"}</button>
+              </form>
+            </td>
+          </tr>
+          <tr>
+            <td>Reply suggestions. Turn this on and the agent reads the text of AG&apos;s
+              direct messages with leads (people it has already researched), so it can
+              suggest what to reply. Other conversations are never opened, and reading
+              never marks anything as read. It only reads while follow-up reminders are on
+              too. Turn it off and everything stored is deleted within 15 minutes.
+              <div className="muted" style={{ fontSize: 12 }}>dm_texto_activo</div></td>
+            <td>
+              <form action={guardarDmTextoActivo} className="inline">
+                <input type="hidden" name="value" value={dmTextoActivo ? "false" : "true"} />
+                <span>{dmTextoActivo ? "On" : "Off"}</span>
+                <button type="submit">{dmTextoActivo ? "Turn off" : "Turn on"}</button>
               </form>
             </td>
           </tr>

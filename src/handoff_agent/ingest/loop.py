@@ -5,8 +5,10 @@ the decisor (accounts/decisor.py), which finds who decides each pursued
 opening and queues their research, and the message signals (signals/alertas.py),
 which detect what people ask for in Slack and post a light alert. Every few
 minutes it also goes over the owner's one-to-one DMs (ingest/dms.py) to know
-which conversations are waiting -- the timing only, never what was said -- and
-posts one follow-up summary a day (delivery/seguimiento.py).
+which conversations are waiting -- the timing only -- and posts one follow-up
+summary a day (delivery/seguimiento.py). Right after, and only if Anthony's
+switch is on, it reads the text of his DMs with leads (ingest/dm_texto.py) so
+replies can be suggested; with the switch off that same step wipes the text.
 
 A dead token or a system stop raises an operational alert and the loop keeps
 running: the token may be renewed and the cap may be raised without anyone
@@ -25,7 +27,7 @@ from ..delivery import aviso_lector, seguimiento
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas, eventos
 from ..slack_client import SlackAuthFailed
-from . import descubrimiento, dms, queue
+from . import descubrimiento, dm_texto, dms, queue
 from .research_runner import run_next_job
 from .resolver import resolve_pending
 from .watcher import watch_tick
@@ -155,6 +157,35 @@ def _rastro_dms(reader) -> None:
     )
     for error in resultado.errores:
         logger.warning("DMs: %s", error)
+
+
+def _texto_dms(reader) -> None:
+    """El texto de los DMs con leads (ingest/dm_texto.py, 0031), justo después del
+    rastro: el rastro acaba de decir qué conversaciones se movieron.
+
+    Corre siempre, también con el interruptor apagado, porque es esa pasada la que
+    borra lo guardado al apagarlo. Protegida igual que el rastro: un fallo se
+    registra y se reintenta en la pasada siguiente, y la credencial caducada se
+    avisa a quien pega el token."""
+    try:
+        resultado = dm_texto.pasada(reader)
+    except SlackAuthFailed as exc:
+        _credencial_caducada(exc)
+        return
+    except Exception:
+        logger.exception("texto de DMs fallido; se reintenta en la pasada siguiente")
+        return
+    logger.info(
+        "texto de DMs: %d conversaciones, %d mensajes nuevos, %d omitidos, "
+        "%d caducados, %d borrados por el interruptor",
+        resultado.conversaciones,
+        resultado.guardados,
+        resultado.omitidos,
+        resultado.purgados,
+        resultado.borrados,
+    )
+    for error in resultado.errores:
+        logger.warning("texto de DMs: %s", error)
 
 
 def _descubrir_canales(reader) -> None:
@@ -298,6 +329,7 @@ def run_loop(
             if clock() >= next_rastro:
                 next_rastro = clock() + dms.MINUTOS_ENTRE_PASADAS * 60
                 _rastro_dms(reader)
+                _texto_dms(reader)
                 _avisos_seguimiento()
                 _seguimiento()
 

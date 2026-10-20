@@ -266,6 +266,26 @@ class FoundersClubReader:
         info = self._call("conversations_info", channel=channel).get("channel") or {}
         return info.get("name") or ""
 
+    def dm_estado(self, dm_id: str) -> dict:
+        """Lo no leído de un DM: cuántos mensajes tiene él sin abrir y hasta qué
+        `ts` leyó. Para que la sugerencia de respuesta sepa si Anthony ya vio lo
+        último (ingest/dm_texto.py).
+
+        Es `conversations.info`, de lectura como el resto de la clase: preguntar
+        no marca nada como leído (eso sería `conversations.mark`, que no entra).
+        `unread_count_display` es el número que él ve en su Slack; si no viene,
+        `unread_count`. Si no viene ninguno, None y no 0: un cero diría que lo
+        leyó todo, y no se sabe."""
+        info = self._call("conversations_info", channel=dm_id).get("channel") or {}
+        sin_leer = info.get("unread_count_display")
+        if sin_leer is None:
+            sin_leer = info.get("unread_count")
+        try:
+            sin_leer = int(sin_leer) if sin_leer is not None else None
+        except (TypeError, ValueError):
+            sin_leer = None
+        return {"sin_leer": sin_leer, "leido_hasta": info.get("last_read") or None}
+
     def user_profile(self, user_id: str) -> UserProfile:
         user = self._call("users_info", user=user_id)["user"]
         profile = user.get("profile") or {}

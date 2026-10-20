@@ -25,6 +25,10 @@ class FakeReader:
         self.workspace: list[dict] = []
         self.member_calls: list[str] = []
         self.canales_error: Exception | None = None
+        # Lo no leído de cada DM, tal como lo daría conversations.info, y a quién se
+        # le preguntó (0031).
+        self.estados: dict[str, dict] = {}
+        self.estado_calls: list[str] = []
 
     # --- la misma superficie que FoundersClubReader ---
     def identity(self) -> tuple[str, str]:
@@ -93,6 +97,14 @@ class FakeReader:
             raise SlackUnavailable(f"conversations_history: {channel}: internal_error")
         mensajes = self.messages.get(channel, [])
         return max(mensajes, key=lambda m: float(m["ts"])) if mensajes else None
+
+    def dm_estado(self, dm_id: str) -> dict:
+        self.estado_calls.append(dm_id)
+        if self.auth_error:
+            raise self.auth_error
+        if dm_id in self.unavailable_channels:
+            raise SlackUnavailable(f"conversations_info: {dm_id}: internal_error")
+        return dict(self.estados.get(dm_id, {"sin_leer": 0, "leido_hasta": None}))
 
     # --- ayudas para los tests ---
     def post(self, channel: str, user: str, text: str, ts: str, **extra) -> None:

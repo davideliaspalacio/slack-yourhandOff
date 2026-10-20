@@ -116,6 +116,9 @@ def test_the_reader_only_exposes_reads():
         "user_profile",
         "permalink",
         "channel_name",
+        # Lo no leído de un DM (0031): conversations.info, la misma llamada que
+        # channel_name. Preguntar no marca nada como leído.
+        "dm_estado",
     }
 
 

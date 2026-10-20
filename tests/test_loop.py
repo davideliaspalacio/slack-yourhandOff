@@ -36,6 +36,7 @@ def wiring(monkeypatch):
         "decisor": 0,
         "senales": [],
         "rastro": [],
+        "texto": [],
         "resumenes": 0,
         "avisos": 0,
         "ok": [],
@@ -77,6 +78,12 @@ def wiring(monkeypatch):
         loop.dms,
         "rastro_tick",
         lambda reader: calls["rastro"].append(reader) or loop.dms.ResultadoRastro(),
+    )
+    # Ni Slack ni la base para el texto de los DMs (0031).
+    monkeypatch.setattr(
+        loop.dm_texto,
+        "pasada",
+        lambda reader: calls["texto"].append(reader) or loop.dm_texto.Resultado(),
     )
     monkeypatch.setattr(
         loop.seguimiento,
@@ -513,6 +520,73 @@ def test_a_failing_summary_does_not_stop_the_loop(wiring, monkeypatch):
     monkeypatch.setattr(loop.seguimiento, "publicar_resumen", boom)
     assert run(FakeClock(), max_cycles=2) == 2
     assert wiring["alerts"] == []
+
+
+# --- texto de los mensajes directos (0031) ----------------------------------------
+
+
+def test_the_dm_text_runs_right_after_the_trace_and_before_the_alerts(wiring, monkeypatch):
+    """El rastro acaba de decir qué se movió; los avisos deciden después, con todo fresco."""
+    orden = []
+    monkeypatch.setattr(
+        loop.dms, "rastro_tick", lambda r: orden.append("rastro") or loop.dms.ResultadoRastro()
+    )
+    monkeypatch.setattr(
+        loop.dm_texto, "pasada", lambda r: orden.append("texto") or loop.dm_texto.Resultado()
+    )
+    monkeypatch.setattr(loop.seguimiento, "publicar_avisos", lambda: orden.append("avisos") or 0)
+    run(FakeClock(), max_cycles=1)
+    assert orden == ["rastro", "texto", "avisos"]
+
+
+def test_the_dm_text_follows_the_trace_cadence(wiring, monkeypatch):
+    monkeypatch.setattr(loop.dms, "MINUTOS_ENTRE_PASADAS", 1)
+    run(FakeClock(), max_cycles=10)
+    assert len(wiring["texto"]) == len(wiring["rastro"]) == 5
+    assert isinstance(wiring["texto"][0], FakeReader)
+
+
+def test_the_dm_text_runs_once_at_start_with_the_usual_interval(wiring):
+    run(FakeClock(), max_cycles=10)
+    assert len(wiring["texto"]) == 1
+
+
+def test_a_failing_dm_text_pass_does_not_stop_research_or_alert(wiring, monkeypatch):
+    def boom(reader):
+        raise RuntimeError("Postgres raro")
+
+    monkeypatch.setattr(loop.dm_texto, "pasada", boom)
+    avisos = []
+    monkeypatch.setattr(loop.seguimiento, "publicar_avisos", lambda: avisos.append(1) or 0)
+    jobs = []
+    monkeypatch.setattr(loop, "run_next_job", lambda reader: jobs.append(1) or None)
+    assert run(FakeClock(), max_cycles=3) == 3
+    assert len(jobs) == 3
+    # Lo que va después en la misma pasada sigue corriendo.
+    assert avisos == [1]
+    assert wiring["resumenes"] == 1
+    assert wiring["alerts"] == []
+
+
+def test_a_dead_credential_in_the_dm_text_warns_the_person_who_pastes_the_token(
+    wiring, monkeypatch
+):
+    def caducada(reader):
+        raise SlackAuthFailed("token_revoked")
+
+    monkeypatch.setattr(loop.dm_texto, "pasada", caducada)
+    assert run(FakeClock(), max_cycles=1) == 1
+    assert "slack_auth" in wiring["alerts"]
+    assert wiring["avisos"] == 1
+
+
+def test_the_dm_text_pass_logs_its_errors_without_raising(wiring, monkeypatch, caplog):
+    resultado = loop.dm_texto.Resultado(conversaciones=2, guardados=3, errores=["DBBB: caído"])
+    monkeypatch.setattr(loop.dm_texto, "pasada", lambda r: resultado)
+    with caplog.at_level("INFO", logger=loop.__name__):
+        assert run(FakeClock(), max_cycles=1) == 1
+    assert any("2 conversaciones, 3 mensajes nuevos" in r.getMessage() for r in caplog.records)
+    assert any("DBBB: caído" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------------
