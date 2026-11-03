@@ -7,7 +7,8 @@ esperando y avisarle (`delivery/seguimiento.py`).
 
 Qué se guarda, y nada más (tabla `dm_rastro`, migración 0027): el id del DM, el
 workspace (para el enlace), con quién es, la marca de tiempo del último mensaje
-y si lo escribió él o la otra persona. **El texto de un DM no se guarda en
+y si lo escribió él o la otra persona, y si quien debía contestar ya
+respondió con una reacción (0033). **El texto de un DM no se guarda en
 ninguna parte**: de cada conversación se lee un solo mensaje (`last_message`,
 `limit=1`), se mira `ts` y `user`, y el resto se descarta aquí mismo.
 
@@ -116,6 +117,27 @@ def _es_bot(reader, slack_user_id: str) -> bool:
         return True
 
 
+def _respondido_con_emoji(mensaje: dict, owner_id: str, de: str) -> bool:
+    """Si QUIEN DEBÍA CONTESTAR ya respondió con una reacción al último mensaje.
+
+    AG lo pidió: contestar con un 👍 es contestar, y seguir recordándoselo es ruido. Va
+    en las dos direcciones, porque las dos se dan: si el último mensaje es de la otra
+    persona, lo que cuenta es que haya reaccionado él; si es suyo, que haya reaccionado
+    cualquier otro.
+
+    De la reacción solo se mira quién la puso, nunca cuál: un 👍 y un 😂 valen igual
+    como acuse de recibo, y qué emoji eligió alguien no es asunto nuestro. Las
+    reacciones ya vienen dentro de `conversations.history`, así que esto no le pide a
+    Slack ni una llamada más."""
+    for reaccion in mensaje.get("reactions") or []:
+        usuarios = reaccion.get("users") or []
+        if de == OTRO and owner_id in usuarios:
+            return True
+        if de == DUENO and any(u != owner_id for u in usuarios):
+            return True
+    return False
+
+
 def _quien_escribio(mensaje: dict, owner_id: str) -> str | None:
     """'dueno', 'otro', o None si no se puede saber (un mensaje de sistema).
 
@@ -130,17 +152,19 @@ def _quien_escribio(mensaje: dict, owner_id: str) -> str | None:
     return DUENO if autor == owner_id else OTRO
 
 
-def _guardar(dm_id: str, team_id: str, slack_user_id: str, ts: str, de: str) -> None:
+def _guardar(
+    dm_id: str, team_id: str, slack_user_id: str, ts: str, de: str, con_emoji: bool = False
+) -> None:
     """Upsert del rastro. Un `ultimo_ts` distinto reinicia el aviso: la
     conversación cambió, así que el caso vuelve a estar vivo."""
     db.execute(
         """
         insert into dm_rastro (dm_id, team_id, slack_user_id, prospect_id, ultimo_ts,
-                               ultimo_de, avisado_at)
+                               ultimo_de, respondido_con_emoji, avisado_at)
         values (
             %(dm_id)s, nullif(%(team_id)s, ''), %(slack_user_id)s,
             (select id from prospects where slack_user_id = %(slack_user_id)s),
-            %(ts)s, %(de)s,
+            %(ts)s, %(de)s, %(con_emoji)s,
             -- Nace como si ya se hubiera avisado, y es lo que evita el golpe de la
             -- primera pasada: al descubrir el rastro por primera vez hay decenas de
             -- conversaciones que llevan meses pasadas de plazo, y sin esto todas
@@ -157,6 +181,9 @@ def _guardar(dm_id: str, team_id: str, slack_user_id: str, ts: str, de: str) -> 
             prospect_id = coalesce(excluded.prospect_id, dm_rastro.prospect_id),
             ultimo_ts = excluded.ultimo_ts,
             ultimo_de = excluded.ultimo_de,
+            -- Se recalcula en cada pasada: una reacción puede llegar más tarde, y
+            -- también quitarse.
+            respondido_con_emoji = excluded.respondido_con_emoji,
             avisado_ts = case
                 when dm_rastro.ultimo_ts = excluded.ultimo_ts then dm_rastro.avisado_ts
                 else null
@@ -169,6 +196,7 @@ def _guardar(dm_id: str, team_id: str, slack_user_id: str, ts: str, de: str) -> 
             "slack_user_id": slack_user_id,
             "ts": ts,
             "de": de,
+            "con_emoji": con_emoji,
         },
     )
 
@@ -232,7 +260,14 @@ def rastro_tick(reader, now: datetime | None = None) -> ResultadoRastro:
         except (TypeError, ValueError):
             resultado.omitidos += 1
             continue
-        _guardar(dm_id, team_id, slack_user_id, str(mensaje["ts"]), de)
+        _guardar(
+            dm_id,
+            team_id,
+            slack_user_id,
+            str(mensaje["ts"]),
+            de,
+            _respondido_con_emoji(mensaje, owner_id, de),
+        )
         resultado.guardados += 1
 
     resultado.borrados = limpiar_retencion(ahora)

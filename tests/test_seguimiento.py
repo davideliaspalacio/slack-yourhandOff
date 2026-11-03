@@ -802,3 +802,41 @@ def test_end_to_end_a_good_suggestion_is_posted(conn, slack, monkeypatch, restor
     assert seguimiento.publicar_avisos() == 1
     assert f"```{SUGERIDA}```" in slack[0]["json"]
     assert CONTEXTO in slack[0]["json"]
+
+
+def con_emoji(dm_id="DAAA"):
+    db.execute("update dm_rastro set respondido_con_emoji = true where dm_id = %s", (dm_id,))
+
+
+def test_a_conversation_answered_with_an_emoji_never_alerts(conn, slack):
+    """Lo que pidió AG: "stop alerts if emoji reactions were used for a reply".
+
+    Jason escribió, él puso un 👍 en vez de teclear, y el agente le seguía recordando la
+    misma conversación un día tras otro."""
+    traza(de="otro", horas=30, prospect_id=persona())
+    con_emoji()
+
+    assert seguimiento.publicar_avisos() == 0
+    assert slack == []
+
+
+def test_an_emoji_answer_is_not_in_the_daily_summary_either(conn, slack):
+    """Si ya está contestada deja de estar pendiente, así que tampoco sale en la foto."""
+    traza(de="otro", horas=30, prospect_id=persona())
+    con_emoji()
+
+    assert seguimiento.publicar_resumen() == 0
+
+
+def test_an_emoji_answer_is_not_an_unread_message(conn, slack):
+    no_leido("DAAA", user="U1", prospect_id=persona("U1", "Uno"))
+    con_emoji()
+
+    assert seguimiento.publicar_avisos() == 0
+
+
+def test_without_the_emoji_the_same_conversation_does_alert(conn, slack):
+    """La otra cara: sin reacción, la conversación sigue esperando y sí avisa."""
+    traza(de="otro", horas=30, prospect_id=persona())
+
+    assert seguimiento.publicar_avisos() == 1

@@ -35,6 +35,9 @@ COLUMNAS = {
     # propio interruptor; esta sigue sin poder guardar una palabra.
     "sin_leer",
     "leido_hasta",
+    # `respondido_con_emoji` (0033): si quien debía contestar ya reaccionó al último
+    # mensaje. Un booleano, no contenido: no dice ni qué emoji fue.
+    "respondido_con_emoji",
     "actualizado_at",
 }
 # Nada que huela a contenido puede aparecer como columna.
@@ -347,3 +350,115 @@ def test_a_newly_discovered_conversation_does_not_alert_at_once(conn):
     dms.rastro_tick(reader)
     fila = db.fetch_one("select avisado_at from dm_rastro where dm_id = 'DAAA'")
     assert fila["avisado_at"] is not None
+
+
+# ---------------------------------------------------------------------------------
+# Una reacción con emoji es una respuesta (0033).
+# ---------------------------------------------------------------------------------
+
+
+def _con_reaccion(reader, dm_id, user, de_quien, emoji="+1", quien_reacciona=None):
+    """Deja en la conversación un último mensaje con una reacción encima."""
+    autor = reader.owner if de_quien == "dueno" else user
+    reader.post(dm_id, autor, "hola", f"{time.time() - 3600:.6f}")
+    reader.messages[dm_id][-1]["reactions"] = [
+        {"name": emoji, "users": [quien_reacciona], "count": 1}
+    ]
+
+
+def _rastro(dm_id="DAAA"):
+    return db.fetch_one(
+        "select ultimo_de, respondido_con_emoji from dm_rastro where dm_id = %s", (dm_id,)
+    )
+
+
+def test_he_answered_with_an_emoji(conn):
+    """El caso de la captura de AG: Jason escribió, él puso un 👍 en vez de teclear."""
+    reader = FakeReader()
+    reader.add_dm("DAAA", "UJASON")
+    reader.add_profile("UJASON", "Jason Schwartz")
+    _con_reaccion(reader, "DAAA", "UJASON", "otro", quien_reacciona=reader.owner)
+
+    dms.rastro_tick(reader)
+
+    assert _rastro() == {"ultimo_de": "otro", "respondido_con_emoji": True}
+
+
+def test_they_answered_his_message_with_an_emoji(conn):
+    """Al revés: él escribió y le contestaron con un emoji. Tampoco está esperando."""
+    reader = FakeReader()
+    reader.add_dm("DAAA", "UJASON")
+    reader.add_profile("UJASON", "Jason Schwartz")
+    _con_reaccion(reader, "DAAA", "UJASON", "dueno", quien_reacciona="UJASON")
+
+    dms.rastro_tick(reader)
+
+    assert _rastro() == {"ultimo_de": "dueno", "respondido_con_emoji": True}
+
+
+def test_his_own_reaction_to_his_own_message_is_not_an_answer(conn):
+    """Reaccionar a lo que uno mismo escribió no es que le hayan contestado."""
+    reader = FakeReader()
+    reader.add_dm("DAAA", "UJASON")
+    reader.add_profile("UJASON", "Jason Schwartz")
+    _con_reaccion(reader, "DAAA", "UJASON", "dueno", quien_reacciona=reader.owner)
+
+    dms.rastro_tick(reader)
+
+    assert _rastro() == {"ultimo_de": "dueno", "respondido_con_emoji": False}
+
+
+def test_their_reaction_to_their_own_message_is_not_an_answer(conn):
+    reader = FakeReader()
+    reader.add_dm("DAAA", "UJASON")
+    reader.add_profile("UJASON", "Jason Schwartz")
+    _con_reaccion(reader, "DAAA", "UJASON", "otro", quien_reacciona="UJASON")
+
+    dms.rastro_tick(reader)
+
+    assert _rastro() == {"ultimo_de": "otro", "respondido_con_emoji": False}
+
+
+def test_any_emoji_counts(conn):
+    """No se mira cuál: un 👍 y un 😂 valen igual como acuse de recibo."""
+    reader = FakeReader()
+    reader.add_dm("DAAA", "UJASON")
+    reader.add_profile("UJASON", "Jason Schwartz")
+    _con_reaccion(
+        reader,
+        "DAAA",
+        "UJASON",
+        "otro",
+        emoji="raised_hands::skin-tone-4",
+        quien_reacciona=reader.owner,
+    )
+
+    dms.rastro_tick(reader)
+
+    assert _rastro()["respondido_con_emoji"] is True
+
+
+def test_without_reactions_nothing_changes(conn):
+    reader = FakeReader()
+    reader.add_dm("DAAA", "UJASON")
+    reader.add_profile("UJASON", "Jason Schwartz")
+    reader.post("DAAA", "UJASON", "hola", f"{time.time() - 3600:.6f}")
+
+    dms.rastro_tick(reader)
+
+    assert _rastro() == {"ultimo_de": "otro", "respondido_con_emoji": False}
+
+
+def test_a_new_message_clears_the_emoji_answer(conn):
+    """Si escriben algo nuevo después, hay algo nuevo que responder."""
+    reader = FakeReader()
+    reader.add_dm("DAAA", "UJASON")
+    reader.add_profile("UJASON", "Jason Schwartz")
+    _con_reaccion(reader, "DAAA", "UJASON", "otro", quien_reacciona=reader.owner)
+    dms.rastro_tick(reader)
+    assert _rastro()["respondido_con_emoji"] is True
+
+    reader.post("DAAA", "UJASON", "una cosa más", f"{time.time() - 60:.6f}")
+    dms.rastro_tick(reader)
+
+    assert _rastro() == {"ultimo_de": "otro", "respondido_con_emoji": False}

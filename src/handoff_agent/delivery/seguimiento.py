@@ -233,6 +233,9 @@ def _casos_dm(tipo: str, limite_ts: float, ahora: datetime) -> list[Caso]:
           join prospects p on p.id = r.prospect_id
          where r.ultimo_de = %s
            and r.ultimo_ts::numeric < %s
+           -- Contestar con un 👍 es contestar (0033): deja de estar pendiente, así que
+           -- tampoco sale en la foto del día.
+           and not r.respondido_con_emoji
            and p.state <> 'descartado'
            and (p.sin_tarjeta is null or not p.sin_tarjeta)
          order by r.ultimo_ts::numeric
@@ -417,6 +420,8 @@ def _casos_para_avisar(ahora: datetime) -> list[Caso]:
                     or r.avisado_at < %(ahora)s - make_interval(hours => %(recordar)s))
                and p.state <> 'descartado'
                and not p.sin_tarjeta
+               -- Contestar con un 👍 es contestar (0033).
+               and not r.respondido_con_emoji
              order by r.ultimo_ts::numeric
             """,
             {"de": de, "limite": limite_ts, "ahora": ahora, "recordar": recordar},
@@ -472,6 +477,8 @@ def _casos_no_leidos(ahora: datetime) -> list[Caso]:
            and r.ultimo_ts::numeric >= %(desde)s
            and p.state <> 'descartado'
            and not p.sin_tarjeta
+           -- Contestar con un 👍 es contestar (0033).
+           and not r.respondido_con_emoji
          order by r.ultimo_ts::numeric
         """,
         {"desde": ahora.timestamp() - NO_LEIDO_HORAS * 3600},

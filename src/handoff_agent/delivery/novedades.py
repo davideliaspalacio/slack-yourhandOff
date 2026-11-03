@@ -90,6 +90,24 @@ NOVEDADES: tuple[Novedad, ...] = (
             "Each conversation is brought up once a day at most, instead of every 4 hours.",
         ),
     ),
+    Novedad(
+        id="2026-11-03-reaccion-es-respuesta",
+        titulo="An emoji reaction counts as a reply",
+        lineas=(
+            (
+                "If you answer someone with a 👍 instead of typing, the agent now treats "
+                "that as a reply and stops reminding you about it."
+            ),
+            (
+                "It works both ways: if you wrote and they reacted to your message, that "
+                "counts as their answer too."
+            ),
+            (
+                "Any emoji counts, and the agent never looks at which one. It still "
+                "cannot react to anything itself."
+            ),
+        ),
+    ),
 )
 
 
