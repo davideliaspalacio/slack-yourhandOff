@@ -243,3 +243,24 @@ export const ultimoDeLabel = (de: string | null | undefined) =>
 // el worker guarda con el rastro) no hay enlace: se enseña la sección sin él.
 export const enlaceDm = (teamId: string | null | undefined, dmId: string | null | undefined) =>
   teamId && dmId ? `https://app.slack.com/client/${teamId}/${dmId}` : null;
+
+// Vista de chat (app/(panel)/chat): la hora de un mensaje y el día al que pertenece,
+// las dos a partir de la marca de Slack. La hora va junto al mensaje y el día en el
+// separador de cada jornada, como en Slack, para no repetir la fecha en cada línea.
+export const horaDesdeTs = (ts: string | null | undefined) => {
+  const iso = fechaDesdeTs(ts);
+  return iso
+    ? new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+    : "—";
+};
+
+export const diaDesdeTs = (ts: string | null | undefined) => {
+  const iso = fechaDesdeTs(ts);
+  return iso
+    ? new Date(iso).toLocaleDateString("en-US",
+        { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+    : "Unknown date";
+};
+
+// Cuántas respuestas tiene un hilo, en inglés y con el singular cuando toca.
+export const respuestasLabel = (n: number) => (n === 1 ? "1 reply" : `${n} replies`);

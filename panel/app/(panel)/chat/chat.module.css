@@ -1,0 +1,145 @@
+/* Estilos de la vista de chat. Van en un módulo CSS y no en globals.css porque este
+   agente solo es dueño de app/(panel)/chat/**; las variables de color sí son las de
+   globals.css, para que la pantalla no se despegue del resto del panel. */
+
+.layout {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+/* ------------------------------------------------------------------ barra lateral */
+
+.barra {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  display: grid;
+  gap: 18px;
+}
+
+/* Los dos grupos se ven distintos a propósito: un canal lo lee todo el club y un DM
+   lo lee una persona. Eso tiene que notarse antes de leer la etiqueta. */
+.grupo {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+}
+.grupo.publicos { border-left: 4px solid var(--media); }
+.grupo.privados { border-left: 4px solid var(--accent); }
+
+.grupoTitulo {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  margin: 2px 4px 8px;
+}
+.grupoNota {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 4px 8px;
+}
+
+.lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+
+.item {
+  display: block;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: inherit;
+  min-height: 44px; /* para el pulgar */
+}
+.item:hover { background: var(--bg); text-decoration: none; }
+.item.on { background: var(--bg); box-shadow: inset 2px 0 0 var(--accent); }
+.item .nombre { display: block; font-weight: 600; overflow-wrap: anywhere; }
+.item .bajo { display: block; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------- panel de mensajes */
+
+.panel { display: grid; gap: 14px; min-width: 0; }
+
+.cabecera { display: grid; gap: 6px; }
+.titulo { font-size: 20px; font-weight: 700; margin: 0; overflow-wrap: anywhere; }
+.subtitulo { color: var(--muted); font-size: 13px; }
+
+/* El aviso de alcance. No es decoración: separa "lo leen 600 personas" de "lo lee
+   una". La fase siguiente añade el envío y esto es lo que evita el error caro. */
+.alcance {
+  border-radius: 8px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--line);
+  font-size: 14px;
+}
+.alcance.publico { background: var(--warn); border-left-color: var(--media); }
+.alcance.privado { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); }
+.alcance b { overflow-wrap: anywhere; }
+
+.etiqueta {
+  display: inline-block;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.etiqueta.publico { border-color: var(--media); color: var(--media); font-weight: 600; }
+.etiqueta.privado { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.etiqueta.sinLeer { border-color: var(--alta); color: var(--alta); font-weight: 600; }
+
+.hilos {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 4px 16px 16px;
+}
+
+.dia {
+  margin: 18px 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+
+.mensaje { padding: 8px 0; }
+.meta { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-size: 14px; }
+.meta .quien { font-weight: 600; overflow-wrap: anywhere; }
+.hora { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+/* El texto lo escribió un tercero en un Slack que no es nuestro: se pinta como texto
+   y nada más. Sin HTML, sin Markdown y sin enlazar nada (ver Texto en componentes). */
+.texto {
+  margin: 3px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.vacio { color: var(--muted); font-style: italic; }
+
+/* Las respuestas van sangradas bajo su mensaje, como en Slack. */
+.hilo { margin: 2px 0 6px; }
+.hilo > summary { font-size: 13px; color: var(--accent); padding: 4px 0; min-height: 32px; }
+.respuestas {
+  margin: 2px 0 0 4px;
+  padding-left: 14px;
+  border-left: 2px solid var(--line);
+}
+
+.volver { display: none; }
+
+@media (max-width: 800px) {
+  /* En el móvil es una pantalla a la vez: o la lista de conversaciones, o la
+     conversación abierta. La barra "se colapsa" dejando su sitio a los mensajes, y
+     "← All conversations" vuelve a la lista. */
+  .layout { grid-template-columns: 1fr; }
+  .layout.elegida .barra { display: none; }
+  .layout:not(.elegida) .panel { display: none; }
+  .volver { display: inline-block; margin-bottom: 4px; }
+  .barra { position: static; max-height: none; overflow: visible; }
+  .hilos { padding: 4px 12px 12px; }
+}
