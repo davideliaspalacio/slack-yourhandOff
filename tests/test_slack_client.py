@@ -285,6 +285,39 @@ def test_no_write_method_is_ever_whitelisted_or_called():
     assert not ({name for name, _ in fake.calls} & JAMAS)
 
 
+def test_the_reader_stays_read_only_now_that_something_else_can_write(conn):
+    """0034 abrió la puerta de escribir en el Founders Club, y este test es la mitad del
+    precio: la puerta está en OTRA pieza (`tools/respondedor.py`) y el lector no ha
+    cambiado nada. Si alguien mueve `chat_postMessage` a `READ_METHODS`, le da al lector
+    un método que escriba, o lo hace padre del respondedor, esto cae."""
+    from handoff_agent.tools.respondedor import Respondedor
+
+    # Las dos listas de este archivo, intactas y sin solaparse.
+    assert set(sc.READ_METHODS) == READ_METHODS
+    assert not (set(sc.READ_METHODS) & JAMAS)
+    assert "chat_postMessage" in JAMAS
+
+    # El respondedor es una clase aparte: ni hereda del lector ni el lector de él.
+    assert not issubclass(Respondedor, sc.FoundersClubReader)
+    assert not issubclass(sc.FoundersClubReader, Respondedor)
+    # Y el lector no ha ganado ni un método para mandar nada.
+    assert not {name for name in dir(sc.FoundersClubReader) if not name.startswith("_")} & {
+        "enviar",
+        "responder",
+        "post",
+        "postMessage",
+        "send",
+    }
+
+    # Con el respondedor cargado, el lector sigue sin poder escribir.
+    fake = FakeWebClient()
+    reader = sc.FoundersClubReader(client=fake)
+    for metodo in sorted(JAMAS):
+        with pytest.raises(RuntimeError, match="no es de lectura"):
+            reader._call(metodo, channel="C1", text="hola")
+    assert fake.calls == []
+
+
 def test_the_dm_list_asks_only_for_one_to_one_conversations_and_follows_cursors():
     fake = FakeWebClient(
         dm_pages=[

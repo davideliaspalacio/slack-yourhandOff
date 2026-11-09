@@ -1,9 +1,19 @@
 """Recibe los clics de la tarjeta y sirve el MCP remoto. Es lo único expuesto a internet.
 
-Tres puertas, cada una con su llave: `/slack/acciones` verifica la firma de Slack,
-`/mcp` (web/mcp_auth.py) exige una credencial personal, y `/oauth/*` (web/oauth.py) es
-el servidor de autorización que las emite tras un login contra Supabase Auth. `/salud`
-y los `/.well-known/*` son públicos y no llevan nada sensible.
+Cuatro puertas, cada una con su llave: `/slack/acciones` verifica la firma de Slack,
+`/mcp` (web/mcp_auth.py) exige una credencial personal, `/oauth/*` (web/oauth.py) es
+el servidor de autorización que las emite tras un login contra Supabase Auth, y
+`/panel/chat/enviar` exige el access token de la sesión del panel y lo cambia por el
+correo de su dueño contra ese mismo Supabase Auth. `/salud` y los `/.well-known/*` son
+públicos y no llevan nada sensible.
+
+`/panel/chat/enviar` existe porque el panel no tiene ningún otro camino hasta el worker:
+todo lo que hace pasa por PostgREST y por las funciones RLS de la base (el modo de
+pruebas encola y el worker drena, ver `panel/app/(panel)/pruebas/`), y mandar un mensaje
+a Slack necesita la credencial de sesión de Anthony, que vive en el worker y nunca sale
+de él. Quién llama se resuelve SIEMPRE del token y nunca del cuerpo de la petición: el
+correo que acaba en la fila de auditoría tiene que ser el de quien pulsó el botón, porque
+el mensaje sale en Slack con el nombre de Anthony.
 
 Slack corta a los 3 segundos, así que cada acción es una escritura corta en la
 base y una actualización de la tarjeta -- ambas síncronas, y por eso corren en
@@ -28,13 +38,15 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs
 
+import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.concurrency import run_in_threadpool
+from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .. import db, ledger
+from .. import chat_envio, db, ledger
 from ..config import Settings, load_settings
 from ..delivery import slack_writer
 from ..delivery.card import _escape_mrkdwn
@@ -282,3 +294,126 @@ async def acciones(request: Request) -> Response:
 
     await run_in_threadpool(_handle, payload, settings)
     return Response(status_code=200)
+
+
+# ---------------------------------------------------------------------------------
+# Contestar en el Founders Club desde el panel (0034).
+#
+# La cuarta puerta. La llave es el access token de la sesión de Supabase que el panel ya
+# tiene en la cookie de quien mira: se cambia por su correo contra Supabase Auth, igual
+# que `web/oauth_login.py` cambia correo y contraseña por una identidad. De ahí en
+# adelante decide `chat_envio` (el permiso `puede_responder`) y `tools/respondedor`
+# (interruptor, kill switch, tope, destino, texto).
+#
+# Por qué un token de sesión y no un secreto compartido entre panel y worker: con un
+# secreto, el correo del autor tendría que venir en el cuerpo de la petición, y entonces
+# la fila de auditoría diría lo que el llamante quisiera. Los mensajes salen con el
+# nombre de Anthony; quién los escribió no puede ser un campo de formulario.
+# ---------------------------------------------------------------------------------
+
+# Un access token de Supabase es un JWT. No se valida su firma aquí (haría falta el
+# secreto del proyecto, que el worker no tiene): se le pregunta a Supabase, que además
+# así ve las sesiones ya cerradas. Esta forma solo descarta basura antes de salir a la red.
+JWT_RE = re.compile(r"^[A-Za-z0-9._-]{20,4096}$")
+# Una persona delante de una caja de texto esperando: más que esto, mejor "try again".
+SUPABASE_TIMEOUT = 10.0
+
+
+def _token_de_sesion(valor: str | None) -> str | None:
+    """El token de `Authorization: Bearer <jwt>`, o None si no tiene esa forma."""
+    if not valor:
+        return None
+    esquema, _, resto = valor.partition(" ")
+    token = resto.strip()
+    if esquema.lower() != "bearer" or not JWT_RE.match(token):
+        return None
+    return token
+
+
+def _correo_de_sesion(settings: Settings, token: str) -> str | None:
+    """El correo que Supabase Auth confirma para ese access token, o None.
+
+    Es la misma comprobación que hace el panel con `supabase.auth.getUser()`, hecha aquí
+    porque la de allí no prueba nada: lo que llega es una petición HTTP. Un token
+    caducado, revocado o inventado devuelve None y la petición muere con 401.
+
+    Nunca se registra el token, ni entero ni en trozos: es la sesión de una persona.
+    """
+    if not settings.supabase_url or not settings.supabase_publishable_key:
+        logger.error("chat: falta SUPABASE_URL o SUPABASE_PUBLISHABLE_KEY")
+        return None
+    try:
+        respuesta = httpx.get(
+            f"{settings.supabase_url}/auth/v1/user",
+            headers={
+                "apikey": settings.supabase_publishable_key,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=SUPABASE_TIMEOUT,
+        )
+    except httpx.HTTPError as exc:
+        logger.error("chat: Supabase Auth no responde: %s", type(exc).__name__)
+        return None
+    if respuesta.status_code != 200:
+        # 401/403 es un token que no vale; cualquier otra cosa, un problema de Supabase.
+        # Para quien llama son lo mismo (no se le deja pasar) y el cuerpo no se registra.
+        if respuesta.status_code not in (400, 401, 403):
+            logger.error("chat: Supabase Auth devolvió %s", respuesta.status_code)
+        return None
+    try:
+        datos = respuesta.json()
+    except ValueError:
+        logger.error("chat: Supabase Auth devolvió algo que no es JSON")
+        return None
+    correo = datos.get("email") if isinstance(datos, dict) else None
+    if not isinstance(correo, str) or "@" not in correo:
+        return None
+    return correo.strip().lower()
+
+
+def _texto_o_none(valor: object) -> str | None:
+    return valor.strip() or None if isinstance(valor, str) else None
+
+
+@app.post("/panel/chat/enviar")
+async def panel_chat_enviar(request: Request) -> Response:
+    """Manda un mensaje al Founders Club como Anthony, de parte de quien trae la sesión.
+
+    Un rechazo del envío (interruptor apagado, sin permiso, destino no vigilado, tope)
+    NO es un error de la petición: devuelve 200 con `ok: false` y un texto en inglés que
+    el panel enseña tal cual. El 401 y el 400 se reservan para lo que no se pudo ni
+    evaluar, para que el panel no confunda "no se pudo mandar" con "se cayó algo".
+    """
+    settings = load_settings()
+    token = _token_de_sesion(request.headers.get("Authorization"))
+    if token is None:
+        return JSONResponse(
+            {"ok": False, "error": "Sign in again to send messages."}, status_code=401
+        )
+    correo = await run_in_threadpool(_correo_de_sesion, settings, token)
+    if correo is None:
+        return JSONResponse(
+            {"ok": False, "error": "Your session expired. Sign in again."}, status_code=401
+        )
+
+    try:
+        cuerpo = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return JSONResponse({"ok": False, "error": "Malformed request."}, status_code=400)
+    if not isinstance(cuerpo, dict):
+        return JSONResponse({"ok": False, "error": "Malformed request."}, status_code=400)
+
+    destino = cuerpo.get("destino")
+    texto = cuerpo.get("texto")
+    if not isinstance(destino, str) or not isinstance(texto, str):
+        return JSONResponse({"ok": False, "error": "Malformed request."}, status_code=400)
+
+    # El correo va del token, no del cuerpo: un `autor_email` en la petición se ignora.
+    resultado = await run_in_threadpool(
+        chat_envio.enviar_desde_panel,
+        correo,
+        destino,
+        texto,
+        _texto_o_none(cuerpo.get("thread_ts")),
+    )
+    return JSONResponse(resultado, status_code=200)

@@ -290,6 +290,89 @@ export async function guardarDmTextoActivo(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// chat_responder_activo también es un booleano: el interruptor de poder contestar en el
+// Founders Club desde el panel, con el nombre de Anthony. La política panel_ajusta_chat
+// (0034) es la que permite tocar esta clave, y solo con true o false. Apagado, el chat es
+// de solo lectura y el worker rechaza cualquier envío (tools/respondedor). Nace apagado:
+// escribir en un workspace ajeno no puede ser el valor por omisión de nada.
+// chat_mensajes_por_dia pasa por guardarUmbral.
+export async function guardarChatResponderActivo(formData: FormData) {
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", "chat_responder_activo");
+  revalidatePath("/ajustes");
+}
+
+// Dominio del worker (el servicio web de Railway: el mismo que recibe los botones de
+// Slack y sirve el MCP). WORKER_URL si está puesto; si no, se deduce de MCP_PUBLIC_URL
+// quitándole el /mcp, que es la misma URL con otra ruta.
+const WORKER_URL = (
+  process.env.WORKER_URL ??
+  (process.env.MCP_PUBLIC_URL ?? "https://buttons-slack-production.up.railway.app/mcp")
+).replace(/\/mcp\/?$/, "").replace(/\/$/, "");
+
+export type EnviarMensajeState = { ok?: boolean; error?: string; ts?: string };
+
+// Contestar en el Founders Club como Anthony (0034). El panel NO habla con Slack: la
+// credencial de sesión de AG vive en el worker y no sale de él, así que esto solo lleva
+// el texto hasta POST /panel/chat/enviar y trae su respuesta. Quien decide es el worker
+// -- el permiso puede_responder, el interruptor, el tope diario, el destino -- y la
+// comprobación de aquí abajo solo evita un viaje inútil cuando no hay sesión.
+//
+// El correo del autor NO se manda: el worker lo saca del access token contra Supabase
+// Auth. Si viajara en el cuerpo, la fila de auditoría diría lo que dijera el formulario,
+// y el mensaje sale en Slack firmado por Anthony: quién lo escribió de verdad es lo único
+// que no puede ser un campo que alguien rellene.
+export async function enviarMensaje(formData: FormData): Promise<EnviarMensajeState> {
+  const destino = String(formData.get("destino") ?? "").trim();
+  const texto = String(formData.get("texto") ?? "");
+  const threadTs = String(formData.get("thread_ts") ?? "").trim();
+  if (!texto.trim()) return { error: "Write something before sending." };
+
+  const supabase = await createClient();
+  // getUser() valida la sesión contra Supabase; getSession() da el access token que el
+  // worker va a cambiar por este mismo correo.
+  const [{ data: { user } }, { data: { session } }] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.auth.getSession(),
+  ]);
+  if (!user || !session) return { error: "Sign in again to send messages." };
+
+  let respuesta: Response;
+  try {
+    respuesta = await fetch(`${WORKER_URL}/panel/chat/enviar`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ destino, texto, thread_ts: threadTs || null }),
+      cache: "no-store",
+    });
+  } catch {
+    // Nunca el error entero: lleva la URL y las cabeceras, y una de ellas es la sesión.
+    return { error: "Could not reach the worker. Nothing was sent; try again." };
+  }
+
+  let datos: EnviarMensajeState | null = null;
+  try {
+    datos = (await respuesta.json()) as EnviarMensajeState;
+  } catch {
+    datos = null;
+  }
+  if (!respuesta.ok && !datos?.error) {
+    return { error: "Could not send the message. Nothing was sent; try again." };
+  }
+  if (!datos?.ok) return { error: datos?.error ?? "Could not send the message." };
+
+  // La vista del chat la pinta otro (app/(panel)/chat): lo que acaba de salir tiene que
+  // aparecer en ella sin que nadie recargue a mano.
+  revalidatePath("/chat");
+  return { ok: true, ts: datos.ts };
+}
+
 export async function salir() {
   const supabase = await createClient();
   await supabase.auth.signOut();

@@ -50,6 +50,11 @@ CLAVES_PROHIBIDAS = [
     "exigir_evidencia",
     "senales_activas",
     "unipile_pausado",
+    # El tope de mensajes enviados como Anthony y su interruptor (0034): el panel los
+    # toca, el agente no. Aflojar el freno de algo que habla en nombre de otra persona
+    # lo hace alguien del equipo a mano.
+    "chat_mensajes_por_dia",
+    "chat_responder_activo",
     "clave_inventada",
     "",
 ]
@@ -481,8 +486,16 @@ def test_adjustable_settings_match_what_the_panel_lets_you_touch(equipo):
     obliga a decidir si el MCP la sigue o no."""
     del_panel = set(numericas_que_el_panel_deja_tocar())
     propios = {"mcp_llamadas_por_dia", "mcp_escrituras_por_dia"}
+    # El tope de mensajes enviados como Anthony (0034): el panel lo ajusta, el MCP no. Es
+    # el freno de una capacidad que habla con el nombre de otra persona, así que aflojarlo
+    # es cosa de alguien del equipo en Settings y no del agente. La migración ya lo decidió
+    # al NO añadir la clave a `mcp_ajustar_umbral`; aquí solo queda escrito. Que de verdad
+    # se rechace lo prueban CLAVES_PROHIBIDAS (Python y SQL) y
+    # test_every_config_key_outside_the_allowed_list_is_refused_by_sql.
+    solo_panel = {"chat_mensajes_por_dia"}
     assert propios <= del_panel
-    assert set(mcp_escritura.UMBRALES) == del_panel - propios
+    assert solo_panel <= del_panel
+    assert set(mcp_escritura.UMBRALES) == del_panel - propios - solo_panel
     for peligrosa in ("kill_switch", "monthly_budget_usd", "run_budget_usd"):
         assert peligrosa not in del_panel
 

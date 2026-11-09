@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
-  guardarCanalesTodos, guardarCanalPresentaciones, guardarExigirEvidencia,
+  guardarCanalesTodos, guardarCanalPresentaciones, guardarChatResponderActivo,
+  guardarExigirEvidencia,
   guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
@@ -59,6 +60,12 @@ const EDITABLES_HILOS: Record<string, string> = {
   hilos_por_vuelta: "Maximum threads read in one poll",
 };
 
+// Contestar desde el panel (0034_chat_panel.sql): el numérico que la política
+// panel_ajusta_chat deja tocar. chat_responder_activo va aparte porque es un booleano.
+const EDITABLES_CHAT: Record<string, string> = {
+  chat_mensajes_por_dia: "Maximum messages sent from the panel per day (everyone together)",
+};
+
 const EDITABLES_RADAR: Record<string, string> = {
   radar_auto_min: "Minimum score for a role to be pursued automatically (0–10)",
   radar_horas_entre_escaneos: "Hours between scans of the same account",
@@ -105,6 +112,7 @@ export default async function Ajustes() {
     .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR),
       ...Object.keys(EDITABLES_SEGUIMIENTO), ...Object.keys(EDITABLES_EVENTOS),
       ...Object.keys(EDITABLES_HILOS), "leer_hilos",
+      ...Object.keys(EDITABLES_CHAT), "chat_responder_activo",
       "canal_presentaciones", "seguimiento_activo", "dm_texto_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
@@ -143,6 +151,10 @@ export default async function Ajustes() {
   const canalesTodos = valores.get("slack_canales_todos") === true;
   // Apagado salvo que la base diga true, igual que en el worker (ingest/watcher.py).
   const leerHilos = valores.get("leer_hilos") === true;
+  // Apagado salvo que la base diga true, igual que en el worker
+  // (tools/respondedor._activo). Nace apagado en 0034: escribir en el club ajeno no
+  // puede ser el estado por omisión de nada.
+  const chatResponderActivo = valores.get("chat_responder_activo") === true;
   const canalIntros = String(valores.get("canal_presentaciones") ?? "");
   const descubiertos = (nombresData ?? []).filter((c) => c.es_miembro === true);
   const masActivos = [...descubiertos]
@@ -367,6 +379,38 @@ export default async function Ajustes() {
             </td>
           </tr>
           {Object.entries(EDITABLES_SEGUIMIENTO).map(fila)}
+        </tbody>
+      </table>
+
+      <h2>Replying from the panel</h2>
+      <p>
+        Until now the agent could not write a single word in the Founders Club. This lets
+        one person answer on AG&apos;s behalf while he is away. Every message is typed by a
+        person and sent by hand &mdash; there is no automatic reply, no suggestion that
+        sends itself. Only people with the <b>Reply</b> permission can send; everyone else
+        sees the chat and cannot write in it. Messages can only go to channels the agent
+        already watches and to conversations that already exist, never to anyone new. Every
+        message is recorded with the name of whoever actually sent it.
+      </p>
+      <table>
+        <tbody>
+          <tr>
+            <td>
+              Reply in the Founders Club as Anthony. Messages sent from the panel are
+              posted in the Founders Club under <b>Anthony&apos;s own name</b>, from his
+              Slack session &mdash; members see them as written by him. Turn this off and
+              the chat is read-only.
+              <div className="muted" style={{ fontSize: 12 }}>chat_responder_activo</div>
+            </td>
+            <td>
+              <form action={guardarChatResponderActivo} className="inline">
+                <input type="hidden" name="value" value={chatResponderActivo ? "false" : "true"} />
+                <span>{chatResponderActivo ? "On" : "Off"}</span>
+                <button type="submit">{chatResponderActivo ? "Turn off" : "Turn on"}</button>
+              </form>
+            </td>
+          </tr>
+          {Object.entries(EDITABLES_CHAT).map(fila)}
         </tbody>
       </table>
 
