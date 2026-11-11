@@ -350,6 +350,27 @@ def test_persona_ver_returns_the_full_record(datos):
     json.dumps(ficha)
 
 
+def test_persona_ver_shows_the_crm_block(datos):
+    """El bloque de HubSpot (0035): ids, estado y motivo, de solo lectura."""
+    db.execute(
+        "update prospects set hubspot_estado = 'sincronizada', hubspot_contact_id = '101', "
+        "hubspot_company_id = '202', hubspot_motivo = %s, hubspot_at = now() where id = %s",
+        ("contact_skipped: free-mail address", datos["ada"]["id"]),
+    )
+    hubspot = mcp_remoto.persona_ver(str(datos["ada"]["id"]))["hubspot"]
+    assert hubspot["estado"] == "sincronizada"
+    assert (hubspot["contact_id"], hubspot["company_id"]) == ("101", "202")
+    assert hubspot["motivo"] == "contact_skipped: free-mail address"
+    assert hubspot["sincronizado"] is not None
+
+
+def test_persona_ver_says_nothing_is_in_the_crm_yet(datos):
+    hubspot = mcp_remoto.persona_ver("U2")["hubspot"]
+    assert hubspot["estado"] is None
+    assert hubspot["contact_id"] is None and hubspot["company_id"] is None
+    assert hubspot["intentos"] == 0
+
+
 def test_persona_ver_accepts_the_slack_id_and_handles_unknown(datos):
     assert mcp_remoto.persona_ver("U2")["persona"]["slack_user_id"] == "U2"
     assert mcp_remoto.persona_ver("U2")["dossier"]["version"] == 1

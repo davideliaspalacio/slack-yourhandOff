@@ -3,12 +3,15 @@ research queue in between. Once per cycle it also runs the target-account
 radar (accounts/radar.py), which only does work when an account is due, and
 the decisor (accounts/decisor.py), which finds who decides each pursued
 opening and queues their research, and the message signals (signals/alertas.py),
-which detect what people ask for in Slack and post a light alert. Every few
-minutes it also goes over the owner's one-to-one DMs (ingest/dms.py) to know
-which conversations are waiting -- the timing only -- and posts one follow-up
-summary a day (delivery/seguimiento.py). Right after, and only if Anthony's
-switch is on, it reads the text of his DMs with leads (ingest/dm_texto.py) so
-replies can be suggested; with the switch off that same step wipes the text.
+which detect what people ask for in Slack and post a light alert. On a slower
+cadence of its own it takes the people already contacted to Handoff's own
+HubSpot (crm/hubspot_sync.py), which does nothing until someone turns that
+switch on. Every few minutes it also goes over the owner's one-to-one DMs
+(ingest/dms.py) to know which conversations are waiting -- the timing only --
+and posts one follow-up summary a day (delivery/seguimiento.py). Right after,
+and only if Anthony's switch is on, it reads the text of his DMs with leads
+(ingest/dm_texto.py) so replies can be suggested; with the switch off that same
+step wipes the text.
 
 A dead token or a system stop raises an operational alert and the loop keeps
 running: the token may be renewed and the cap may be raised without anyone
@@ -23,6 +26,7 @@ from collections.abc import Callable, Sequence
 
 from .. import canales, estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
+from ..crm import hubspot_sync
 from ..delivery import aviso_lector, novedades, seguimiento
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas, eventos
@@ -35,6 +39,10 @@ from .watcher import watch_tick
 logger = logging.getLogger(__name__)
 IDLE_SECONDS = 30
 SYSTEM_STOP_PAUSE_SECONDS = 600
+# Cada cuánto le toca una pasada al CRM. No va en cada vuelta: un lead ya
+# contactado no tiene prisa por estar en HubSpot, y cada persona cuesta varias
+# llamadas a su API.
+MINUTOS_ENTRE_PASADAS_HUBSPOT = 10
 
 
 def _reclaim_stale() -> None:
@@ -130,6 +138,26 @@ def _eventos_canal(reader) -> None:
         return
     if avisos:
         logger.info("eventos: %d aviso(s) publicado(s)", avisos)
+
+
+def _hubspot() -> None:
+    """Una pasada del CRM: las personas contactadas que aún no están en HubSpot
+    (crm/hubspot_sync.py).
+
+    A su propio ritmo (`MINUTOS_ENTRE_PASADAS_HUBSPOT`) y no en cada vuelta: un
+    lead ya contactado no tiene prisa por aparecer en el CRM, cada persona son
+    varias llamadas a la API de HubSpot, y el tope diario ya lo frena de todas
+    formas. Protegida igual que el radar y las señales: es un extra, y un fallo
+    aquí se registra y se reintenta sin tocar el research ni la entrega.
+    `sincronizar_pendientes` ya gestiona por dentro el interruptor, las paradas
+    del sistema y los topes, y no lanza; esta guarda es la segunda línea."""
+    try:
+        sincronizadas = hubspot_sync.sincronizar_pendientes()
+    except Exception:
+        logger.exception("hubspot fallido; se reintenta en la pasada siguiente")
+        return
+    if sincronizadas:
+        logger.info("hubspot: %d persona(s) sincronizada(s) con el CRM", sincronizadas)
 
 
 def _rastro_dms(reader) -> None:
@@ -292,6 +320,8 @@ def run_loop(
     # El descubrimiento de canales va a su propio ritmo y solo en modo automático: la
     # lista de canales de un workspace no cambia cada dos minutos.
     next_descubrimiento = clock()
+    # El CRM también lleva su propio ritmo (ver _hubspot).
+    next_hubspot = clock()
     cycles = 0
     failing = False
     try:
@@ -355,6 +385,9 @@ def run_loop(
             _decisor()
             _senales(reader)
             _eventos_canal(reader)
+            if clock() >= next_hubspot:
+                next_hubspot = clock() + MINUTOS_ENTRE_PASADAS_HUBSPOT * 60
+                _hubspot()
 
             try:
                 result = run_next_job(reader)

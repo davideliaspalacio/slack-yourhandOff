@@ -305,6 +305,46 @@ export async function guardarChatResponderActivo(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// hubspot_activo también es un booleano: el interruptor de llevar los leads ya
+// contactados al CRM. La política panel_ajusta_hubspot (0035) es la que permite
+// tocar esta clave, y solo con true o false. hubspot_por_dia pasa por guardarUmbral.
+// Nace apagado: escribir en el CRM del equipo comercial no se enciende solo, y
+// encenderlo no sube el histórico (eso es `handoff hubspot-backfill`, a mano).
+export async function guardarHubspotActivo(formData: FormData) {
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", "hubspot_activo");
+  revalidatePath("/ajustes");
+}
+
+export type TokenHubspotState = { error?: string; ok?: boolean };
+
+// La llave de HubSpot, igual que la credencial del Founders Club: de solo
+// escritura. El panel la manda a panel_guardar_token_hubspot (0035), que valida
+// que no venga recortada, y nunca puede leerla de vuelta (solo si hay una y sus
+// cuatro últimos, con el estado).
+export async function guardarTokenHubspot(
+  _previo: TokenHubspotState,
+  formData: FormData,
+): Promise<TokenHubspotState> {
+  const token = String(formData.get("token") ?? "");
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_guardar_token_hubspot", { p_token: token });
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return { ok: true };
+}
+
+export async function borrarTokenHubspot(): Promise<{ error?: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("panel_borrar_token_hubspot");
+  if (error) return { error: error.message };
+  revalidatePath("/ajustes");
+  return {};
+}
+
 // Dominio del worker (el servicio web de Railway: el mismo que recibe los botones de
 // Slack y sirve el MCP). WORKER_URL si está puesto; si no, se deduce de MCP_PUBLIC_URL
 // quitándole el /mcp, que es la misma URL con otra ruta.

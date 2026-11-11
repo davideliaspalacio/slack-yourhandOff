@@ -209,7 +209,8 @@ def personas_buscar(
 def persona_ver(id_o_slack_user_id: str) -> dict:
     """Ficha completa de una persona: estado, correcciones del equipo (overrides),
     último dossier con sus fuentes, señales detectadas en sus mensajes, avisos
-    entregados y gasto. Acepta el id de `personas_buscar` o su slack_user_id."""
+    entregados, su ficha en HubSpot (solo lectura: ids, estado y motivo) y gasto.
+    Acepta el id de `personas_buscar` o su slack_user_id."""
     referencia = id_o_slack_user_id.strip()
     try:
         por_id = str(uuid.UUID(referencia))
@@ -270,6 +271,20 @@ def persona_ver(id_o_slack_user_id: str) -> dict:
                 "estado": p["state"],
                 "visto_por_primera_vez": p["first_seen_at"],
                 "actualizado": p["updated_at"],
+            }
+        ),
+        # El CRM (0035): solo lo que hizo la sincronización -- ids, estado y
+        # motivo. De solo lectura, como todo aquí: desde el MCP no se escribe
+        # en HubSpot, eso lo hace el worker (crm/hubspot_sync.py). Son valores
+        # del sistema, así que no van delimitados.
+        "hubspot": jsonable(
+            {
+                "estado": p["hubspot_estado"],
+                "motivo": p["hubspot_motivo"],
+                "contact_id": p["hubspot_contact_id"],
+                "company_id": p["hubspot_company_id"],
+                "sincronizado": p["hubspot_at"],
+                "intentos": p["hubspot_intentos"],
             }
         ),
         # Lo que el equipo corrigió o añadió a mano desde el panel.

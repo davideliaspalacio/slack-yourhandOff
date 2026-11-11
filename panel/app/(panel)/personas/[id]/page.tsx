@@ -61,6 +61,38 @@ type Dossier = {
 // Las 6 filas de la primera prueba guardan URLs sueltas; las demás, objetos.
 type Fuente = string | { url: string; kind?: string; title?: string };
 
+// El portal de HubSpot de Handoff: lo único que hace falta para construir el
+// enlace a una ficha. No es un secreto (está en la migración 0035), pero se
+// puede cambiar sin tocar código si algún día el portal es otro.
+const HUBSPOT_PORTAL = process.env.HUBSPOT_PORTAL_ID ?? "245974710";
+const hubspotUrl = (tipo: "0-1" | "0-2", id: string) =>
+  `https://app.hubspot.com/contacts/${HUBSPOT_PORTAL}/record/${tipo}/${id}`;
+
+// prospects.hubspot_estado / hubspot_motivo (migración 0035, crm/hubspot_sync.py).
+// Los motivos los escribe el worker en inglés; aquí solo se explican los que
+// significan "se hizo, pero dejando algo fuera a propósito".
+const MOTIVO_HUBSPOT_LABELS: Record<string, string> = {
+  no_dossier: "no dossier yet",
+  state_not_syncable: "not contacted yet",
+  degraded_dossier: "the research came back degraded",
+  no_evidence: "the fit score has no evidence behind it",
+  no_company_and_no_contact: "no confirmed website and no work email",
+  private_data_blocked: "it would have carried private community data",
+  sync_failed: "HubSpot kept failing",
+  "company_skipped: domain not confirmed":
+    "contact and note only — the website was never confirmed, so no company was created",
+  "company_skipped: no domain on file":
+    "contact and note only — there is no website on file",
+  "contact_skipped: free-mail address":
+    "company and note only — the address is a personal one, so the contact is left to you",
+  "contact_skipped: no email on file":
+    "company and note only — there is no email on file",
+};
+const motivoHubspot = (motivo: string | null) =>
+  motivo ? (MOTIVO_HUBSPOT_LABELS[motivo] ?? motivo) : null;
+// Los mismos dos estados que sincroniza el worker (crm/hubspot_sync.py).
+const ESTADOS_SINCRONIZABLES_HUBSPOT = ["contactado", "cliente"];
+
 export default async function Persona(props: PageProps<"/personas/[id]">) {
   const { id } = await props.params;
   const { supabase, user, allowed } = await acceso();
@@ -284,6 +316,45 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
               links={(p.research_links as string[] | null) ?? []}
               notas={p.research_notes ?? ""}
             />
+          </div>
+          <div className="card">
+            <h2 style={{ marginTop: 0 }}>HubSpot</h2>
+            {p.hubspot_estado === "sincronizada" ? (
+              <>
+                <p>
+                  In the CRM · <span className="muted">{fecha(p.hubspot_at)}</span>
+                </p>
+                <ul className="plain">
+                  {p.hubspot_contact_id && (
+                    <li>
+                      <a href={hubspotUrl("0-1", p.hubspot_contact_id)} target="_blank"
+                         rel="noreferrer">Open the contact in HubSpot ↗</a>
+                    </li>
+                  )}
+                  {p.hubspot_company_id && (
+                    <li>
+                      <a href={hubspotUrl("0-2", p.hubspot_company_id)} target="_blank"
+                         rel="noreferrer">Open the company in HubSpot ↗</a>
+                    </li>
+                  )}
+                </ul>
+                {p.hubspot_motivo && (
+                  <p className="notice">Partly: {motivoHubspot(p.hubspot_motivo)}</p>
+                )}
+              </>
+            ) : p.hubspot_estado === "omitida" ? (
+              <p className="notice">Not sent to the CRM: {motivoHubspot(p.hubspot_motivo) ?? "unknown reason"}</p>
+            ) : p.hubspot_estado === "reservada" ? (
+              <p className="muted">Syncing right now…</p>
+            ) : ESTADOS_SINCRONIZABLES_HUBSPOT.includes(p.state) ? (
+              <p className="muted">Waiting for the next sync.</p>
+            ) : (
+              <p className="muted">
+                People reach the CRM once they are marked as contacted — a card is
+                &ldquo;look at this&rdquo;, a CRM record means someone committed to the
+                relationship.
+              </p>
+            )}
           </div>
           <div className="card">
             <h2 style={{ marginTop: 0 }}>Spend on this person</h2>

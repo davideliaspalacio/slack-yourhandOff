@@ -20,6 +20,7 @@ from . import guards, ledger, ops_alerts, secretos, serialize
 from .accounts import decisor, radar
 from .accounts import repo as cuentas
 from .config import load_settings
+from .crm import hubspot_sync
 from .delivery import digest
 from .ingest import queue
 from .ingest.loop import run_loop
@@ -491,6 +492,49 @@ def cmd_decisor(args) -> int:
     return 0 if resultado.estado in ("researching", "ready") else 1
 
 
+def _linea_backfill(persona: dict, plan, motivo: str | None) -> str:
+    """Una persona del backfill, en una línea: qué se escribiría, o por qué no."""
+    quien = persona["full_name"] or persona["slack_user_id"]
+    if plan is None:
+        return f"-  {quien} ({persona['state']}): se omite — {motivo}"
+    partes = [f"empresa {plan.dominio}" if plan.dominio else "sin empresa"]
+    partes.append(f"contacto {plan.email}" if plan.email else "sin contacto")
+    partes.append("nota")
+    detalle = ", ".join(partes)
+    if plan.motivo:
+        detalle += f" — {plan.motivo}"
+    return f"+  {quien} ({persona['state']}): {detalle}"
+
+
+def cmd_hubspot_backfill(args) -> int:
+    """El histórico que quedó antes de `hubspot_desde`, a mano y con límite.
+
+    El bucle nunca sube el histórico (ver crm/hubspot_sync.py): esto es el
+    camino explícito para hacerlo, y `--dry-run` enseña qué entraría sin
+    escribir nada en HubSpot.
+    """
+    if args.limit <= 0:
+        print("--limit tiene que ser mayor que 0")
+        return 1
+    previsto = hubspot_sync.plan_backfill(args.limit)
+    for persona, plan, motivo in previsto:
+        print(_linea_backfill(persona, plan, motivo))
+    entrarian = sum(1 for _, plan, _ in previsto if plan is not None)
+    if args.dry_run:
+        print(f"\nprueba en seco: {entrarian} de {len(previsto)} se escribirían en HubSpot")
+        return 0
+    if not previsto:
+        print("no hay nadie pendiente de sincronizar")
+        return 0
+    try:
+        hechas = hubspot_sync.sincronizar_backfill(args.limit)
+    except SYSTEM_STOPS as exc:
+        print(f"detenido: {exc}")
+        return 1
+    print(f"\n{hechas} persona(s) sincronizada(s) con HubSpot")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="handoff")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -570,6 +614,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     decisor_cmd.add_argument("signal_id")
     decisor_cmd.set_defaults(func=cmd_decisor)
+
+    backfill_cmd = sub.add_parser(
+        "hubspot-backfill",
+        help="sube a HubSpot el histórico anterior a hubspot_desde (el bucle nunca lo hace)",
+    )
+    backfill_cmd.add_argument(
+        "--limit", type=int, required=True, metavar="N", help="cuántas personas como mucho"
+    )
+    backfill_cmd.add_argument(
+        "--dry-run", action="store_true", help="solo imprime qué se escribiría"
+    )
+    backfill_cmd.set_defaults(func=cmd_hubspot_backfill)
 
     unipile_cmd = sub.add_parser("unipile", help="la cuenta de LinkedIn vía Unipile")
     unipile_sub = unipile_cmd.add_subparsers(dest="accion", required=True)

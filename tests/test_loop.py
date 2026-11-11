@@ -35,6 +35,7 @@ def wiring(monkeypatch):
         "radar": 0,
         "decisor": 0,
         "senales": [],
+        "hubspot": 0,
         "rastro": [],
         "texto": [],
         "resumenes": 0,
@@ -67,6 +68,12 @@ def wiring(monkeypatch):
         loop.alertas,
         "publicar_pendientes",
         lambda reader=None: calls["senales"].append(reader) or 0,
+    )
+    # Ni HubSpot de verdad: el CRM también se sustituye (crm/hubspot_sync.py).
+    monkeypatch.setattr(
+        loop.hubspot_sync,
+        "sincronizar_pendientes",
+        lambda: calls.__setitem__("hubspot", calls["hubspot"] + 1) or 0,
     )
     monkeypatch.setattr(
         loop.aviso_lector,
@@ -408,6 +415,57 @@ def test_a_signals_failure_does_not_stop_the_research_or_alert(wiring, monkeypat
     assert researched == [1, 1]
     assert wiring["alerts"] == []
     assert wiring["radar"] == 2 and wiring["decisor"] == 2
+
+
+# -- el CRM (crm/hubspot_sync.py) --
+
+
+def test_the_crm_runs_once_at_start_and_then_on_its_own_interval(wiring):
+    """A su propio ritmo, no en cada vuelta: un lead ya contactado no tiene
+    prisa por estar en HubSpot y cada persona cuesta varias llamadas a su API."""
+    run(FakeClock(), max_cycles=10)
+    # Cada vuelta duerme 30 s: en 10 vueltas el reloj llega a 300 s, y la
+    # pasada toca cada 10 min (600 s). Solo la del arranque.
+    assert wiring["hubspot"] == 1
+
+
+def test_the_crm_runs_again_once_its_interval_passes(wiring, monkeypatch):
+    monkeypatch.setattr(loop, "MINUTOS_ENTRE_PASADAS_HUBSPOT", 1)
+    run(FakeClock(), max_cycles=10)
+    # 300 s de reloj y una pasada por minuto: t=0, 60, 120, 180, 240.
+    assert wiring["hubspot"] == 5
+
+
+def test_the_crm_runs_after_the_signals_and_the_channel_events(wiring, monkeypatch):
+    orden = []
+    monkeypatch.setattr(
+        loop.alertas, "publicar_pendientes", lambda reader=None: orden.append("senales") or 0
+    )
+    monkeypatch.setattr(
+        loop.eventos, "publicar_pendientes", lambda reader=None: orden.append("eventos") or 0
+    )
+    monkeypatch.setattr(
+        loop.hubspot_sync, "sincronizar_pendientes", lambda: orden.append("hubspot") or 0
+    )
+    monkeypatch.setattr(loop, "run_next_job", lambda reader: orden.append("research") or None)
+    run(FakeClock(), max_cycles=1)
+    assert orden == ["senales", "eventos", "hubspot", "research"]
+
+
+def test_a_crm_failure_does_not_stop_the_research_or_alert(wiring, monkeypatch):
+    """El CRM es un extra: no puede tumbar el bucle ni la cola de research."""
+    researched = []
+
+    def boom():
+        raise RuntimeError("hubspot exploded")
+
+    monkeypatch.setattr(loop.hubspot_sync, "sincronizar_pendientes", boom)
+    monkeypatch.setattr(
+        loop, "run_next_job", lambda reader: researched.append(1) or RunResult("hecho", "U1")
+    )
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert researched == [1, 1]
+    assert wiring["alerts"] == []
 
 
 # -- aviso cuando caduca la credencial del lector --

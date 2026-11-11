@@ -2,11 +2,12 @@ import { createClient } from "@/lib/supabase/server";
 import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarChatResponderActivo,
-  guardarExigirEvidencia,
+  guardarExigirEvidencia, guardarHubspotActivo,
   guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
+import { TokenHubspotForm } from "./TokenHubspotForm";
 import { TokenSlackForm } from "./TokenSlackForm";
 
 const EDITABLES: Record<string, string> = {
@@ -66,6 +67,12 @@ const EDITABLES_CHAT: Record<string, string> = {
   chat_mensajes_por_dia: "Maximum messages sent from the panel per day (everyone together)",
 };
 
+// El CRM (0035_hubspot.sql): el numérico que la política panel_ajusta_hubspot
+// deja tocar. hubspot_activo va aparte porque es un booleano.
+const EDITABLES_HUBSPOT: Record<string, string> = {
+  hubspot_por_dia: "Maximum people synced to HubSpot per day",
+};
+
 const EDITABLES_RADAR: Record<string, string> = {
   radar_auto_min: "Minimum score for a role to be pursued automatically (0–10)",
   radar_horas_entre_escaneos: "Hours between scans of the same account",
@@ -113,6 +120,7 @@ export default async function Ajustes() {
       ...Object.keys(EDITABLES_SEGUIMIENTO), ...Object.keys(EDITABLES_EVENTOS),
       ...Object.keys(EDITABLES_HILOS), "leer_hilos",
       ...Object.keys(EDITABLES_CHAT), "chat_responder_activo",
+      ...Object.keys(EDITABLES_HUBSPOT), "hubspot_activo", "hubspot_desde",
       "canal_presentaciones", "seguimiento_activo", "dm_texto_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
@@ -155,6 +163,13 @@ export default async function Ajustes() {
   // (tools/respondedor._activo). Nace apagado en 0034: escribir en el club ajeno no
   // puede ser el estado por omisión de nada.
   const chatResponderActivo = valores.get("chat_responder_activo") === true;
+  // Apagado salvo que la base diga true, igual que en el worker
+  // (crm/hubspot_sync.py). Nace apagado: escribir en el CRM del equipo
+  // comercial no puede ser el valor por omisión de nada.
+  const hubspotActivo = valores.get("hubspot_activo") === true;
+  // La marca desde la que se sincroniza: vacía hasta que el worker hace su
+  // primera pasada y escribe `now()` ahí. Nada anterior entra solo.
+  const hubspotDesde = String(valores.get("hubspot_desde") ?? "");
   const canalIntros = String(valores.get("canal_presentaciones") ?? "");
   const descubiertos = (nombresData ?? []).filter((c) => c.es_miembro === true);
   const masActivos = [...descubiertos]
@@ -187,6 +202,11 @@ export default async function Ajustes() {
   // panel_estado_token_slack nunca devuelve el token: solo si hay uno y sus 4 últimos.
   const { data: estado } = await supabase.rpc("panel_estado_token_slack");
   const token = Array.isArray(estado) ? estado[0] : estado;
+
+  // Igual con la llave de HubSpot (0035): nunca el valor, solo si hay una y
+  // sus cuatro últimos.
+  const { data: estadoHubspot } = await supabase.rpc("panel_estado_token_hubspot");
+  const tokenHubspot = Array.isArray(estadoHubspot) ? estadoHubspot[0] : estadoHubspot;
 
   // panel_tokens_mcp solo devuelve los tokens de quien mira, y nunca su hash.
   const { data: tokensMcp } = await supabase.rpc("panel_tokens_mcp");
@@ -413,6 +433,44 @@ export default async function Ajustes() {
           {Object.entries(EDITABLES_CHAT).map(fila)}
         </tbody>
       </table>
+
+      <h2>HubSpot</h2>
+      <p>
+        People you have marked as <b>contacted</b> (or as clients) are written to
+        Handoff&apos;s own HubSpot: the company, the contact, and a note with the fit
+        score, why it scored that way, what they asked for and a link back to their
+        page here. The evidence itself stays in this panel &mdash; nothing from direct
+        messages, no quote from the community, and no channel ever reaches the CRM.
+      </p>
+      <p>
+        {tokenHubspot?.configurado
+          ? `Key configured · ends in ${tokenHubspot.ultimos4} · updated ${fecha(tokenHubspot.actualizado)}`
+          : "No key yet — nothing is written to the CRM until one is saved."}
+      </p>
+      <TokenHubspotForm configurado={Boolean(tokenHubspot?.configurado)} />
+      <table>
+        <tbody>
+          <tr>
+            <td>Send contacted leads to HubSpot. Turning this on only affects people
+              contacted from now on: the backlog is never uploaded on its own, and a
+              person is written once and only once.
+              <div className="muted" style={{ fontSize: 12 }}>hubspot_activo</div></td>
+            <td>
+              <form action={guardarHubspotActivo} className="inline">
+                <input type="hidden" name="value" value={hubspotActivo ? "false" : "true"} />
+                <span>{hubspotActivo ? "On" : "Off"}</span>
+                <button type="submit">{hubspotActivo ? "Turn off" : "Turn on"}</button>
+              </form>
+            </td>
+          </tr>
+          {Object.entries(EDITABLES_HUBSPOT).map(fila)}
+        </tbody>
+      </table>
+      <p className="muted" style={{ fontSize: 12 }}>
+        {hubspotDesde
+          ? `Syncing people updated after ${fecha(hubspotDesde)}. Anyone contacted before that is only uploaded by hand.`
+          : "Nothing has been synced yet. The first pass marks the moment it starts from, and never looks further back."}
+      </p>
 
       <h2>Target account radar</h2>
       {pausado && (
