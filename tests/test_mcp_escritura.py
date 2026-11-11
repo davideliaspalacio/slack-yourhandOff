@@ -55,6 +55,11 @@ CLAVES_PROHIBIDAS = [
     # lo hace alguien del equipo a mano.
     "chat_mensajes_por_dia",
     "chat_responder_activo",
+    # El tope de escrituras al CRM de la empresa y su interruptor (0035): mismo
+    # razonamiento. Lo que sale del agente hacia un sistema de registro ajeno lo afloja
+    # una persona en Settings.
+    "hubspot_por_dia",
+    "hubspot_activo",
     "clave_inventada",
     "",
 ]
@@ -486,13 +491,14 @@ def test_adjustable_settings_match_what_the_panel_lets_you_touch(equipo):
     obliga a decidir si el MCP la sigue o no."""
     del_panel = set(numericas_que_el_panel_deja_tocar())
     propios = {"mcp_llamadas_por_dia", "mcp_escrituras_por_dia"}
-    # El tope de mensajes enviados como Anthony (0034): el panel lo ajusta, el MCP no. Es
-    # el freno de una capacidad que habla con el nombre de otra persona, así que aflojarlo
-    # es cosa de alguien del equipo en Settings y no del agente. La migración ya lo decidió
+    # Dos frenos que el panel ajusta y el MCP no: los mensajes enviados como Anthony
+    # (0034) y las escrituras al CRM de la empresa (0035). Los dos gobiernan algo que
+    # sale del agente hacia fuera con el nombre de otro -- su Slack, su CRM --, así que
+    # aflojarlos es cosa de alguien del equipo en Settings y no del agente. La migración ya lo decidió
     # al NO añadir la clave a `mcp_ajustar_umbral`; aquí solo queda escrito. Que de verdad
     # se rechace lo prueban CLAVES_PROHIBIDAS (Python y SQL) y
     # test_every_config_key_outside_the_allowed_list_is_refused_by_sql.
-    solo_panel = {"chat_mensajes_por_dia"}
+    solo_panel = {"chat_mensajes_por_dia", "hubspot_por_dia"}
     assert propios <= del_panel
     assert solo_panel <= del_panel
     assert set(mcp_escritura.UMBRALES) == del_panel - propios - solo_panel
