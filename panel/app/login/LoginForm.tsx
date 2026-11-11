@@ -9,15 +9,17 @@ import { createClient } from "@/lib/supabase/client";
 // esté en panel_users. Así nadie puede darse de alta con el correo de otro.
 //
 // Sí hay recuperación, porque sin ella cada contraseña olvidada obligaba a entrar al
-// dashboard de Supabase. Pedirla NO dice si el correo existe: la respuesta es la misma
-// en los dos casos, para que esta pantalla no sirva para averiguar quién tiene cuenta.
+// dashboard de Supabase. No hace falta esconder los errores para no filtrar qué correos
+// existen: `resetPasswordForEmail` responde lo mismo exista o no la cuenta, eso ya lo
+// garantiza Supabase. Tragárselos solo servía para que un límite de envío alcanzado se
+// viera igual que un envío correcto, y el usuario esperara un correo que no iba a llegar.
 export function LoginForm({ destino }: { destino: string }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "error">("idle");
   const [recuperando, setRecuperando] = useState(false);
-  const [recuperado, setRecuperado] = useState(false);
+  const [aviso, setAviso] = useState("");
 
   async function signIn(event: React.FormEvent) {
     event.preventDefault();
@@ -37,15 +39,26 @@ export function LoginForm({ destino }: { destino: string }) {
 
   async function recuperar() {
     const correo = email.trim().toLowerCase();
-    if (!correo) return;
+    if (!correo) {
+      setAviso("Type your email above first.");
+      return;
+    }
     setRecuperando(true);
-    // El error se ignora a propósito: un fallo distinto según si el correo existe
-    // convertiría esto en una forma de comprobar cuentas.
-    await createClient().auth.resetPasswordForEmail(correo, {
+    setAviso("");
+    const { error: fallo } = await createClient().auth.resetPasswordForEmail(correo, {
       redirectTo: `${window.location.origin}/auth/nueva-clave`,
     });
     setRecuperando(false);
-    setRecuperado(true);
+    if (fallo) {
+      // El más común con diferencia: el envío de correos de Supabase va por horas.
+      setAviso(
+        /rate|limit|429/i.test(`${fallo.message} ${fallo.status ?? ""}`)
+          ? "Too many emails requested. Wait an hour and try again."
+          : `Could not send the email: ${fallo.message}`,
+      );
+      return;
+    }
+    setAviso("If that email has an account, a link to set a new password is on its way.");
   }
 
   return (
@@ -64,19 +77,13 @@ export function LoginForm({ destino }: { destino: string }) {
           </button>
           {state === "error" && <p className="muted">Incorrect email or password.</p>}
         </form>
-        {recuperado ? (
-          <p className="muted" style={{ marginTop: 12 }}>
-            If that email has an account, a link to set a new password is on its way.
-            Check your inbox.
-          </p>
-        ) : (
-          <button type="button" onClick={recuperar} disabled={recuperando}
-                  style={{ marginTop: 12, background: "none", border: "none", padding: 0,
-                           textDecoration: "underline", cursor: "pointer" }}
-                  className="muted">
-            {recuperando ? "Sending…" : "Forgot your password?"}
-          </button>
-        )}
+        <button type="button" onClick={recuperar} disabled={recuperando}
+                style={{ marginTop: 12, background: "none", border: "none", padding: 0,
+                         textDecoration: "underline", cursor: "pointer" }}
+                className="muted">
+          {recuperando ? "Sending…" : "Forgot your password?"}
+        </button>
+        {aviso && <p className="muted" style={{ marginTop: 8 }}>{aviso}</p>}
       </div>
     </main>
   );
