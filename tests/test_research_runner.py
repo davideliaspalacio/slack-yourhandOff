@@ -30,6 +30,7 @@ def stub_research(monkeypatch, error=None):
         extra_links=(),
         notes=None,
         mensajes=(),
+        email=None,
     ):
         seen.append(
             {
@@ -40,6 +41,7 @@ def stub_research(monkeypatch, error=None):
                 "extra_links": extra_links,
                 "notes": notes,
                 "mensajes": mensajes,
+                "email": email,
             }
         )
         if error:
@@ -71,6 +73,7 @@ def test_a_job_is_researched_with_what_the_profile_tells_us(conn, reader, monkey
             "extra_links": (),
             "notes": None,
             "mensajes": (),
+            "email": "ada@acme.com",
         }
     ]
     assert job()["status"] == "hecho"
@@ -171,6 +174,7 @@ def test_a_manual_job_forces_research_but_a_mensaje_job_does_not(conn, reader, m
         extra_links=(),
         notes=None,
         mensajes=(),
+        email=None,
     ):
         seen_force.append(force)
         return ResearchOutcome("pid", slack_user_id, "investigado", 1, Decimal("0.02"), None)
@@ -411,6 +415,7 @@ def test_without_a_slack_profile_it_researches_with_what_is_stored(conn, reader,
             "extra_links": (),
             "notes": None,
             "mensajes": (),
+            "email": None,
         }
     ]
     assert job()["status"] == "hecho"
@@ -608,3 +613,26 @@ def test_a_long_parent_is_trimmed_and_reaches_synthesis_inside_the_fence(conn, r
     assert valla.count("</contenido-web-no-confiable>") == 1
     assert valla.endswith("</contenido-web-no-confiable>")
     assert "in reply to a post by another member" in valla
+
+
+def test_the_profile_email_reaches_the_research(conn, reader, monkeypatch):
+    """El correo del perfil no se guardaba en ninguna parte: se leía para deducir el
+    dominio y se tiraba. Es la única llave que evita duplicar un contacto en HubSpot
+    (0035), así que ahora llega al research y de ahí a la ficha de la persona."""
+    reader.add_profile("U1", "Ada Ruiz", title="CEO @ Acme", email="ada@acme.com")
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+
+    runner.run_next_job(reader)
+
+    assert seen[0]["email"] == "ada@acme.com"
+
+
+def test_a_profile_without_an_email_invents_nothing(conn, reader, monkeypatch):
+    reader.add_profile("U1", "Ada Ruiz")
+    queue.enqueue("U1", "mensaje")
+    seen = stub_research(monkeypatch)
+
+    runner.run_next_job(reader)
+
+    assert seen[0]["email"] in (None, "")

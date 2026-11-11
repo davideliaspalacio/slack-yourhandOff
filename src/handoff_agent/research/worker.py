@@ -149,12 +149,16 @@ def research_person(
     # Lo que la persona escribió en la comunidad (del más antiguo al más
     # reciente): contexto para la síntesis, nunca una fuente.
     mensajes: Sequence[str] = (),
+    # El correo de su perfil público de Slack (0035). No entra en el research:
+    # se guarda porque es la única llave que evita duplicar un contacto en
+    # HubSpot, y al CRM solo sale el de quien llegue a `contactado`.
+    email: str | None = None,
 ) -> ResearchOutcome:
     if not (full_name or company):
         raise ValueError("hace falta al menos un nombre o una empresa")
 
     user_id = slack_user_id or manual_user_id(full_name, company)
-    person = prospects.upsert_prospect(user_id, full_name=full_name)
+    person = prospects.upsert_prospect(user_id, full_name=full_name, email=email)
     pid = str(person["id"])
 
     if person["state"] == "descartado":

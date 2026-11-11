@@ -216,6 +216,10 @@ def run_next_job(reader) -> RunResult | None:
             extra_links=extra_links,
             notes=notes,
             mensajes=_person_messages(uid),
+            # El perfil ya está leído aquí arriba: su correo se guarda para poder
+            # crear el contacto en HubSpot sin duplicarlo (0035). Hasta ahora solo
+            # se usaba para deducir el dominio y se descartaba.
+            email=profile.email if profile is not None else None,
         )
     except worker.SYSTEM_STOPS:
         queue.release(job)

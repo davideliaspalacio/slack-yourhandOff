@@ -13,22 +13,31 @@ from .. import db
 RECENT_ACTIONS_LIMIT = 20
 
 
-def upsert_prospect(slack_user_id: str, full_name: str | None = None) -> dict:
+def upsert_prospect(
+    slack_user_id: str, full_name: str | None = None, email: str | None = None
+) -> dict:
     """Return the person's row, creating it on first sight.
 
-    Never overwrites a known name with NULL: a later sighting with less
-    information must not erase what an earlier one established.
+    Never overwrites a known name or email with NULL: a later sighting with
+    less information must not erase what an earlier one established.
+
+    `email` es el del perfil público de Slack (0035). Hasta entonces se leía
+    solo para deducir el dominio de la empresa y se tiraba; se guarda porque es
+    la única llave que evita duplicar un contacto en HubSpot. Es un dato
+    personal, así que al CRM solo sale el de quien llegue a `contactado`
+    (`crm/hubspot_sync.py`) y el panel lo enseña únicamente en su ficha.
     """
     return db.fetch_one(
         """
-        insert into prospects (slack_user_id, full_name)
-        values (%s, %s)
+        insert into prospects (slack_user_id, full_name, email)
+        values (%s, %s, %s)
         on conflict (slack_user_id) do update
             set full_name = coalesce(excluded.full_name, prospects.full_name),
+                email = coalesce(excluded.email, prospects.email),
                 updated_at = now()
         returning *
         """,
-        (slack_user_id, full_name),
+        (slack_user_id, full_name, (email or "").strip().lower() or None),
     )
 
 
