@@ -13,6 +13,8 @@ el respaldo. Una lista vacía en la base cuenta como "sin valor del panel".
 
 from __future__ import annotations
 
+import os
+
 import psycopg.errors
 
 from . import db
@@ -38,6 +40,21 @@ def slack_user_token() -> str | None:
 def slack_d_cookie() -> str | None:
     """Cookie `d` (xoxd-…): solo hace falta con un token de sesión (xoxc-)."""
     return _leer(SLACK_D_COOKIE_KEY) or load_settings().slack_d_cookie
+
+
+HUBSPOT_TOKEN_KEY = "hubspot_token"
+
+
+def hubspot_token() -> str | None:
+    """Service Key del HubSpot de Handoff: gana el panel, HUBSPOT_TOKEN es el respaldo.
+
+    Mismo contrato que `slack_user_token()`, y por el mismo motivo: la llave la pega (y
+    puede tener que rotar) una persona que no toca Railway. Se lee del entorno sin pasar
+    por `Settings` para no tocar `config.py`, que es de otro agente en esta tanda; si
+    algún día se añade el campo allí, este `or` es lo único que cambia. `load_dotenv()`
+    ya corrió al importar `config`, así que un .env local también vale.
+    """
+    return _leer(HUBSPOT_TOKEN_KEY) or os.environ.get("HUBSPOT_TOKEN") or None
 
 
 SLACK_CHANNEL_IDS_KEY = "slack_channel_ids"

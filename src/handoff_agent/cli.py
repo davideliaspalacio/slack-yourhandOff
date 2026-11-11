@@ -28,7 +28,7 @@ from .ingest.resolver import resolve_pending
 from .ingest.watcher import watch_tick
 from .research import worker
 from .slack_client import FoundersClubReader, SlackAuthFailed
-from .tools import prospects, unipile
+from .tools import hubspot, prospects, unipile
 
 SYSTEM_STOPS = (guards.KillSwitchActive, guards.MonthlyBudgetExceeded)
 
@@ -437,6 +437,36 @@ def cmd_unipile_estado(args) -> int:
     return 0 if sana else 1
 
 
+def cmd_hubspot_estado(args) -> int:
+    """Comprueba la llave sin encender nada: solo lecturas, y funciona con
+    `hubspot_activo` apagado, que es justo cuando hace falta."""
+    cliente = hubspot.HubSpot()
+    try:
+        informe = cliente.estado()
+    except hubspot.HubSpotNoConfigurado as exc:
+        print(f"HubSpot key: missing ({exc})")
+        return 1
+    except hubspot.HubSpotError as exc:
+        print(f"HubSpot: no answer ({exc})")
+        return 1
+
+    portal = informe["portal_id"]
+    print(f"Portal: {portal if portal is not None else 'unknown (could not read account details)'}")
+    for etiqueta, ok in informe["capacidades"]:
+        print(f"{etiqueta}: {'OK' if ok else 'NOT ALLOWED'}")
+    limites = informe["propiedades"]
+    if limites:
+        print(f"Custom property limit: {limites['tope_general']}")
+        for objeto, usadas, tope in limites["por_objeto"]:
+            print(f"  {objeto}: {usadas}/{tope}")
+    else:
+        print("Custom property limits: could not be read")
+    print(f"Sync switch (hubspot_activo): {'on' if informe['activo'] else 'off'}")
+    print(f"Calls today: {informe['llamadas_hoy']}/{informe['tope_diario']}")
+    # Si ninguna lectura funcionó, la llave no sirve para nada: código de salida 1.
+    return 0 if any(ok for _, ok in informe["capacidades"]) else 1
+
+
 def _uuid(valor: str) -> str | None:
     try:
         return str(uuid.UUID(valor))
@@ -633,6 +663,12 @@ def build_parser() -> argparse.ArgumentParser:
         "estado", help="estado de la cuenta, uso de hoy frente a los topes y horario"
     )
     status_cmd.set_defaults(func=cmd_unipile_estado)
+
+    hubspot_cmd = sub.add_parser(
+        "hubspot-estado",
+        help="comprueba la llave de HubSpot (solo lectura; funciona con el interruptor apagado)",
+    )
+    hubspot_cmd.set_defaults(func=cmd_hubspot_estado)
     return parser
 
 
