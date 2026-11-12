@@ -108,6 +108,66 @@ NOVEDADES: tuple[Novedad, ...] = (
             ),
         ),
     ),
+    Novedad(
+        id="2026-11-11-panel-nueva-direccion",
+        titulo="The panel has a new address",
+        lineas=(
+            (
+                "It now lives at "
+                "https://panel-production-a2fc11e3.up.railway.app — update your bookmark."
+            ),
+            (
+                "Same panel, same login. If you are signed in on the old address, sign in "
+                "again on this one."
+            ),
+            (
+                'The sign-in page now has a "Forgot your password?" link, so you no '
+                "longer need anyone to reset it for you."
+            ),
+        ),
+    ),
+    Novedad(
+        id="2026-11-11-chat",
+        titulo="Read the Founders Club from the panel",
+        lineas=(
+            (
+                "There is a new Chat tab showing the conversations the agent reads: "
+                "channels, their threads, and who said what."
+            ),
+            (
+                "Public channels and private messages are clearly separated, so it is "
+                "never unclear who can see what."
+            ),
+            (
+                "It is read-only for now. Replying from the panel is built but switched "
+                "off until we turn it on deliberately."
+            ),
+        ),
+    ),
+    Novedad(
+        id="2026-11-11-hubspot",
+        titulo="Leads reach HubSpot",
+        lineas=(
+            (
+                "When Anthony marks a lead as contacted, the agent now creates or updates "
+                "the company and contact in HubSpot and attaches a note with why they fit "
+                "and a link to their full profile in the panel."
+            ),
+            (
+                "It never creates duplicates: it matches on email and website, and updates "
+                "what is already there."
+            ),
+            (
+                "It only writes for people Anthony actually contacted, never for every "
+                "card, so the CRM stays clean."
+            ),
+            (
+                "Nothing private goes in: no direct messages, no quotes from the community. "
+                "The CRM gets the conclusion, the panel keeps the evidence."
+            ),
+            "It is off until we switch it on, and it never imports old leads by itself.",
+        ),
+    ),
 )
 
 
