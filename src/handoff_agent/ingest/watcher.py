@@ -174,6 +174,24 @@ def _refrescar_nombre(reader, channel: str) -> None:
         logger.warning("no se pudo guardar el nombre del canal %s", channel)
 
 
+def _en_otros_canales(channel: str) -> set[str]:
+    """Quién figura en el último padrón de cualquier OTRO canal vigilado.
+
+    Entrar en un canal más no es entrar al club: quien ya estaba en otro canal no es
+    un miembro nuevo. Es la misma regla que usa el aviso de bienvenida
+    (`signals/miembros.py`); aquí decide además si se paga un research."""
+    filas = db.fetch_all(
+        """
+        select distinct on (channel_id) members
+          from member_snapshots
+         where channel_id <> %s
+         order by channel_id, taken_at desc
+        """,
+        (channel,),
+    )
+    return {user_id for fila in filas for user_id in fila["members"]}
+
+
 def _diff_members(reader, channel: str, owner_id: str, result: TickResult) -> None:
     current = reader.members(channel)
     previous = db.fetch_one(
@@ -181,8 +199,16 @@ def _diff_members(reader, channel: str, owner_id: str, result: TickResult) -> No
         (channel,),
     )
     if previous is not None:  # sin línea base no se encola a todo el padrón
-        for user_id in sorted(current - set(previous["members"]) - {owner_id}):
-            if queue.enqueue(user_id, "miembro_nuevo"):
+        nuevos_aqui = sorted(current - set(previous["members"]) - {owner_id})
+        # Solo se pregunta si hay alguien que mirar: lo normal es que no haya nadie.
+        ya_en_el_club = _en_otros_canales(channel) if nuevos_aqui else set()
+        for user_id in nuevos_aqui:
+            # Nuevo en este canal no es nuevo en el club. Hay una foto por canal, y en
+            # el modo automático cada canal revisa su padrón a su ritmo: quien entra al
+            # club aparecía como nuevo una vez por canal, y cada vez con la tarea
+            # anterior ya terminada. `enqueue_miembro_nuevo` es el segundo candado: a
+            # nadie se le encola como miembro nuevo dos veces, vea lo que vea el diff.
+            if user_id not in ya_en_el_club and queue.enqueue_miembro_nuevo(user_id):
                 result.members_new += 1
             # Aparte del research, se apunta para su aviso de bienvenida (0037). Va
             # fuera del `if`: quien ya tenía un research abierto (escribió antes de que
@@ -193,11 +219,8 @@ def _diff_members(reader, channel: str, owner_id: str, result: TickResult) -> No
     # interrumpe a media lista, la instantánea vieja sigue siendo la base y la
     # vuelta siguiente ve otra vez a los que faltaban; guardarla primero los
     # borraba del diff para siempre.
-    # Reencolar a quien ya se encoló sale gratis solo mientras su tarea siga
-    # abierta: el ON CONFLICT de enqueue no mira las terminadas. Si el reintento
-    # llega con la investigación ya hecha se crea una segunda tarea, y lo que
-    # evita pagarla es la frescura de research_person, que no cubre ni un
-    # dossier degradado ni a alguien en estado incompleto.
+    # Volver a ver a quien ya se encoló sale gratis: `enqueue_miembro_nuevo` no crea
+    # una segunda tarea ni con la primera ya terminada.
     db.execute(
         "insert into member_snapshots (channel_id, members) values (%s, %s)",
         (channel, sorted(current)),

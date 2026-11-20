@@ -13,7 +13,10 @@ Qué entra, y por qué eso es "pendiente de verdad"
   `resumen_prioridad_dias` que nadie ha marcado todavía: en cuanto alguien pulsa
   "Contacted" o "Discard" (en la tarjeta o en el panel) la persona deja de salir. Una
   persona es una línea aunque tenga las dos cosas, y solo cuenta la tarjeta de su
-  último dossier: si se la volvió a investigar y ya no da para tarjeta, no sale.
+  último dossier: si se la volvió a investigar y ya no da para tarjeta, no sale. (Si
+  se la volvió a investigar y sigue dando, su versión nueva queda cubierta por la
+  tarjeta que ya tenía: ver `deliver._cubrir_con`.) Tampoco sale quien solo tiene
+  vacantes publicadas (`bands.va_al_reporte`): eso va al reporte semanal.
 - **Lo que espera respuesta suya**: los casos del seguimiento (`seguimiento.casos`),
   que ya comprueba en vivo contra Slack que no contestó.
 - **Presentaciones sin saludar** de las últimas 48 horas, comprobadas también en vivo:
@@ -61,7 +64,15 @@ from zoneinfo import ZoneInfo
 
 from .. import db, db_config, guards, ledger
 from ..config import load_settings
-from . import alerta_card, aviso_lector, prioridad, seguimiento, seguimiento_canal, slack_writer
+from . import (
+    alerta_card,
+    aviso_lector,
+    bands,
+    prioridad,
+    seguimiento,
+    seguimiento_canal,
+    slack_writer,
+)
 from .card import (
     BAND_LABELS,
     COMPANY_CHARS,
@@ -165,7 +176,8 @@ _SQL_TARJETAS = """
 select distinct on (d.prospect_id)
        d.prospect_id::text as prospect_id, d.band, d.channel_id, d.message_ts, d.created_at,
        p.full_name, p.slack_user_id, p.company_name, p.company_name_override,
-       dz.content -> 'encaje_handoff' -> 'puntuacion' as puntuacion
+       dz.content -> 'encaje_handoff' -> 'puntuacion' as puntuacion,
+       dz.content -> 'encaje_handoff' as encaje
   from deliveries d
   join prospects p on p.id = d.prospect_id
   join dossiers dz on dz.prospect_id = d.prospect_id and dz.version = d.dossier_version
@@ -245,6 +257,12 @@ def _personas(ahora: datetime) -> list[Item]:
     }
     por_persona: dict[str, dict] = {}
     for fila in db.fetch_all(_SQL_TARJETAS, parametros):
+        if bands.va_al_reporte({"encaje_handoff": fila["encaje"]}, fila["slack_user_id"]):
+            # Su única prueba son vacantes publicadas: desde 0040 eso no es una tarjeta
+            # sino una línea del reporte semanal (`reporte_contratando.py`). Las que ya
+            # tenían tarjeta de antes tampoco siguen aquí como pendientes: no se puede
+            # salir en el reporte y además como "act now".
+            continue
         por_persona[fila["prospect_id"]] = {
             **fila,
             "cuando": fila["created_at"],

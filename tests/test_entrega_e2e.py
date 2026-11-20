@@ -282,13 +282,12 @@ def test_the_real_case_with_the_lock_on_from_the_start_publishes_nothing(conn, m
 
 
 def test_with_real_evidence_everything_publishes_like_before(conn, monkeypatch):
-    """Vacantes o necesidad pedida: tarjeta y SMS con 3, solo tarjeta con 2.
-    Con equipo_relevante, lo mismo. Nada de esto pasa por el email diario."""
+    """Necesidad pedida: tarjeta y SMS con 3, solo tarjeta con 2. Con
+    equipo_relevante, lo mismo. Nada de esto pasa por el email diario. ("vacantes"
+    dejó de ser señal en 0040: ver el test siguiente.)"""
     cases = [
-        (3, "vacantes", {("slack", "alta"), ("sms", "alta")}),
         (3, "necesidad_declarada", {("slack", "alta"), ("sms", "alta")}),
         (3, "equipo_relevante", {("slack", "alta"), ("sms", "alta")}),
-        (2, "vacantes", {("slack", "media")}),
         (2, "necesidad_declarada", {("slack", "media")}),
         (2, "equipo_relevante", {("slack", "media")}),
     ]
@@ -307,6 +306,29 @@ def test_with_real_evidence_everything_publishes_like_before(conn, monkeypatch):
             "truncate table deliveries, research_jobs, slack_messages, member_snapshots, "
             "dossiers, prospects, agent_actions, llm_calls, cost_events restart identity cascade"
         )
+
+
+@pytest.mark.parametrize("puntuacion", [3, 2])
+def test_only_open_roles_publishes_nothing_and_waits_for_the_weekly_report(
+    conn, monkeypatch, puntuacion
+):
+    """0040: "la empresa tiene vacantes" no es una señal alta. De punta a punta: ni
+    tarjeta, ni SMS, ni línea en el email diario; queda apuntado para el reporte."""
+    person, posted, sms_calls, outcome, _ = run_pipeline(
+        monkeypatch, dossier_json(puntuacion, "vacantes", "Hiring support right now")
+    )
+    assert outcome.status == "hecho"
+    assert stored_fit(person)["evidencia"] == "vacantes"
+    assert posted == []
+    assert sms_calls == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    assert "Ada Ruiz" not in digest_today()
+    assert (
+        db.fetch_one(
+            "select count(*) as n from agent_actions where action = 'tarjeta_al_reporte_semanal'"
+        )["n"]
+        == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -332,10 +354,10 @@ def test_a_dossier_with_an_invented_evidence_is_rejected_and_retried(conn, monke
     person, posted, _, outcome, _ = run_pipeline(
         monkeypatch,
         dossier_json(3, "sector_guess", "Hiring support right now"),
-        dossier_json(3, "vacantes", "Hiring support right now"),
+        dossier_json(3, "necesidad_declarada", "Hiring support right now"),
     )
     assert outcome.status == "hecho"
-    assert stored_fit(person)["evidencia"] == "vacantes"
+    assert stored_fit(person)["evidencia"] == "necesidad_declarada"
     assert db.fetch_one("select count(*) as n from llm_calls")["n"] == 2
     assert len(posted) == 1
 

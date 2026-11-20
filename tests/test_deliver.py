@@ -379,10 +379,10 @@ def test_a_score_without_evidence_waits_for_the_digest(conn, monkeypatch, score)
 @pytest.mark.parametrize(
     ("score", "evidencia", "band"),
     [
-        (3, "vacantes", "alta"),
         (3, "necesidad_declarada", "alta"),
+        (3, "equipo_relevante", "alta"),
         (2, "equipo_relevante", "media"),
-        (2, "vacantes", "media"),
+        (2, "necesidad_declarada", "media"),
     ],
 )
 def test_a_score_with_evidence_gets_its_card_like_before(conn, monkeypatch, score, evidencia, band):
@@ -397,3 +397,53 @@ def test_a_dossier_stored_before_the_field_existed_still_gets_its_card(conn, mon
     monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
     person = a_person(score=2)
     assert deliver.deliver_for(person["id"], FakeReader()) == "media"
+
+
+# -- solo vacantes (0040): ni tarjeta ni SMS, va al reporte semanal
+
+
+@pytest.mark.parametrize("score", [2, 3])
+def test_only_open_roles_gets_no_card_and_says_why(conn, monkeypatch, score):
+    """Devuelve "baja", no "alta": el runner solo manda el SMS con "alta"."""
+    called = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: called.append(1))
+    person = _person_with_fit(score, "vacantes")
+    assert deliver.deliver_for(person["id"], FakeReader()) == "baja"
+    assert called == []
+    assert db.fetch_one("select count(*) as n from deliveries")["n"] == 0
+    accion = db.fetch_one(
+        "select prospect_id, payload from agent_actions where action = 'tarjeta_al_reporte_semanal'"
+    )
+    assert accion["prospect_id"] == person["id"]
+    assert accion["payload"] == {"dossier_version": 1}
+
+
+def test_only_open_roles_gets_no_card_even_when_asked_by_hand(conn, monkeypatch):
+    """El research manual fuerza investigar, no cambia qué es una señal."""
+    called = []
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: called.append(1))
+    person = _person_with_fit(3, "vacantes")
+    assert deliver.deliver_for(person["id"], FakeReader(), reason="manual") == "baja"
+    assert called == []
+
+
+def test_a_low_score_that_never_deserved_a_card_is_not_logged_as_diverted(conn, monkeypatch):
+    person = _person_with_fit(1, "vacantes")
+    assert deliver.deliver_for(person["id"], FakeReader()) == "baja"
+    assert db.fetch_one("select count(*) as n from agent_actions")["n"] == 0
+
+
+def test_a_radar_decision_maker_with_open_roles_still_gets_the_card(conn, monkeypatch):
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
+    person = prospects.upsert_prospect("li:ACoAAB123", full_name="Rosa Decisora")
+    db.execute("update prospects set state = 'investigado' where id = %s", (person["id"],))
+    fit = {"puntuacion": 3, "evidencia": "vacantes", "razon": "r"}
+    prospects.save_dossier(person["id"], {**DOSSIER, "encaje_handoff": fit}, [])
+    assert deliver.deliver_for(person["id"], FakeReader(), reason="radar") == "alta"
+
+
+def test_with_the_switch_off_open_roles_get_their_card_again(restore_config, monkeypatch):
+    db.execute("update config set value = 'false'::jsonb where key = 'vacantes_solo_reporte'")
+    monkeypatch.setattr(deliver.slack_writer, "post_card", lambda blocks, text: ("CHANDOFF", "1.1"))
+    person = _person_with_fit(3, "vacantes")
+    assert deliver.deliver_for(person["id"], FakeReader()) == "alta"

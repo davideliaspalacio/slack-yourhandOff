@@ -511,6 +511,17 @@ def test_adjustable_settings_match_what_the_panel_lets_you_touch(equipo):
         "resumen_prioridad_max_por_nivel",
         "resumen_prioridad_dias",
     }
+    # Y las de 0040 (una tarjeta por persona, los reintentos del research y el reporte
+    # semanal), por lo mismo: son plazos y topes de presentación, se cambian en Settings.
+    solo_panel |= {
+        "tarjeta_dias_misma_persona",
+        "research_reintento_horas",
+        "research_reintentos_max",
+        "reporte_contratando_dia",
+        "reporte_contratando_hora",
+        "reporte_contratando_dias",
+        "reporte_contratando_max",
+    }
     assert propios <= del_panel
     assert solo_panel <= del_panel
     assert set(mcp_escritura.UMBRALES) == del_panel - propios - solo_panel

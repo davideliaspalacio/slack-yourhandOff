@@ -7,9 +7,11 @@ entrega se anota como fallida para reintentarla a mano o desde el panel.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import UTC, datetime, timedelta
 
-from .. import db, guards, ledger
+from .. import db, db_config, guards, ledger
 from . import bands, card, linkedin, prioridad, slack_writer
 
 logger = logging.getLogger(__name__)
@@ -22,6 +24,18 @@ NO_ALERT_STATES = ("descartado", "contactado")
 # Etiqueta en inglés del texto de notificación push (fallback de la tarjeta):
 # la banda interna sigue siendo alta/media/baja en el resto del sistema.
 BAND_NOTIFICATION_LABELS = {"alta": "High", "media": "Medium", "baja": "Low"}
+
+# Una tarjeta por persona y plazo (0040). El índice `deliveries_one_card` solo impide
+# repetir la misma VERSIÓN del dossier, y un dossier rehecho es una versión nueva: una
+# persona investigada doce veces recibió doce tarjetas. Dentro de este plazo (los
+# mismos 7 días que `alertas_dias_misma_persona` da a las alertas de señal) solo sale
+# otra con un motivo real: la banda subió, o alguien pidió el research a mano.
+DIAS_MISMA_PERSONA = 7
+CLAVE_DIAS_MISMA_PERSONA = "tarjeta_dias_misma_persona"
+MOTIVO_MANUAL = "manual"
+ORDEN_BANDAS = {"media": 1, "alta": 2}
+ACCION_REPETIDA = "tarjeta_repetida_omitida"
+ACCION_AL_REPORTE = "tarjeta_al_reporte_semanal"
 
 
 def _last_message(slack_user_id: str) -> dict | None:
@@ -59,6 +73,72 @@ def _perfil_linkedin(person: dict, dossier: dict) -> str | None:
         if candidato:
             enlaces.append(candidato["profile_url"])
     return linkedin.perfil(dossier, enlaces)
+
+
+def dias_misma_persona() -> int:
+    """El plazo, de Settings. Cero lo apaga: cada versión vuelve a ser una tarjeta."""
+    return max(0, db_config.value(CLAVE_DIAS_MISMA_PERSONA, DIAS_MISMA_PERSONA))
+
+
+def _tarjeta_reciente(prospect_id: str) -> dict | None:
+    """La tarjeta de más banda que esta persona recibió dentro del plazo, o None.
+
+    Solo cuentan las que de verdad salieron: con `message_ts` (una reserva sin él es
+    una tarjeta que se está publicando o que no llegó a salir) y que no sean el apunte
+    de una versión ya cubierta por otra tarjeta (`detail.repite_de`)."""
+    dias = dias_misma_persona()
+    if dias <= 0:
+        return None
+    return db.fetch_one(
+        """
+        select id, band, channel_id, message_ts, created_at
+          from deliveries
+         where prospect_id = %s and kind = 'slack'
+           and message_ts is not null
+           and not (detail ? 'repite_de')
+           and created_at >= %s
+         order by case band when 'alta' then 2 when 'media' then 1 else 0 end desc,
+                  created_at desc
+         limit 1
+        """,
+        (prospect_id, datetime.now(UTC) - timedelta(days=dias)),
+    )
+
+
+def _cubrir_con(previa: dict, prospect_id: str, band: str, version: int, reason: str | None):
+    """Esta versión del dossier no publica: la persona ya tiene una tarjeta reciente.
+
+    Se deja en `deliveries` una fila para la versión nueva que apunta a la tarjeta que
+    ya salió (mismo canal, mismo `ts`, misma fecha) y lo dice en `detail.repite_de`. No
+    es una tarjeta nueva, es la respuesta a "¿qué tarjeta tiene el último dossier de
+    esta persona?", que es lo que preguntan el resumen del día y la pantalla Today: sin
+    ella, reinvestigar a alguien lo borraría de lo pendiente. Ocupa además el hueco del
+    índice único, así que un reintento con esta misma versión tampoco publica."""
+    db.execute(
+        "insert into deliveries (prospect_id, kind, band, dossier_version, channel_id, "
+        "message_ts, detail, created_at) values (%s, 'slack', %s, %s, %s, %s, %s, %s) "
+        "on conflict (prospect_id, dossier_version) where kind = 'slack' do nothing",
+        (
+            prospect_id,
+            band,
+            version,
+            previa["channel_id"],
+            previa["message_ts"],
+            json.dumps({"repite_de": str(previa["id"])}),
+            previa["created_at"],
+        ),
+    )
+    ledger.record_action(
+        ACCION_REPETIDA,
+        {
+            "dossier_version": version,
+            "banda": band,
+            "banda_anterior": previa["band"],
+            "motivo_research": reason,
+            "tarjeta": str(previa["id"]),
+        },
+        prospect_id=prospect_id,
+    )
 
 
 def deliver_for(prospect_id: str, reader, reason: str | None = None) -> str | None:
@@ -108,12 +188,36 @@ def deliver_for(prospect_id: str, reader, reason: str | None = None) -> str | No
     if dossier is None:
         return None
 
-    band = bands.band_for(dossier["content"])
+    band = bands.band_for(dossier["content"], person["slack_user_id"])
     if band is None:
         return None
     if band == "baja":
         # Banda baja no interrumpe: la recoge el email diario leyendo dossiers.
+        if bands.banda_por_nota(dossier["content"]) in ORDEN_BANDAS:
+            # La nota daba para tarjeta y lo que la frena es que su única prueba son
+            # vacantes publicadas (`bands.va_al_reporte`). Se apunta, para que quede
+            # dicho por qué alguien con un 3/3 no tuvo tarjeta: va al reporte semanal.
+            ledger.record_action(
+                ACCION_AL_REPORTE,
+                {"dossier_version": dossier["version"]},
+                prospect_id=prospect_id,
+            )
         return band
+
+    # Una tarjeta por persona y plazo. Va antes de la reserva y devuelve None, no la
+    # banda: el runner solo manda el SMS cuando aquí sale "alta", y un dossier rehecho
+    # tampoco es motivo para otro SMS.
+    if reason != MOTIVO_MANUAL:
+        previa = _tarjeta_reciente(prospect_id)
+        if previa is not None and ORDEN_BANDAS[band] <= ORDEN_BANDAS.get(previa["band"], 0):
+            logger.info(
+                "tarjeta omitida: %s ya tuvo una (%s) hace menos de %d días",
+                prospect_id,
+                previa["band"],
+                dias_misma_persona(),
+            )
+            _cubrir_con(previa, prospect_id, band, dossier["version"], reason)
+            return None
 
     # Reserva atómica antes de publicar: el índice único deliveries_one_card
     # (prospect_id, dossier_version where kind = 'slack') decide quién entrega.

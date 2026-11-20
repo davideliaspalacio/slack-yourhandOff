@@ -333,7 +333,9 @@ def test_a_high_band_delivery_triggers_an_sms(conn, reader, monkeypatch):
     )
     seen = []
     monkeypatch.setattr(
-        runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
+        runner.sms,
+        "maybe_send",
+        lambda prospect_id, band, forzar=False: seen.append((prospect_id, band)),
     )
     assert runner.run_next_job(reader).status == "hecho"
     assert seen == [("pid", "alta")]
@@ -347,7 +349,9 @@ def test_a_media_or_baja_delivery_never_triggers_an_sms(conn, reader, monkeypatc
     )
     seen = []
     monkeypatch.setattr(
-        runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
+        runner.sms,
+        "maybe_send",
+        lambda prospect_id, band, forzar=False: seen.append((prospect_id, band)),
     )
     assert runner.run_next_job(reader).status == "hecho"
     assert seen == []
@@ -363,7 +367,9 @@ def test_a_delivery_with_no_card_never_triggers_an_sms(conn, reader, monkeypatch
     monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader, reason=None: None)
     seen = []
     monkeypatch.setattr(
-        runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
+        runner.sms,
+        "maybe_send",
+        lambda prospect_id, band, forzar=False: seen.append((prospect_id, band)),
     )
     assert runner.run_next_job(reader).status == "hecho"
     assert seen == []

@@ -4,7 +4,8 @@ import {
   DIAS_SENAL_RECIENTE, empresaVisible, hace, haceDias, recortar, tipoSenalLabel,
 } from "@/lib/format";
 import {
-  EMOJI, ETIQUETAS, EXPLICACION, NIVELES, compararPrioridad, nivelPersona, type Nivel,
+  EMOJI, ETIQUETAS, EXPLICACION, NIVELES, compararPrioridad, nivelPersona, soloVacantes,
+  type Nivel,
 } from "@/lib/prioridad";
 import { cambiarEstado } from "./acciones";
 
@@ -21,6 +22,7 @@ type Fila = {
   id: string; full_name: string | null; company_name: string | null; slack_user_id: string;
   dossiers: {
     version: number; puntuacion: string | null; razon: string | null; created_at: string;
+    evidencia: string | null;
   }[];
 };
 
@@ -30,7 +32,8 @@ export default async function Hoy() {
     .from("prospects")
     .select("id, full_name, company_name, slack_user_id, "
       + "dossiers(version, created_at, puntuacion:content->encaje_handoff->>puntuacion, "
-      + "razon:content->encaje_handoff->>razon)")
+      + "razon:content->encaje_handoff->>razon, "
+      + "evidencia:content->encaje_handoff->>evidencia)")
     .in("state", ["nuevo", "investigado"])
     .order("updated_at", { ascending: false })
     .order("version", { referencedTable: "dossiers", ascending: false })
@@ -56,9 +59,12 @@ export default async function Hoy() {
   // decisión tal cual -- ya tiene en cuenta la evidencia y la empresa sin confirmar --,
   // así que el panel no la vuelve a calcular a partir de la nota.
   const tarjetas = new Map<string, string>();
+  // Si la regla de "solo vacantes" está encendida (0040). Vale true salvo que la base
+  // diga false, igual que en el worker (delivery/bands.py).
+  let reglaVacantes = true;
   if (recientes.length) {
     const ids = recientes.map(({ p }) => p.id);
-    const [conversaciones, senales, entregas] = await Promise.all([
+    const [conversaciones, senales, entregas, regla] = await Promise.all([
       supabase.from("dm_rastro")
         .select("slack_user_id, ultimo_de")
         .eq("ultimo_de", "otro")
@@ -73,7 +79,9 @@ export default async function Hoy() {
         .select("prospect_id, band, dossier_version")
         .eq("kind", "slack")
         .in("prospect_id", ids),
+      supabase.from("config").select("value").eq("key", "vacantes_solo_reporte").maybeSingle(),
     ]);
+    reglaVacantes = regla.data?.value !== false;
     for (const c of conversaciones.data ?? []) esperando.add(c.slack_user_id as string);
     for (const s of senales.data ?? []) {
       if (s.prospect_id && !pidio.has(s.prospect_id)) {
@@ -92,12 +100,15 @@ export default async function Hoy() {
     .map(({ p, d }) => {
       const senal = pidio.get(p.id);
       const espera = esperando.has(p.slack_user_id);
+      // Quien solo tiene vacantes publicadas no cuenta como tarjeta aunque tuviera una
+      // de antes de la regla: va al reporte semanal, no a "act now".
+      const contratando = soloVacantes(d.evidencia, p.slack_user_id, reglaVacantes);
       const nivel = nivelPersona({
-        banda: tarjetas.get(`${p.id}:${d.version}`) ?? null,
+        banda: contratando ? null : tarjetas.get(`${p.id}:${d.version}`) ?? null,
         confianzaSenal: senal ? senal.confianza : null,
         esperando: espera,
       });
-      return { p, d, senal, espera, nivel };
+      return { p, d, senal, espera, nivel, contratando };
     })
     .sort((a, b) => compararPrioridad(
       { nivel: a.nivel, esperando: a.espera, pidio: Boolean(a.senal),
@@ -142,7 +153,7 @@ export default async function Hoy() {
               </span>
             </h3>
             <div className="cards">
-              {grupo.map(({ p, d, senal, espera }) => {
+              {grupo.map(({ p, d, senal, espera, contratando }) => {
                 const empresa = empresaVisible(p.company_name);
                 return (
                   <div key={p.id} className="card person">
@@ -152,13 +163,19 @@ export default async function Hoy() {
                       </Link>
                       <span className={`pill fit-${d.puntuacion}`}>Fit {d.puntuacion}/3</span>
                     </div>
-                    {(senal || espera) && (
+                    {(senal || espera || contratando) && (
                       <div>
                         {espera && <span className="pill awaiting">awaiting your reply</span>}
                         {espera && senal && " "}
                         {senal && (
                           <span className="pill asked">
                             asked: {tipoSenalLabel(senal.tipo || null).toLowerCase()}
+                          </span>
+                        )}
+                        {(espera || senal) && contratando && " "}
+                        {contratando && (
+                          <span className="pill" title="Only evidence: open roles. No card or SMS; listed in the weekly hiring report.">
+                            hiring only · weekly report
                           </span>
                         )}
                       </div>

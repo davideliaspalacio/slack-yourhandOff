@@ -123,16 +123,16 @@ def test_an_interrupted_member_diff_does_not_lose_the_stragglers(conn, reader, m
     reader.set_members("C1", "U1")
     tick(reader)
     reader.set_members("C1", "U1", "U2", "U3")
-    real_enqueue = queue.enqueue
+    real_enqueue = queue.enqueue_miembro_nuevo
     calls = {"n": 0}
 
-    def flaky(user_id, reason):
+    def flaky(user_id):
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("Postgres parpadeó")
-        return real_enqueue(user_id, reason)
+        return real_enqueue(user_id)
 
-    monkeypatch.setattr(watcher.queue, "enqueue", flaky)
+    monkeypatch.setattr(watcher.queue, "enqueue_miembro_nuevo", flaky)
     with pytest.raises(RuntimeError):
         tick(reader)
     monkeypatch.undo()

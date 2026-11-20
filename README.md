@@ -91,8 +91,10 @@ uv run handoff costes --dias 30                 # gasto de los últimos N días
 
 `research` y `research-batch` llaman a GPT-4.1 y gastan dinero. No se repite a
 nadie con un dossier de menos de 6 meses salvo con `--forzar`; quien quedó
-`incompleto` se vuelve a investigar la próxima vez, y lo mismo quien tenga como
-último un dossier degradado (ver abajo). El CSV del lote lleva las
+`incompleto`, o tiene como último un dossier degradado (ver abajo), se vuelve a
+investigar, pero con freno: no antes de `research_reintento_horas` (24) desde el
+último intento y como mucho `research_reintentos_max` (2) veces; después, solo
+con `--forzar`. El CSV del lote lleva las
 columnas `nombre,empresa,dominio`; `--pausa` son los segundos de espera entre
 filas (15 por defecto), para no disparar el CAPTCHA de los buscadores.
 
@@ -107,15 +109,16 @@ ninguna búsqueda —dominio, linkedin, prensa— trajo resultados):
 
 - Se guarda igual, con `"degradado": true` en su contenido. Los dossiers sanos
   no llevan esa clave.
-- La regla de los 6 meses no lo protege: la próxima ejecución lo vuelve a
-  investigar sin `--forzar`.
+- La regla de los 6 meses no lo protege: se vuelve a investigar sin
+  `--forzar`, pasado el plazo entre intentos y hasta agotar los reintentos
+  automáticos (`research/reintentos.py`).
 - Quien era `nuevo` o `incompleto` queda `incompleto`. Quien ya estaba
   `investigado`, `contactado` o `cliente` conserva su estado; el motivo lo dice
   ("se conserva el estado …").
 - Ojo con el coste: una empresa poco conocida con dominio conocido cuyas
   búsquedas vuelven vacías sin error de ningún motor también cuenta como
-  degradada. Se vuelve a investigar —y a pagar— en cada lote hasta que alguna
-  búsqueda devuelva algo.
+  degradada. Antes se volvía a investigar —y a pagar— cada vez; ahora son como
+  mucho tres research (el primero y dos reintentos), separados por un día.
 
 Comprobación de salud de SearXNG:
 
@@ -570,6 +573,52 @@ falla se reintenta hasta tres veces.
 
 El panel ordena **Today** con las mismas reglas (`panel/lib/prioridad.ts`), y
 los dos interruptores y los tres números se editan en Settings.
+
+## Una tarjeta por persona, y el reporte semanal de empresas contratando
+
+Migración `0040`. Dos cosas que AG señaló el 2026-11-20.
+
+**Tarjetas repetidas (un fallo).** Una persona llegó a recibir 12 tarjetas en
+tres días. La cadena tenía tres eslabones y se arregla en los tres, porque
+cualquiera solo deja el agujero abierto:
+
+1. *Una persona se encola como miembro nuevo una vez.* El diff de padrones
+   (`ingest/watcher.py`) lleva una foto por canal, así que quien entraba al club
+   era "nuevo" en cada canal donde aparecía, cada vez con la tarea anterior ya
+   terminada. Ahora quien ya figura en el padrón de otro canal no es nuevo, y
+   `queue.enqueue_miembro_nuevo` no encola a quien ya tuvo una tarea
+   `miembro_nuevo` o ya tiene ficha.
+2. *Un research que salió mal no se rehace sin freno* (`research/reintentos.py`):
+   24 horas entre intentos y dos reintentos automáticos; el resolver tampoco
+   reencola a un `incompleto` que está esperando. El research manual ("Help the
+   research", `--forzar`) no pasa por ese freno.
+3. *Una tarjeta por persona y plazo* (`delivery/deliver.py`): dentro de
+   `tarjeta_dias_misma_persona` (7) días solo sale otra si la banda subió o el
+   research se pidió a mano. La versión nueva del dossier queda en `deliveries`
+   apuntando a la tarjeta que ya salió (`detail.repite_de`), para que el resumen
+   del día y Today sigan viendo a la persona. El SMS sigue la misma regla.
+
+**"Tiene vacantes abiertas" no es una señal alta (una petición).** Cuando la
+única prueba del encaje son vacantes publicadas (`encaje_handoff.evidencia =
+"vacantes"`) la persona no pidió nada, y AG no puede hacer nada con el aviso.
+La regla vive en `delivery/bands.py` (`va_al_reporte`): esas fichas quedan en
+banda baja —sin tarjeta ni SMS, sea cual sea la nota— y tampoco salen como
+"señal baja" en el email diario. Dos excepciones: `vacantes_solo_reporte`
+apagado, y las personas del radar de cuentas (`li:`), donde la vacante es el
+motivo del encargo. Quien dice con sus palabras que necesita algo
+(`necesidad_declarada`, o un "they asked") sigue saliendo en el momento.
+
+A cambio hay **un reporte semanal** (`delivery/reporte_contratando.py`): un
+mensaje el día `reporte_contratando_dia` (1, lunes) a partir de
+`reporte_contratando_hora` (9) en `zona_horaria`, con las empresas vistas con
+vacantes en los últimos `reporte_contratando_dias` (7) días. Una línea por
+empresa —empresa, el miembro y su cargo, cuántas vacantes y de qué (primero los
+roles que Handoff cubre), su LinkedIn y su ficha—, lo más accionable arriba y
+como mucho `reporte_contratando_max` (15). Lleva la marca **FYI**: nadie de esa
+lista espera nada. Se reserva antes de publicar (`reportes_contratando`, una
+fila por semana), solo sale el día que toca (encenderlo a media semana no
+publica nada), el primero solo mira su ventana, una empresa no se repite en un
+mes, y sin nada que listar no se publica. Todo se ajusta en Settings.
 
 ## Invariantes del proyecto
 

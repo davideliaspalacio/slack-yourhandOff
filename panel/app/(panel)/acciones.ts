@@ -315,6 +315,26 @@ export async function guardarPrioridadInterruptor(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// Los dos interruptores de 0040 (la regla de "solo vacantes" y el reporte semanal de
+// empresas contratando) son booleanos y comparten acción, igual que los de 0039: la
+// clave viene del formulario y se comprueba contra la lista antes de tocar nada. La
+// política panel_ajusta_repetidas_y_reporte es la que permite estas dos claves, y solo
+// con true o false. Las numéricas (plazos, día, hora, ventana y tope) pasan por
+// guardarUmbral.
+const INTERRUPTORES_REPORTE = ["vacantes_solo_reporte", "reporte_contratando_activo"];
+
+export async function guardarReporteInterruptor(formData: FormData) {
+  const key = String(formData.get("key"));
+  if (!INTERRUPTORES_REPORTE.includes(key)) return;
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", key);
+  revalidatePath("/ajustes");
+  revalidatePath("/");
+}
+
 // dm_texto_activo también es un booleano: el interruptor de leer el texto de los
 // DMs de Anthony con sus leads para sugerirle respuestas. La política
 // panel_ajusta_dm_texto (0031) es la que permite tocar esta clave, y solo con true

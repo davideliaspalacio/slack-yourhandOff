@@ -4,7 +4,8 @@ AG lo pidió (punto 7): "priorizar notificaciones para organizarme mejor". Todos
 avisos caen en un mismo canal y cada uno tenía su cabecera, pero ninguna decía cuánto
 corría. Aquí -- y solo aquí -- se decide el nivel de cada tipo de aviso. Quien publica
 (`deliver.py`, `signals/alertas.py`, `signals/eventos.py`, `signals/miembros.py`,
-`seguimiento.py`, `aviso_lector.py`, `novedades.py`) y el resumen del día
+`seguimiento.py`, `aviso_lector.py`, `novedades.py`, `reporte_contratando.py`) y el
+resumen del día
 (`resumen_prioridad.py`) preguntan aquí y pintan lo que salga; ninguno decide por su
 cuenta.
 
@@ -81,6 +82,7 @@ SIN_RESPUESTA = "sin_respuesta"
 SIN_CONVERSACION = "sin_conversacion"
 CREDENCIAL = "credencial_caducada"
 NOVEDADES = "novedades"
+REPORTE_CONTRATANDO = "reporte_contratando"
 
 TIPOS = (
     RESEARCH,
@@ -96,6 +98,7 @@ TIPOS = (
     SIN_CONVERSACION,
     CREDENCIAL,
     NOVEDADES,
+    REPORTE_CONTRATANDO,
 )
 
 BANDAS_CON_TARJETA = ("alta", "media")
@@ -126,6 +129,7 @@ def nivel(
     | Marcado contactado, sin conversación           | FYI                                 |
     | Credencial del lector caducada                 | AHORA                               |
     | "What's new"                                   | FYI                                 |
+    | Reporte semanal de empresas contratando        | FYI                                 |
 
     Un tipo que no esté aquí es FYI: lo desconocido nunca interrumpe por su cuenta.
     """
@@ -151,6 +155,10 @@ def nivel(
         return AHORA
     # SIN_RESPUESTA, SIN_CONVERSACION, NOVEDADES y cualquier tipo desconocido: la pelota
     # no está en su tejado.
+    # REPORTE_CONTRATANDO también, y a propósito: es una lista de empresas que publicaron
+    # vacantes, y nadie de esa lista pidió ni espera nada. AG lo sacó de la señal alta
+    # justo por eso ("I can't do anything"); es su hora de nurture de la semana, no algo
+    # que caduque hoy. Marcarlo TODAY sería volver a colarlo entre lo que sí corre.
     return FYI
 
 
@@ -226,7 +234,7 @@ def es_caliente(prospect_id: str | None) -> bool:
     try:
         fila = db.fetch_one(
             """
-            select p.state::text as state,
+            select p.state::text as state, p.slack_user_id,
                    (select d.content from dossiers d
                      where d.prospect_id = p.id order by d.version desc limit 1) as content
               from prospects p
@@ -239,7 +247,12 @@ def es_caliente(prospect_id: str | None) -> bool:
         if fila["state"] in ESTADOS_CALIENTES:
             return True
         contenido = fila["content"]
-        return isinstance(contenido, dict) and bands.band_for(contenido) in BANDAS_CON_TARJETA
+        # Con la banda de siempre: quien solo tiene vacantes publicadas (`bands.py`) no
+        # es un lead caliente, igual que no tiene tarjeta.
+        return (
+            isinstance(contenido, dict)
+            and bands.band_for(contenido, fila["slack_user_id"]) in BANDAS_CON_TARJETA
+        )
     except Exception:
         logger.exception("prioridad: no se pudo saber si %s es un lead caliente", prospect_id)
         return False

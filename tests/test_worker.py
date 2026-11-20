@@ -231,7 +231,7 @@ def test_gathering_errors_are_recorded_and_returned(conn, pipeline):
 
 
 def test_a_degraded_search_saves_the_dossier_but_leaves_the_person_incomplete(conn, pipeline):
-    """D2: se guarda lo que haya, pero sin congelar: la próxima vez se repite."""
+    """D2: se guarda lo que haya, pero sin congelar: pasado el plazo se repite."""
     errors = ["linkedin: motores vetados", "prensa: motores vetados"]
     pipeline.setattr(w, "gather", gather_with(errors, attempted=2, answered=0))
     pipeline.setattr(w, "synthesize", synth_returning(make_dossier(), make_dossier()))
@@ -244,6 +244,8 @@ def test_a_degraded_search_saves_the_dossier_but_leaves_the_person_incomplete(co
     state = db.fetch_one("select state from prospects where id = %s", (degraded.prospect_id,))
     assert state["state"] == "incompleto"
 
+    # No enseguida: el reintento automático espera su plazo (research/reintentos.py).
+    age_dossiers(degraded.prospect_id, days=2)
     pipeline.setattr(w, "gather", gather_with([], attempted=2, answered=2))
     healthy = w.research_person("Ada Ruiz", "Acme")
     assert healthy.status == "investigado"
@@ -528,6 +530,12 @@ def test_a_degraded_re_research_keeps_the_state_but_never_freezes(conn, pipeline
     assert degraded.errors == ("prensa: vetado",)
     assert dossier_content(pid, 2)["degradado"] is True
 
+    # Pasado el plazo entre intentos (research/reintentos.py), sin --forzar.
+    db.execute(
+        "update dossiers set created_at = now() - interval '2 days' "
+        "where prospect_id = %s and version = 2",
+        (pid,),
+    )
     pipeline.setattr(w, "gather", gather_with([], **HEALTHY))
     healthy = w.research_person("Ada Ruiz", "Acme")
     assert healthy.status == "investigado"

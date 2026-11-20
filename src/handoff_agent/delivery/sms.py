@@ -10,13 +10,13 @@ delivery/deliver.py, que sigue el mismo patrón.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .. import db, db_config, guards, ledger
 from ..config import load_settings
 from . import slack_writer
-from .deliver import NO_ALERT_STATES
+from .deliver import NO_ALERT_STATES, dias_misma_persona
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,28 @@ def _card_link(prospect_id: str) -> str | None:
         return None
 
 
-def maybe_send(prospect_id: str, band: str, now: datetime | None = None) -> bool:
+def _reciente(prospect_id: str, now: datetime) -> bool:
+    """Si a esta persona ya se le mandó un SMS dentro del plazo de una tarjeta por
+    persona (`tarjeta_dias_misma_persona`, el mismo que usa `deliver_for`)."""
+    dias = dias_misma_persona()
+    if dias <= 0:
+        return False
+    return (
+        db.fetch_one(
+            "select 1 as hay from deliveries where prospect_id = %s and kind = 'sms' "
+            "and created_at >= %s limit 1",
+            (prospect_id, now - timedelta(days=dias)),
+        )
+        is not None
+    )
+
+
+def maybe_send(
+    prospect_id: str, band: str, now: datetime | None = None, forzar: bool = False
+) -> bool:
+    """Manda el SMS de una señal alta, si procede. `forzar` es el research pedido a
+    mano: lo único que se salta es el plazo de un SMS por persona; el horario, el tope
+    diario y los estados que no reciben avisos siguen valiendo."""
     try:
         guards.check_kill_switch()
         guards.check_monthly_budget()
@@ -121,6 +142,12 @@ def maybe_send(prospect_id: str, band: str, now: datetime | None = None) -> bool
     now = now or datetime.now(tz=ZoneInfo("UTC"))
     if not _within_hours(now):
         logger.info("sms fuera de horario, se omite")
+        return False
+    if not forzar and _reciente(prospect_id, now):
+        # `deliver_for` ya no publica otra tarjeta de la misma persona dentro del
+        # plazo, y sin tarjeta alta no se llega aquí. La regla vive también aquí por
+        # lo mismo que la de los estados: no depender de quién llame.
+        logger.info("sms: esta persona ya tuvo uno hace poco, se omite")
         return False
     if _sent_today(now) >= db_config.value("sms_por_dia", 3):
         logger.info("sms: tope diario alcanzado")

@@ -114,6 +114,8 @@ def ficha(user="USUNNY", nombre="Sunny Patel", estado="nuevo", nota=None):
         (prioridad.SIN_CONVERSACION, {"caliente": True}, FYI),
         (prioridad.CREDENCIAL, {}, AHORA),
         (prioridad.NOVEDADES, {}, FYI),
+        (prioridad.REPORTE_CONTRATANDO, {}, FYI),
+        (prioridad.REPORTE_CONTRATANDO, {"banda": "alta", "caliente": True}, FYI),
         ("un_tipo_que_no_existe", {"banda": "alta", "caliente": True}, FYI),
     ],
 )
@@ -411,9 +413,10 @@ def test_whats_new_is_fyi(conn, slack):
 def test_no_two_kinds_of_alert_share_a_header_once_the_level_is_set_aside():
     """El nivel va delante en todos y lo que distingue a cada tipo sigue detrás: con la
     misma marca puesta, ninguna cabecera se repite ni comparte emoji."""
-    from handoff_agent.delivery import resumen_prioridad
+    from handoff_agent.delivery import reporte_contratando, resumen_prioridad
 
     propias = [
+        reporte_contratando.CABECERA,
         card.build(PERSON, DOSSIER, "alta", MESSAGE, None)[0]["text"]["text"].splitlines()[0],
         alerta_card.build({"tipo": "soporte", "cita": "x"}, None, None, None)[0]["text"][
             "text"

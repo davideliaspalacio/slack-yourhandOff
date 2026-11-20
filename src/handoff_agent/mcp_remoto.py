@@ -242,8 +242,11 @@ def persona_ver(id_o_slack_user_id: str) -> dict:
         senales = cur.fetchall()
         nombres = canales.nombres(cur, [s["channel_id"] for s in senales])
         cur.execute(
+            # Sin los apuntes `repite_de` (0040, `deliver._cubrir_con`): una versión del
+            # dossier cubierta por una tarjeta anterior no es otro aviso enviado.
             "select kind, band, dossier_version, created_at from deliveries "
-            "where prospect_id = %s order by created_at desc limit 50",
+            "where prospect_id = %s and not (detail ? 'repite_de') "
+            "order by created_at desc limit 50",
             (pid,),
         )
         entregas = cur.fetchall()
