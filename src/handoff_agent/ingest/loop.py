@@ -29,7 +29,7 @@ from ..accounts import decisor, radar
 from ..crm import hubspot_sync
 from ..delivery import aviso_lector, novedades, seguimiento
 from ..research.worker import SYSTEM_STOPS
-from ..signals import alertas, eventos
+from ..signals import alertas, eventos, miembros
 from ..slack_client import SlackAuthFailed
 from . import descubrimiento, dm_texto, dms, queue
 from .research_runner import run_next_job
@@ -138,6 +138,22 @@ def _eventos_canal(reader) -> None:
         return
     if avisos:
         logger.info("eventos: %d aviso(s) publicado(s)", avisos)
+
+
+def _miembros_nuevos(reader) -> None:
+    """Los avisos de bienvenida a quien acaba de entrar al club (0037).
+
+    El watcher apunta a cada miembro nuevo al verlo en el padrón; aquí sale su aviso
+    cuando su research terminó o cuando ya se esperó bastante (signals/miembros.py).
+    `publicar_pendientes` gestiona por dentro los topes y no lanza; esta guarda es la
+    segunda línea, igual que en los eventos de canal."""
+    try:
+        avisos = miembros.publicar_pendientes(reader)
+    except Exception:
+        logger.exception("miembros nuevos fallidos; se reintenta en la vuelta siguiente")
+        return
+    if avisos:
+        logger.info("miembros nuevos: %d aviso(s) publicado(s)", avisos)
 
 
 def _hubspot() -> None:
@@ -385,6 +401,7 @@ def run_loop(
             _decisor()
             _senales(reader)
             _eventos_canal(reader)
+            _miembros_nuevos(reader)
             if clock() >= next_hubspot:
                 next_hubspot = clock() + MINUTOS_ENTRE_PASADAS_HUBSPOT * 60
                 _hubspot()

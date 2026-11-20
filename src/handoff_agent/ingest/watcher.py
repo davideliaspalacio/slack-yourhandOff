@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 import psycopg
 
 from .. import canales, db, db_config
+from ..signals import miembros
 from ..slack_client import SlackUnavailable
 from . import descubrimiento, queue
 
@@ -183,6 +184,11 @@ def _diff_members(reader, channel: str, owner_id: str, result: TickResult) -> No
         for user_id in sorted(current - set(previous["members"]) - {owner_id}):
             if queue.enqueue(user_id, "miembro_nuevo"):
                 result.members_new += 1
+            # Aparte del research, se apunta para su aviso de bienvenida (0037). Va
+            # fuera del `if`: quien ya tenía un research abierto (escribió antes de que
+            # se viera su alta) es igual de nuevo. Aquí solo se apunta; el aviso sale
+            # después, desde el bucle, y `apuntar` no lanza ni repite a nadie.
+            miembros.apuntar(user_id, channel)
     # La instantánea se guarda al final, nunca antes de encolar. Si esto se
     # interrumpe a media lista, la instantánea vieja sigue siendo la base y la
     # vuelta siguiente ve otra vez a los que faltaban; guardarla primero los
