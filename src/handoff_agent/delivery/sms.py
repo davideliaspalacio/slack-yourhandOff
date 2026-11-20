@@ -128,7 +128,9 @@ def maybe_send(prospect_id: str, band: str, now: datetime | None = None) -> bool
 
     link = _card_link(prospect_id)
 
-    body = f"Señal alta: {_short(person['full_name'] or person['slack_user_id'], NAME_CHARS)}"
+    # En inglés, como todo lo que lee el equipo, y diciendo qué tipo de aviso es: el SMS
+    # solo existe para la señal alta, y así se reconoce sin abrirlo.
+    body = f"High signal: {_short(person['full_name'] or person['slack_user_id'], NAME_CHARS)}"
     if person["company_name"]:
         body += f" ({_short(person['company_name'], COMPANY_CHARS)})"
     if link:

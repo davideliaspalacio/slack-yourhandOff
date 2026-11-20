@@ -31,6 +31,7 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from ..config import load_settings
+from . import linkedin
 
 QUOTE_CHARS = 300
 HECHO_CHARS = 240
@@ -48,6 +49,14 @@ EMOJI = {"alta": "🔥", "media": "👀", "baja": "📋"}
 # resto del sistema sigue usando el nombre en español como valor interno (ver
 # bands.py), solo la cabecera de la tarjeta se traduce.
 BAND_LABELS = {"alta": "HIGH", "media": "MEDIUM", "baja": "LOW"}
+# Por qué se investigó a la persona, tal como se ve en la tarjeta. Las claves son los
+# motivos de la cola (`ingest/queue.py`, REASONS); un test comprueba que no se separen.
+REASON_LABELS = {
+    "mensaje": "💬 they posted in the community",
+    "miembro_nuevo": "🆕 new member — they just joined",
+    "radar": "🎯 decision-maker at a target account (radar)",
+    "manual": "🙋 requested by the team",
+}
 
 # `empresa_no_confirmada` (ver research/worker.py, a partir de
 # Gathered.unconfirmed_domain): igual que el resto del dossier, se trata como
@@ -101,9 +110,11 @@ PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success"
 #   salto de línea                                                        1
 #   "Open roles: " + NUM_CHARS + " — " + ROLES_CHARS
 #   (o "Open roles: none found", más corta)      12 + 20 + 3 + 200   =  235
+#   salto + "<" + perfil de LinkedIn (linkedin.MAX_URL) + "|LinkedIn profile>"
+#   (solo si se conoce el perfil)                1 + 1 + 300 + 18    =  320
 #                                                                --------------
-#                                                                total    801
-# 801 < 3000 con margen de sobra.
+#                                                                total   1121
+# 1121 < 3000 con margen de sobra.
 #
 # Aritmética del peor caso para la sección "*Why it matters*" (tope de Slack:
 # 3000 caracteres por bloque `section`):
@@ -379,12 +390,28 @@ def _unconfirmed_domain_block(dossier: dict) -> dict | None:
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
 
 
+def _reason_block(reason: str | None) -> dict | None:
+    """Por qué se investigó a esta persona, en una línea bajo la cabecera.
+
+    Una tarjeta de alguien que acaba de entrar y otra de alguien que pidió ayuda en un
+    canal se leían igual, y no piden lo mismo: a uno se le da la bienvenida y al otro
+    se le contesta. Solo se pinta un motivo conocido (`REASON_LABELS`): el valor crudo
+    nunca llega a la tarjeta, y sin motivo -- una entrega que no viene de la cola -- no
+    hay línea."""
+    label = REASON_LABELS.get(reason) if isinstance(reason, str) else None
+    if not label:
+        return None
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Why researched: {label}"}]}
+
+
 def build(
     person: dict,
     dossier: dict,
     band: str,
     message: dict | None,
     permalink: str | None,
+    reason: str | None = None,
+    linkedin_url: str | None = None,
 ) -> list[dict]:
     fit = dossier.get("encaje_handoff") or {}
     score = _safe_number(fit.get("puntuacion"), NUM_CHARS)
@@ -396,9 +423,20 @@ def build(
         + "\n"
         + _open_roles_line(dossier)
     )
+    # El perfil de LinkedIn de la persona, si se conoce. Va en la cabecera y no como
+    # botón: el receptor quita todos los botones al pulsar "Contacted" (`web/app.py`), y
+    # el enlace tiene que seguir ahí justo cuando toca ir a conectar. Se valida aquí
+    # otra vez (`linkedin.es_perfil`) venga de donde venga: solo un perfil
+    # `https://…linkedin.com/in/…` que no pueda romper `<url|texto>`.
+    if linkedin.es_perfil(linkedin_url):
+        header += f"\n<{linkedin_url}|LinkedIn profile>"
     blocks: list[dict] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": header}},
     ]
+
+    reason_block = _reason_block(reason)
+    if reason_block:
+        blocks.append(reason_block)
 
     unconfirmed_block = _unconfirmed_domain_block(dossier)
     if unconfirmed_block:

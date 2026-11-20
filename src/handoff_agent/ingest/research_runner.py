@@ -252,7 +252,9 @@ def run_next_job(reader) -> RunResult | None:
     # solo cuando la tarjeta de verdad salió con banda alta.
     if outcome.status in DELIVERABLE_STATUSES and outcome.version:
         try:
-            band = deliver_for(outcome.prospect_id, reader)
+            # El motivo de la tarea viaja hasta la tarjeta: no es lo mismo alguien que
+            # acaba de entrar que alguien que pidió algo en un canal.
+            band = deliver_for(outcome.prospect_id, reader, reason=job["reason"])
             if band == "alta":
                 sms.maybe_send(outcome.prospect_id, band)
         except Exception:

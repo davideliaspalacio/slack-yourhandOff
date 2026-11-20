@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from .. import db, guards, ledger
-from . import bands, card, slack_writer
+from . import bands, card, linkedin, slack_writer
 
 logger = logging.getLogger(__name__)
 # "descartado" es definitivo: nunca más avisa. "contactado" ya cumplió su
@@ -40,7 +40,33 @@ def _last_message(slack_user_id: str) -> dict | None:
     )
 
 
-def deliver_for(prospect_id: str, reader) -> str | None:
+def _perfil_linkedin(person: dict, dossier: dict) -> str | None:
+    """El perfil de LinkedIn de la persona, para enlazarlo en la tarjeta, o None.
+
+    Tres sitios donde puede estar, del más fiable al menos: los enlaces que el equipo
+    puso a mano en el panel, el perfil con el que el radar encontró a un decisor
+    (`decision_candidates.profile_url`, que viene de LinkedIn vía Unipile) y la fuente
+    que el modelo citó para el cargo. `linkedin.perfil` valida cada uno: solo sale un
+    `https://…linkedin.com/in/…`."""
+    enlaces = list(person.get("research_links") or [])
+    if str(person.get("slack_user_id") or "").startswith("li:"):
+        candidato = db.fetch_one(
+            "select profile_url from decision_candidates "
+            "where prospect_id = %s and profile_url is not null "
+            "order by chosen desc, updated_at desc limit 1",
+            (person["id"],),
+        )
+        if candidato:
+            enlaces.append(candidato["profile_url"])
+    return linkedin.perfil(dossier, enlaces)
+
+
+def deliver_for(prospect_id: str, reader, reason: str | None = None) -> str | None:
+    """Publica la tarjeta del último dossier de la persona, si su banda lo merece.
+
+    `reason` es el motivo de la tarea de research que acaba de terminar (`mensaje`,
+    `miembro_nuevo`, `manual`, `radar`): la tarjeta lo dice para que se distinga a quien
+    acaba de entrar de quien pidió algo. Sin él, la tarjeta sale sin esa línea."""
     try:
         guards.check_kill_switch()
         guards.check_monthly_budget()
@@ -106,7 +132,15 @@ def deliver_for(prospect_id: str, reader) -> str | None:
 
     message = _last_message(person["slack_user_id"])
     permalink = reader.permalink(message["channel_id"], message["ts"]) if message else None
-    blocks = card.build(person, dossier["content"], band, message, permalink)
+    blocks = card.build(
+        person,
+        dossier["content"],
+        band,
+        message,
+        permalink,
+        reason=reason,
+        linkedin_url=_perfil_linkedin(person, dossier["content"]),
+    )
     band_label = BAND_NOTIFICATION_LABELS.get(band, band.capitalize())
     summary = f"{band_label} signal: {person['full_name'] or person['slack_user_id']}"
 

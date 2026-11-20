@@ -287,10 +287,24 @@ def test_a_finished_research_is_delivered(conn, reader, monkeypatch):
     monkeypatch.setattr(
         runner,
         "deliver_for",
-        lambda prospect_id, passed_reader: seen.append((prospect_id, passed_reader)),
+        lambda prospect_id, passed_reader, reason=None: seen.append((prospect_id, passed_reader)),
     )
     assert runner.run_next_job(reader).status == "hecho"
     assert seen == [("pid", reader)]
+
+
+@pytest.mark.parametrize("motivo", ["mensaje", "miembro_nuevo", "manual"])
+def test_the_reason_of_the_job_travels_to_the_card(conn, reader, monkeypatch, motivo):
+    """La tarjeta dice por qué se investigó a la persona (0037): el motivo de la tarea
+    tiene que llegar hasta la entrega tal cual."""
+    queue.enqueue("U1", motivo)
+    stub_research(monkeypatch)
+    seen = []
+    monkeypatch.setattr(
+        runner, "deliver_for", lambda prospect_id, passed_reader, reason=None: seen.append(reason)
+    )
+    assert runner.run_next_job(reader).status == "hecho"
+    assert seen == [motivo]
 
 
 def test_delivery_failing_does_not_turn_a_finished_job_into_a_failure(conn, reader, monkeypatch):
@@ -300,7 +314,7 @@ def test_delivery_failing_does_not_turn_a_finished_job_into_a_failure(conn, read
     queue.enqueue("U1", "mensaje")
     stub_research(monkeypatch)
 
-    def boom(prospect_id, passed_reader):
+    def boom(prospect_id, passed_reader, reason=None):
         raise RuntimeError("entrega caída")
 
     monkeypatch.setattr(runner, "deliver_for", boom)
@@ -314,7 +328,9 @@ def test_a_high_band_delivery_triggers_an_sms(conn, reader, monkeypatch):
     la tarjeta y la banda resultante es 'alta'."""
     queue.enqueue("U1", "mensaje")
     stub_research(monkeypatch)
-    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: "alta")
+    monkeypatch.setattr(
+        runner, "deliver_for", lambda prospect_id, passed_reader, reason=None: "alta"
+    )
     seen = []
     monkeypatch.setattr(
         runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
@@ -326,7 +342,9 @@ def test_a_high_band_delivery_triggers_an_sms(conn, reader, monkeypatch):
 def test_a_media_or_baja_delivery_never_triggers_an_sms(conn, reader, monkeypatch):
     queue.enqueue("U1", "mensaje")
     stub_research(monkeypatch)
-    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: "media")
+    monkeypatch.setattr(
+        runner, "deliver_for", lambda prospect_id, passed_reader, reason=None: "media"
+    )
     seen = []
     monkeypatch.setattr(
         runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
@@ -342,7 +360,7 @@ def test_a_delivery_with_no_card_never_triggers_an_sms(conn, reader, monkeypatch
     nunca manda el SMS."""
     queue.enqueue("U1", "mensaje")
     stub_research(monkeypatch)
-    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: None)
+    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader, reason=None: None)
     seen = []
     monkeypatch.setattr(
         runner.sms, "maybe_send", lambda prospect_id, band: seen.append((prospect_id, band))
@@ -356,7 +374,9 @@ def test_an_sms_failure_does_not_turn_a_finished_job_into_a_failure(conn, reader
     tarjeta -- un problema de Twilio nunca puede tumbar un `hecho`."""
     queue.enqueue("U1", "mensaje")
     stub_research(monkeypatch)
-    monkeypatch.setattr(runner, "deliver_for", lambda prospect_id, passed_reader: "alta")
+    monkeypatch.setattr(
+        runner, "deliver_for", lambda prospect_id, passed_reader, reason=None: "alta"
+    )
 
     def boom(prospect_id, band):
         raise RuntimeError("twilio caído")
