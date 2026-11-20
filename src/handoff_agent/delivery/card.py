@@ -31,7 +31,7 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from ..config import load_settings
-from . import linkedin
+from . import enlace_app, linkedin
 from . import prioridad as niveles
 
 QUOTE_CHARS = 300
@@ -525,4 +525,8 @@ def build(
             }
         )
     blocks.append({"type": "actions", "elements": elements})
+    # El mismo mensaje, para el teléfono (0041): el botón de arriba abre el navegador.
+    en_la_app = enlace_app.bloque(enlace_app.de_mensaje(permalink))
+    if en_la_app:
+        blocks.append(en_la_app)
     return blocks

@@ -111,6 +111,11 @@ def wiring(monkeypatch):
     # El latido no escribe en la base desde estos tests: se anota lo que se habría escrito.
     monkeypatch.setattr(loop.estado_lector, "registrar_ok", lambda *a: calls["ok"].append(a))
     monkeypatch.setattr(loop.estado_lector, "registrar_fallo", lambda e: calls["fallos"].append(e))
+    # Ni el workspace del enlace "Open in app" (0041): se anota a quién se le preguntaría.
+    calls["workspace"] = []
+    monkeypatch.setattr(
+        loop.enlace_app, "recordar", lambda reader: calls["workspace"].append(reader)
+    )
     return calls
 
 
@@ -700,6 +705,23 @@ def test_the_dm_text_pass_logs_its_errors_without_raising(wiring, monkeypatch, c
 # ---------------------------------------------------------------------------------
 # Modo automático de canales (0028): el descubrimiento y de dónde salen los canales.
 # ---------------------------------------------------------------------------------
+
+
+def test_every_good_read_lets_the_app_link_learn_the_workspace(wiring):
+    """`enlace_app.recordar` decide por dentro cuándo preguntar de verdad a Slack (una
+    vez por proceso y luego cada varias horas); el bucle solo le pasa el lector tras
+    cada lectura que salió bien."""
+    run(FakeClock(), max_cycles=3)
+    assert wiring["workspace"] and len(wiring["workspace"]) == len(wiring["ok"])
+
+
+def test_a_failed_read_does_not_ask_for_the_workspace(wiring, monkeypatch):
+    def roto(reader, channels, lookback_hours, **kwargs):
+        raise SlackAuthFailed("token_revoked")
+
+    monkeypatch.setattr(loop, "watch_tick", roto)
+    run(FakeClock(), max_cycles=3)
+    assert wiring["workspace"] == []
 
 
 def test_the_usual_path_never_discovers_channels(wiring, monkeypatch):

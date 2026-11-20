@@ -571,6 +571,35 @@ falla se reintenta hasta tres veces.
 El panel ordena **Today** con las mismas reglas (`panel/lib/prioridad.ts`), y
 los dos interruptores y los tres números se editan en Settings.
 
+## El enlace "Open in app" y el tope de los avisos de canal
+
+Migración `0041`. Dos arreglos:
+
+**El enlace para el teléfono** (`delivery/enlace_app.py`). El enlace web al
+mensaje original (`chat.getPermalink`) va bien en el ordenador; en el teléfono
+deja a AG en la app sin llegar al mensaje. Cada aviso que enlaza a un mensaje
+del Founders Club lleva ahora, junto al enlace web, un segundo enlace **"Open in
+app"** con el esquema `slack://`:
+
+```
+slack://channel?team=<T…>&id=<C…>&message=<ts>[&thread_ts=<ts del principal>]
+```
+
+`team` e `id` son el formato documentado por Slack; `message` y `thread_ts` no
+están documentados (si la app los ignora, abre igual el canal correcto). El
+formato vive en una sola función (`enlace_app._url`), va siempre como enlace de
+texto y nunca en un botón, y un test impide que nadie más escriba `slack://`. El
+código del workspace sale de `auth.test` (ningún método nuevo de Slack) y el
+worker lo guarda en `config` (`founders_club_team_id`). Sin él, o con
+`enlace_app_activo` apagado, los avisos salen solo con el enlace web.
+
+**El tope de menciones y presentaciones** (`signals/eventos.py`). El tope cuenta
+los avisos que SALIERON hoy (`eventos_canal.publicado_at`), no los eventos
+apuntados hoy. Y un evento pendiente cuyo mensaje tiene más de
+`eventos_edad_maxima_horas` (24) no se publica nunca: se cierra como `omitida`,
+también con el tope en 0. Subir un tope o encender un interruptor no puede
+soltar un atraso.
+
 ## Invariantes del proyecto
 
 Romper cualquiera de estas es un bug, no una preferencia:

@@ -71,7 +71,7 @@ from zoneinfo import ZoneInfo
 
 from .. import canales, db, db_config, guards, ledger
 from ..config import load_settings
-from . import card, prioridad, seguimiento_canal, slack_writer, sugerencia
+from . import card, enlace_app, prioridad, seguimiento_canal, slack_writer, sugerencia
 from .card import COMPANY_CHARS, NAME_CHARS, _escape_and_cap, _is_safe_link
 
 logger = logging.getLogger(__name__)
@@ -200,6 +200,14 @@ def _enlace(caso: Caso) -> str | None:
     return url if _is_safe_link(url) else None
 
 
+def _enlace_app(caso: Caso) -> str | None:
+    """Lo mismo que `_enlace`, para el teléfono (0041): el mensaje concreto si el caso es
+    de canal, la conversación si es un DM. None si no se puede montar."""
+    if caso.canal is not None:
+        return enlace_app.de_mensaje(caso.enlace)
+    return enlace_app.de_conversacion(caso.team_id, caso.dm_id)
+
+
 def _horas_desde_ts(ts: object, ahora: datetime) -> int:
     try:
         return max(0, int((ahora.timestamp() - float(str(ts))) // 3600))
@@ -272,7 +280,7 @@ def linea(caso: Caso) -> str:
     partes = [f"*{nombre}*" + (f" — {empresa}" if empresa else ""), _descripcion(caso)]
     url = _enlace(caso)
     if url:
-        partes.append(f"<{url}|Open in Slack>")
+        partes.append(enlace_app.con_app(f"<{url}|Open in Slack>", _enlace_app(caso)))
     return "• " + " · ".join(partes)
 
 

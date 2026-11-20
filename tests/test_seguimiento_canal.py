@@ -747,7 +747,8 @@ def test_switched_on_a_non_lead_who_replied_is_a_reminder(sin_ficha, slack):
         "*Direct messages from people who aren't leads yet*",
         (
             "• *Dana Okafor* · Dana replied 1 day ago · "
-            "<https://app.slack.com/client/T0OWNER/DZZZ|Open in Slack>"
+            "<https://app.slack.com/client/T0OWNER/DZZZ|Open in Slack> · "
+            "<slack://channel?team=T0OWNER&id=DZZZ|Open in app>"
         ),
     ]
 

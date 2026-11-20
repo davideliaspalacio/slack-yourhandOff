@@ -221,7 +221,8 @@ def test_one_message_grouped_by_level_most_urgent_first(listo, slack, monkeypatc
         (
             "⚪ *FYI* — good to know, nothing waiting on you (1)\n"
             "• *Cleo Diaz* — Gamma · you wrote 4 days ago, no answer yet · "
-            "<https://app.slack.com/client/T0OWNER/DCLEO|Open in Slack>"
+            "<https://app.slack.com/client/T0OWNER/DCLEO|Open in Slack> · "
+            "<slack://channel?team=T0OWNER&id=DCLEO|Open in app>"
         ),
         (
             "People drop off this list once they are marked Contacted or Discard. "

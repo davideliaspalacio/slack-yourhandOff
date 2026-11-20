@@ -3,7 +3,7 @@ import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarChatResponderActivo,
   guardarExigirEvidencia, guardarHubspotActivo,
-  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarPrioridadInterruptor,
+  guardarDmTextoActivo, guardarEnlaceAppActivo, guardarLeerHilos, guardarPausaUnipile, guardarPrioridadInterruptor,
   guardarSaludoSugeridoActivo, guardarSeguimientoActivo, guardarSeguimientoInterruptor,
   guardarUmbral,
 } from "../acciones";
@@ -109,6 +109,12 @@ const INTERRUPTORES_PRIORIDAD: [string, string][] = [
 const EDITABLES_EVENTOS: Record<string, string> = {
   menciones_por_dia: "Maximum \"you were mentioned\" alerts per day",
   presentaciones_por_dia: "Maximum \"new introduction\" alerts per day",
+  // El plazo de 0041_enlace_app_y_tope_eventos.sql (política panel_ajusta_enlace_app,
+  // de 1 a 168): lo que no salió a tiempo se cierra sin publicar, así que subir un tope
+  // nunca suelta un atraso.
+  eventos_edad_maxima_horas:
+    "Hours after which a mention or introduction that was never posted is dropped " +
+    "instead of posted late (1–168). Raising a cap never releases a backlog",
   // El aviso de miembro nuevo (0037_saludos_y_miembros.sql): los numéricos que deja
   // tocar la política panel_ajusta_saludos. saludo_sugerido_activo va aparte porque es
   // un booleano.
@@ -189,6 +195,7 @@ export default async function Ajustes() {
       ...Object.keys(EDITABLES_CHAT), "chat_responder_activo",
       ...Object.keys(EDITABLES_HUBSPOT), "hubspot_activo", "hubspot_desde",
       "canal_presentaciones", "saludo_sugerido_activo", "seguimiento_activo", "dm_texto_activo",
+      "enlace_app_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
@@ -241,6 +248,8 @@ export default async function Ajustes() {
   // Encendido salvo que la base diga false, igual que en el worker
   // (delivery/saludo.py): nace encendido en 0037.
   const saludoSugerido = valores.get("saludo_sugerido_activo") !== false;
+  // Igual: nace encendido en 0041 (delivery/enlace_app.py).
+  const enlaceApp = valores.get("enlace_app_activo") !== false;
   const descubiertos = (nombresData ?? []).filter((c) => c.es_miembro === true);
   const masActivos = [...descubiertos]
     .sort((a, b) => Number(b.mensajes_vistos ?? 0) - Number(a.mensajes_vistos ?? 0))
@@ -435,6 +444,20 @@ export default async function Ajustes() {
             );
           })}
           {Object.entries(EDITABLES_PRIORIDAD).map(fila)}
+          <tr>
+            <td>&quot;Open in app&quot; link. Next to the usual link to the original Founders
+              Club message (which opens the browser), every alert carries a second link
+              that opens the same message inside the Slack app — the one to use on a
+              phone. Turn it off and the alerts go back to the web link only.
+              <div className="muted" style={{ fontSize: 12 }}>enlace_app_activo</div></td>
+            <td>
+              <form action={guardarEnlaceAppActivo} className="inline">
+                <input type="hidden" name="value" value={enlaceApp ? "false" : "true"} />
+                <span>{enlaceApp ? "On" : "Off"}</span>
+                <button type="submit">{enlaceApp ? "Turn off" : "Turn on"}</button>
+              </form>
+            </td>
+          </tr>
         </tbody>
       </table>
 

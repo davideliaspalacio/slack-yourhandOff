@@ -537,3 +537,121 @@ def test_a_hostile_profile_name_cannot_ping_the_channel(conn, slack, restore_con
     eventos.publicar_pendientes(lector)
     assert "<!channel>" not in slack[0]["json"] and "<!channel>" not in slack[0]["text"]
     assert "&lt;!channel&gt; Eve" in slack[0]["json"]
+
+
+# ---------------------------------------------------------------------------------
+# El incidente del tope: subirlo no puede soltar un atraso (0041)
+# ---------------------------------------------------------------------------------
+
+
+def _atrasar(tipo, horas):
+    """Deja los eventos de `tipo` como si llevaran `horas` esperando: se mueven atrás el
+    mensaje original y el apunte, los dos. Es una fila que se quedó en `pendiente`."""
+    for fila in filas(tipo):
+        viejo = f"{float(fila['ts']) - horas * 3600:.6f}"
+        db.execute(
+            "update slack_messages set ts = %s where channel_id = %s and ts = %s",
+            (viejo, fila["channel_id"], fila["ts"]),
+        )
+        db.execute(
+            "update eventos_canal set ts = %s, "
+            "created_at = created_at - make_interval(hours => %s) where id = %s",
+            (viejo, horas, fila["id"]),
+        )
+
+
+def test_raising_the_cap_never_releases_a_backlog(conn, lector, slack, restore_config):
+    """El incidente: el tope llevaba un mes en 0, se acumularon 303 presentaciones en
+    `pendiente`, y al subirlo a 20 el agente empezó a publicarlas todas, de la más vieja
+    a la más nueva (52 antes de cortarlo a mano). Ninguna de las viejas debe salir."""
+    con_canal_de_intros(conn)
+    db.execute("update config set value = '0'::jsonb where key = 'presentaciones_por_dia'")
+    for n in range(8):
+        mensaje(f"intro vieja {n}", canal=CANAL, user=f"UV{n}", ts=f"{time.time() - n:.6f}")
+    # Con el tope en 0 se apuntan y no sale nada.
+    assert eventos.publicar_pendientes(lector) == 0
+    assert len(filas(eventos.PRESENTACION)) == 8
+    # Pasan tres días con el tope en 0.
+    _atrasar(eventos.PRESENTACION, 72)
+
+    db.execute("update config set value = '3'::jsonb where key = 'presentaciones_por_dia'")
+    # Varias vueltas del worker: en el incidente cada una soltaba otro tope entero.
+    assert sum(eventos.publicar_pendientes(lector) for _ in range(4)) == 0
+    assert slack == []
+    assert {f["estado"] for f in filas(eventos.PRESENTACION)} == {"omitida"}
+    assert all("too old" in f["motivo"] for f in filas(eventos.PRESENTACION))
+
+
+def test_the_cap_counts_what_was_published_today_not_what_was_noted_today(
+    conn, lector, slack, restore_config
+):
+    """El tope contaba por `created_at` (cuándo se apuntó el evento), así que un evento
+    apuntado ayer y publicado hoy no gastaba cupo: cada vuelta volvía a tener el tope
+    entero. Con eventos apuntados ayer y todavía dentro del plazo, hoy sale como mucho el
+    tope, por muchas vueltas que dé el worker."""
+    con_canal_de_intros(conn)
+    db.execute(
+        "insert into config (key, value) values ('eventos_edad_maxima_horas', '48'::jsonb) "
+        "on conflict (key) do update set value = excluded.value"
+    )
+    db.execute("update config set value = '0'::jsonb where key = 'presentaciones_por_dia'")
+    for n in range(6):
+        mensaje(f"intro {n}", canal=CANAL, user=f"UP{n}", ts=f"{time.time() - n:.6f}")
+    assert eventos.publicar_pendientes(lector) == 0
+    # Apuntados hace 30 horas: otro día en cualquier zona, y dentro del plazo de 48.
+    _atrasar(eventos.PRESENTACION, 30)
+
+    db.execute("update config set value = '2'::jsonb where key = 'presentaciones_por_dia'")
+    assert sum(eventos.publicar_pendientes(lector) for _ in range(4)) == 2
+    assert len(slack) == 2
+
+
+def test_the_same_goes_for_mentions(conn, lector, slack, restore_config):
+    db.execute("update config set value = '0'::jsonb where key = 'menciones_por_dia'")
+    for n in range(4):
+        mensaje(f"<@{DUENO}> hola {n}", user=f"UM{n}", ts=f"{time.time() - n:.6f}")
+    assert eventos.publicar_pendientes(lector) == 0
+    _atrasar(eventos.MENCION, 72)
+    db.execute("update config set value = '50'::jsonb where key = 'menciones_por_dia'")
+    assert eventos.publicar_pendientes(lector) == 0
+    assert slack == []
+    assert {f["estado"] for f in filas(eventos.MENCION)} == {"omitida"}
+
+
+def test_an_old_pending_event_is_closed_even_with_the_cap_at_zero(
+    conn, lector, slack, restore_config
+):
+    """Con el tope en 0 los viejos también se cierran: no queda nada esperando a que
+    alguien toque un ajuste."""
+    db.execute("update config set value = '0'::jsonb where key = 'menciones_por_dia'")
+    mensaje(f"<@{DUENO}> hola")
+    eventos.publicar_pendientes(lector)
+    _atrasar(eventos.MENCION, 25)
+    eventos.publicar_pendientes(lector)
+    assert filas(eventos.MENCION)[0]["estado"] == "omitida"
+
+
+def test_a_pending_event_inside_the_window_still_goes_out(conn, lector, slack, restore_config):
+    """El plazo no se come lo de hoy: una mención de hace dos horas que se quedó sin cupo
+    sale en cuanto lo hay."""
+    db.execute("update config set value = '0'::jsonb where key = 'menciones_por_dia'")
+    mensaje(f"<@{DUENO}> hola")
+    eventos.publicar_pendientes(lector)
+    _atrasar(eventos.MENCION, 2)
+    db.execute("update config set value = '5'::jsonb where key = 'menciones_por_dia'")
+    assert eventos.publicar_pendientes(lector) == 1
+
+
+def test_a_failed_post_does_not_use_up_the_cap(conn, lector, slack, monkeypatch, restore_config):
+    db.execute("update config set value = '1'::jsonb where key = 'menciones_por_dia'")
+    mensaje(f"<@{DUENO}> hola")
+
+    def boom(blocks, text):
+        raise RuntimeError("slack caído")
+
+    with monkeypatch.context() as m:
+        m.setattr(eventos.slack_writer, "post_card", boom)
+        assert eventos.publicar_pendientes(lector) == 0
+    fila = filas(eventos.MENCION)[0]
+    assert fila["estado"] == "pendiente" and fila["publicado_at"] is None
+    assert eventos.publicar_pendientes(lector) == 1

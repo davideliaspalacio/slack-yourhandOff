@@ -29,7 +29,7 @@ from collections.abc import Callable, Sequence
 from .. import canales, estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
 from ..crm import hubspot_sync
-from ..delivery import aviso_lector, novedades, resumen_prioridad, seguimiento
+from ..delivery import aviso_lector, enlace_app, novedades, resumen_prioridad, seguimiento
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas, eventos, miembros
 from ..slack_client import SlackAuthFailed
@@ -403,6 +403,10 @@ def run_loop(
                         estado_lector.registrar_fallo(exc)
                         raise
                     estado_lector.registrar_ok(tick.user_id, tick.team, tick.channels_read)
+                    # El código del workspace, para el enlace "Open in app" de los avisos
+                    # (0041). Pregunta a Slack una vez por proceso y luego cada varias
+                    # horas, y no lanza.
+                    enlace_app.recordar(reader)
                     resolved = resolve_pending()
                     logger.info(
                         "slack: %d mensajes nuevos, %d respuestas nuevas en %d hilos, "

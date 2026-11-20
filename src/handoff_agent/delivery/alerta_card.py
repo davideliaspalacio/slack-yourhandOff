@@ -42,6 +42,7 @@ persona repite los bloques de nombre y cita; con `MAX_PERSONAS_HILO` personas so
 from __future__ import annotations
 
 from ..config import load_settings
+from . import enlace_app
 from . import prioridad as niveles
 from .card import (
     COMPANY_CHARS,
@@ -177,6 +178,10 @@ def build(
     # Slack rechaza un bloque de acciones vacío.
     if elements:
         blocks.append({"type": "actions", "elements": elements})
+    # El mismo mensaje, para el teléfono (0041): el botón de arriba abre el navegador.
+    en_la_app = enlace_app.bloque(enlace_app.de_mensaje(permalink))
+    if en_la_app:
+        blocks.append(en_la_app)
     return blocks
 
 
@@ -267,4 +272,8 @@ def build_hilo(post: str | None, entradas: list[dict], prioridad: str | None = N
         botones = _botones_persona(person, entrada.get("permalink"))
         if botones:
             blocks.append({"type": "actions", "elements": botones})
+        # Su respuesta dentro del hilo, para el teléfono (0041).
+        en_la_app = enlace_app.bloque(enlace_app.de_mensaje(entrada.get("permalink")))
+        if en_la_app:
+            blocks.append(en_la_app)
     return blocks

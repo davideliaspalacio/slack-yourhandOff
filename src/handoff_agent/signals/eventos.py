@@ -24,7 +24,11 @@ Nada de esto escribe en el Founders Club: el saludo es texto para que Anthony lo
 Lo que sí comparten con las alertas de `signals/alertas.py`:
 
 - Se reserva antes de publicar, para que un segundo worker o un reintento no dupliquen.
-- Tope diario por tipo, contado en `zona_horaria`.
+- Tope diario por tipo, contado en `zona_horaria` y por el momento en que salió el aviso
+  (`publicado_at`), no por cuándo se apuntó el evento (0041).
+- Lo que no salió a tiempo no sale nunca: un pendiente cuyo mensaje tiene más de
+  `eventos_edad_maxima_horas` se cierra como `omitida`. Subir un tope o encender un
+  interruptor no puede soltar un atraso.
 - Nunca a un descartado, y nunca sobre un mensaje del propio dueño de la credencial (el
   watcher ya los marca `ignorado` y la consulta los salta igual).
 - Nada de esto puede propagarse: avisar es un extra y no puede tumbar el bucle.
@@ -42,7 +46,7 @@ from zoneinfo import ZoneInfo
 
 from .. import db, db_config, ledger
 from ..config import load_settings
-from ..delivery import card, linkedin, prioridad, saludo, slack_writer
+from ..delivery import card, enlace_app, linkedin, prioridad, saludo, slack_writer
 from ..ingest.profile_hints import company_from_title
 from ..slack_client import SlackUnavailable
 from . import procesar
@@ -54,6 +58,10 @@ PRESENTACION = "presentacion"
 
 ACCION_PUBLICADO = "evento_publicado"
 ACCION_FALLIDO = "evento_fallido"
+ACCION_CADUCADO = "evento_caducado"
+
+# El plazo por defecto de `eventos_edad_maxima_horas` (0041).
+EDAD_MAXIMA_HORAS = 24
 
 CABECERAS = {
     MENCION: "💬 *YOU WERE MENTIONED*",
@@ -82,12 +90,47 @@ def _tope(tipo: str) -> int:
 
 
 def _publicados_hoy(tipo: str, ahora: datetime) -> int:
+    """Cuántos avisos de este tipo SALIERON hoy (0041).
+
+    Cuenta por `publicado_at`, no por `created_at`: `created_at` es cuándo se apuntó el
+    evento, y un evento apuntado ayer y publicado hoy no gastaba cupo. Con un atraso
+    acumulado, cada vuelta del worker volvía a tener el tope entero -- así salieron 52
+    presentaciones viejas con el tope en 20."""
     fila = db.fetch_one(
         "select count(*) as n from eventos_canal "
-        "where tipo = %s and estado = 'publicada' and created_at >= %s",
+        "where tipo = %s and estado = 'publicada' and publicado_at >= %s",
         (tipo, _inicio_del_dia(ahora)),
     )
     return fila["n"] if fila else 0
+
+
+def edad_maxima_horas() -> int:
+    """Hasta qué edad del mensaje original puede salir un aviso que se quedó pendiente."""
+    horas = db_config.value("eventos_edad_maxima_horas", EDAD_MAXIMA_HORAS)
+    return horas if horas > 0 else EDAD_MAXIMA_HORAS
+
+
+def _caducar(tipo: str, ahora: datetime) -> int:
+    """Cierra como `omitida` los pendientes cuyo mensaje original ya es viejo (0041).
+
+    Se hace antes de mirar el tope, y también con el tope en 0: lo que no salió a tiempo
+    no sale nunca. Así subir un tope o encender un interruptor no suelta un atraso -- lo
+    único que puede publicarse es lo de las últimas horas, y como mucho el tope. La edad
+    es la del mensaje (`ts`), no la del apunte: es lo que AG vería al abrirlo."""
+    horas = edad_maxima_horas()
+    caducados = db.execute(
+        "update eventos_canal set estado = 'omitida', motivo = %s "
+        "where tipo = %s and estado = 'pendiente' and ts::numeric < %s",
+        (
+            f"too old: the original message was more than {horas} h old",
+            tipo,
+            (ahora - timedelta(hours=horas)).timestamp(),
+        ),
+    )
+    if caducados:
+        logger.info("eventos de canal: %d %s caducados sin publicar", caducados, tipo)
+        ledger.record_action(ACCION_CADUCADO, {"tipo": tipo, "cuantos": caducados})
+    return caducados
 
 
 def detectar(owner_id: str) -> int:
@@ -274,7 +317,8 @@ def _aviso_mencion(fila: dict, reader) -> tuple[list[dict], str]:
     bloques = [seccion("\n".join(partes))]
     enlace = _enlace(fila, reader)
     if enlace:
-        pie = f"They tagged you · <{enlace}|Open in Slack> to reply"
+        abrir = enlace_app.con_app(f"<{enlace}|Open in Slack>", enlace_app.de_mensaje(enlace))
+        pie = f"They tagged you · {abrir} to reply"
         bloques.append({"type": "context", "elements": [{"type": "mrkdwn", "text": pie}]})
     texto = RESUMENES[MENCION].format(quien=visible(fila, nombre), canal=canal)
     return bloques, prioridad.resumen(texto, nivel)
@@ -344,6 +388,10 @@ def _aviso_presentacion(fila: dict, reader) -> tuple[list[dict], str]:
                 ],
             }
         )
+        # La misma presentación, para el teléfono (0041): el botón abre el navegador.
+        en_la_app = enlace_app.bloque(enlace_app.de_mensaje(enlace))
+        if en_la_app:
+            bloques.append(en_la_app)
     texto = RESUMENES[PRESENTACION].format(quien=visible(fila, nombre), canal=canal)
     return bloques, prioridad.resumen(texto, nivel)
 
@@ -351,30 +399,34 @@ def _aviso_presentacion(fila: dict, reader) -> tuple[list[dict], str]:
 _AVISOS = {MENCION: _aviso_mencion, PRESENTACION: _aviso_presentacion}
 
 
-def _reservar(evento_id: str) -> bool:
-    """Marca la fila como publicada antes de publicar, para no duplicar."""
+def _reservar(evento_id: str, ahora: datetime) -> bool:
+    """Marca la fila como publicada antes de publicar, para no duplicar. `publicado_at`
+    se escribe aquí mismo: es lo que cuenta contra el tope del día (0041)."""
     return bool(
         db.execute(
-            "update eventos_canal set estado = 'publicada' where id = %s and estado = 'pendiente'",
-            (evento_id,),
+            "update eventos_canal set estado = 'publicada', publicado_at = %s "
+            "where id = %s and estado = 'pendiente'",
+            (ahora, evento_id),
         )
     )
 
 
 def _liberar(evento_id: str, motivo: str) -> None:
     db.execute(
-        "update eventos_canal set estado = 'pendiente', motivo = %s where id = %s",
+        "update eventos_canal set estado = 'pendiente', publicado_at = null, motivo = %s "
+        "where id = %s",
         (motivo, evento_id),
     )
 
 
 def _publicar_tipo(tipo: str, reader, ahora: datetime) -> int:
+    _caducar(tipo, ahora)
     cupo = _tope(tipo) - _publicados_hoy(tipo, ahora)
     if cupo <= 0:
         return 0
     publicados = 0
     for fila in _pendientes(tipo, cupo):
-        if not _reservar(fila["id"]):
+        if not _reservar(fila["id"], ahora):
             continue
         try:
             # El montaje también va dentro del `try`: si algo falla al construir el

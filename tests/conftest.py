@@ -130,6 +130,12 @@ def conn(database_url):
                 # Un solo TRUNCATE: en sentencias separadas choca con los locks
                 # del pool y la suite se cae por deadlock.
                 cur.execute(f"truncate table {', '.join(present)} restart identity cascade")
+            # `config` no se vacía, pero el worker anota en ella el workspace del lector
+            # (0041, `delivery/enlace_app.py`): sin esto, el test que arranca el bucle
+            # le dejaría el enlace "Open in app" puesto a todos los que vengan detrás.
+            cur.execute(
+                "update config set value = '\"\"'::jsonb where key = 'founders_club_team_id'"
+            )
         yield connection
 
 

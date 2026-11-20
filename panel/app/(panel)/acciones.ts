@@ -315,6 +315,20 @@ export async function guardarPrioridadInterruptor(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// enlace_app_activo también es un booleano: el interruptor del enlace "Open in app" que
+// los avisos llevan junto al enlace web, para abrir el mensaje en el teléfono
+// (delivery/enlace_app.py). La política panel_ajusta_enlace_app (0041) es la que permite
+// tocar esta clave, y solo con true o false. eventos_edad_maxima_horas pasa por
+// guardarUmbral.
+export async function guardarEnlaceAppActivo(formData: FormData) {
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", "enlace_app_activo");
+  revalidatePath("/ajustes");
+}
+
 // dm_texto_activo también es un booleano: el interruptor de leer el texto de los
 // DMs de Anthony con sus leads para sugerirle respuestas. La política
 // panel_ajusta_dm_texto (0031) es la que permite tocar esta clave, y solo con true

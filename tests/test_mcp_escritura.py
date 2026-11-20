@@ -511,6 +511,9 @@ def test_adjustable_settings_match_what_the_panel_lets_you_touch(equipo):
         "resumen_prioridad_max_por_nivel",
         "resumen_prioridad_dias",
     }
+    # Y el plazo de los avisos de canal (0041), por lo mismo que los de 0037 y 0039: se
+    # cambia en Settings, sin reescribir `mcp_ajustar_umbral`.
+    solo_panel |= {"eventos_edad_maxima_horas"}
     assert propios <= del_panel
     assert solo_panel <= del_panel
     assert set(mcp_escritura.UMBRALES) == del_panel - propios - solo_panel

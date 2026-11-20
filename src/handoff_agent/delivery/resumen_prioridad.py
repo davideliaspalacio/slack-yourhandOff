@@ -61,7 +61,15 @@ from zoneinfo import ZoneInfo
 
 from .. import db, db_config, guards, ledger
 from ..config import load_settings
-from . import alerta_card, aviso_lector, prioridad, seguimiento, seguimiento_canal, slack_writer
+from . import (
+    alerta_card,
+    aviso_lector,
+    enlace_app,
+    prioridad,
+    seguimiento,
+    seguimiento_canal,
+    slack_writer,
+)
 from .card import (
     BAND_LABELS,
     COMPANY_CHARS,
@@ -340,7 +348,8 @@ def _linea_presentacion(fila: dict, nombre: str, enlace: str | None, ahora: date
     ]
     decir_hola = _enlace(enlace, "Say hi in Slack")
     if decir_hola:
-        partes.append(decir_hola)
+        # Con el enlace de la app detrás, para el teléfono (0041).
+        partes.append(enlace_app.con_app(decir_hola, enlace_app.de_mensaje(enlace)))
     return "• " + " · ".join(partes)
 
 

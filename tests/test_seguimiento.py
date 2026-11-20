@@ -84,7 +84,8 @@ def test_they_replied_and_he_has_not(conn):
     assert (caso.nombre, caso.empresa, caso.dias) == ("Sunny Patel", "Acme", 1)
     assert seguimiento.linea(caso) == (
         "• *Sunny Patel* — Acme · Sunny replied 1 day ago · "
-        "<https://app.slack.com/client/T0OWNER/DAAA|Open in Slack>"
+        "<https://app.slack.com/client/T0OWNER/DAAA|Open in Slack> · "
+        "<slack://channel?team=T0OWNER&id=DAAA|Open in app>"
     )
 
 
@@ -182,13 +183,15 @@ def test_the_rendered_summary_groups_the_three_cases(conn, slack):
         "*They replied, you haven't*",
         (
             "• *Sunny Patel* — Acme · Sunny replied 1 day ago · "
-            "<https://app.slack.com/client/T0OWNER/DAAA|Open in Slack>"
+            "<https://app.slack.com/client/T0OWNER/DAAA|Open in Slack> · "
+            "<slack://channel?team=T0OWNER&id=DAAA|Open in app>"
         ),
         "",
         "*No answer yet*",
         (
             "• *Bob Lee* — Beta · you wrote 4 days ago, no answer yet · "
-            "<https://app.slack.com/client/T0OWNER/DBBB|Open in Slack>"
+            "<https://app.slack.com/client/T0OWNER/DBBB|Open in Slack> · "
+            "<slack://channel?team=T0OWNER&id=DBBB|Open in app>"
         ),
         "",
         "*Marked contacted, no conversation*",
