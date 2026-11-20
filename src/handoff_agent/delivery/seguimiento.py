@@ -35,6 +35,22 @@ cambie -- un mensaje nuevo, de cualquiera de los dos, lo reinicia. El caso sin
 conversación se marca en el ledger (`seguimiento_avisado`) y vuelve si cambia
 el estado de la persona.
 
+Desde 0038 hay tres casos más, cada uno con su subtítulo, para lo que se escapaba:
+
+- **Mentions you haven't answered** y **Thread replies you haven't answered**: lo que
+  espera respuesta suya en los canales. Qué cuenta como pendiente, y la comprobación en
+  vivo contra Slack que pasa cada uno antes de salir, están en
+  `delivery/seguimiento_canal.py`; aquí solo se pintan y se publican. Enlazan al
+  aviso concreto y nombran a la persona y el canal.
+- **Direct messages from people who aren't leads yet**: el "They replied" de siempre,
+  para gente sin ficha (`seguimiento_sin_ficha_activo`, que nace apagado). El rastro
+  ya guardaba esas conversaciones, sin texto como todas; lo que faltaba era el nombre,
+  y se le pregunta a Slack en el momento de avisar, sin guardarlo. Interrumpe una sola
+  vez por cada vez que le escriben y luego queda en el resumen del día.
+
+Los tres necesitan el lector (`reader`): sin él -- el MCP, o un test que no lo pasa --
+no salen, y todo lo demás funciona exactamente como antes.
+
 Frenos, como en el resto de la entrega: `seguimiento_activo`, el kill switch,
 el tope mensual, el tope de líneas (`seguimiento_max_por_resumen`) y un único
 resumen al día (contado en `zona_horaria`, igual que el SMS y las alertas).
@@ -49,13 +65,13 @@ otra vez. Nada de esto lanza: el bucle no puede caerse por un recordatorio.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from .. import db, db_config, guards, ledger
+from .. import canales, db, db_config, guards, ledger
 from ..config import load_settings
-from . import card, slack_writer, sugerencia
+from . import card, seguimiento_canal, slack_writer, sugerencia
 from .card import COMPANY_CHARS, NAME_CHARS, _escape_and_cap, _is_safe_link
 
 logger = logging.getLogger(__name__)
@@ -78,17 +94,30 @@ SIN_CONVERSACION = "sin_conversacion"
 # Solo en el aviso inmediato (0031): ver el docstring del módulo.
 NO_LEIDO = "no_leido"
 
+# Los tres de 0038. Los dos de canal los calcula `seguimiento_canal.py`; el tercero es
+# "They replied" para alguien que todavía no tiene ficha.
+MENCION = seguimiento_canal.MENCION
+HILO = seguimiento_canal.HILO
+SIN_FICHA = "responder_sin_ficha"
+
 # Orden del resumen: primero lo que espera una respuesta suya, y dentro de cada
 # grupo lo que lleva más tiempo esperando.
 TITULOS = {
     NO_LEIDO: "Unread message",
     RESPONDER: "They replied, you haven't",
+    MENCION: "Mentions you haven't answered",
+    HILO: "Thread replies you haven't answered",
+    SIN_FICHA: "Direct messages from people who aren't leads yet",
     SIN_RESPUESTA: "No answer yet",
     SIN_CONVERSACION: "Marked contacted, no conversation",
 }
 # Lo no leído va primero: es lo único que acaba de pasar de verdad. El resumen diario
-# nunca lo trae, así que ahí el orden de los otros tres no cambia.
-ORDEN = (NO_LEIDO, RESPONDER, SIN_RESPUESTA, SIN_CONVERSACION)
+# nunca lo trae, así que ahí el orden de los demás no cambia. Los leads van por delante
+# de los canales, y la gente sin ficha detrás: todo eso espera algo de él, pero no vale
+# lo mismo. Lo que no depende de él cierra la lista, como siempre.
+ORDEN = (NO_LEIDO, RESPONDER, MENCION, HILO, SIN_FICHA, SIN_RESPUESTA, SIN_CONVERSACION)
+# Lo que necesita preguntarle algo a Slack antes de poder salir (ver `_preparar`).
+CON_LECTOR = (MENCION, HILO, SIN_FICHA)
 MAX_POR_RESUMEN = 10
 CABECERA = "⏰ *FOLLOW-UPS*"
 # El aviso inmediato lleva otra cabecera a propósito: en el canal se distingue de un
@@ -108,6 +137,10 @@ MAX_CASOS_POR_AVISO = 5
 # el suyo y, ya escapada, puede crecer hasta 5 veces ('&' -> '&amp;'). Recortarla solo
 # pasa con una sugerencia absurda, llena de '&'.
 SUGERENCIA_CHARS = 2990
+# El nombre de un canal lo eligió alguien del club: se escapa y se recorta como todo.
+CANAL_CHARS = 90
+# A quien no tiene ficha ni Slack quiere dar el nombre, en un aviso de canal.
+ALGUIEN = "Someone"
 
 
 @dataclass(frozen=True)
@@ -121,9 +154,14 @@ class Caso:
     slack_user_id: str | None = None
     prospect_id: str | None = None
     ultimo_ts: str | None = None
-    # Solo lo no leído: cuántas horas lleva y cuántos hay sin abrir.
+    # Lo no leído y los casos de canal: cuántas horas lleva. `sin_leer`, solo lo no
+    # leído: cuántos hay sin abrir.
     horas: int | None = None
     sin_leer: int | None = None
+    # Solo los casos de canal (0038): de qué hilo o mención se trata, y el enlace
+    # permanente que da Slack una vez comprobado que sigue pendiente.
+    canal: seguimiento_canal.Pendiente | None = None
+    enlace: str | None = None
 
 
 def _zona() -> ZoneInfo:
@@ -152,7 +190,10 @@ def _dias_desde_ts(ts: object, ahora: datetime) -> int:
 def _enlace(caso: Caso) -> str | None:
     """`https://app.slack.com/client/<team_id>/<dm_id>`, el enlace que abre la
     conversación. Sin el código del workspace (que guarda el rastro) no hay
-    enlace, y la línea sale igual."""
+    enlace, y la línea sale igual. Un caso de canal trae el suyo, que lleva al
+    aviso concreto y no a la conversación entera."""
+    if caso.canal is not None:
+        return caso.enlace if _is_safe_link(caso.enlace) else None
     if not (caso.team_id and caso.dm_id):
         return None
     url = f"https://app.slack.com/client/{caso.team_id}/{caso.dm_id}"
@@ -178,13 +219,41 @@ def _plural(dias: int) -> str:
     return f"{dias} day{'s' if dias != 1 else ''} ago"
 
 
+def _hace(caso: Caso) -> str:
+    """Cuánto lleva esperando un caso de canal: en horas los dos primeros días (una
+    mención salta a las pocas horas, y "today" no diría nada), luego en días."""
+    if caso.horas is not None and caso.horas < 48:
+        return _hace_horas(caso.horas)
+    return _plural(caso.dias)
+
+
+def _descripcion_canal(caso: Caso, quien: str) -> str:
+    pendiente = caso.canal
+    assert pendiente is not None
+    donde = _escape_and_cap(
+        canales.etiqueta(pendiente.channel_id, pendiente.canal_nombre), CANAL_CHARS
+    )
+    if caso.tipo == MENCION:
+        en_hilo = " (in a thread)" if pendiente.en_hilo else ""
+        return f"{quien} mentioned you in {donde}{en_hilo} {_hace(caso)}"
+    hilo = "in your thread" if pendiente.hilo_propio else "to you in their thread"
+    mas = (
+        f" (+{pendiente.mas} more repl{'ies' if pendiente.mas != 1 else 'y'})"
+        if pendiente.mas
+        else ""
+    )
+    return f"{quien} replied {hilo} in {donde} {_hace(caso)}{mas}"
+
+
 def _descripcion(caso: Caso) -> str:
     quien = caso.nombre.split()[0] if caso.nombre.split() else caso.nombre
     quien = _escape_and_cap(quien, NAME_CHARS)
+    if caso.canal is not None:
+        return _descripcion_canal(caso, quien)
     if caso.tipo == NO_LEIDO:
         cuantos = caso.sin_leer or 1
         return f"{quien} wrote {_hace_horas(caso.horas or 0)}, {cuantos} unread"
-    if caso.tipo == RESPONDER:
+    if caso.tipo in (RESPONDER, SIN_FICHA):
         return f"{quien} replied {_plural(caso.dias)}"
     if caso.tipo == SIN_RESPUESTA:
         return f"you wrote {_plural(caso.dias)}, no answer yet"
@@ -297,11 +366,156 @@ def _casos_sin_conversacion(dias: int, ahora: datetime) -> list[Caso]:
     ]
 
 
-def casos(now: datetime | None = None, limite: int | None = None) -> list[Caso]:
+def _casos_sin_ficha(ahora: datetime, para_aviso: bool) -> list[Caso]:
+    """ "They replied, you haven't" con alguien que todavía no tiene ficha (0038).
+
+    El rastro ya guarda esas conversaciones -- sin texto, como todas --; lo que hacía
+    ruido era avisar sin nombre. Aquí salen sin él y `_preparar` se lo pregunta a Slack;
+    a quien Slack no le pone nombre, no se le avisa.
+
+    Tres frenos que los leads no tienen, porque esto es gente con la que nadie decidió
+    trabajar: nace apagado (`seguimiento_sin_ficha_activo`); solo cuenta lo que le
+    escribieron DESPUÉS de encenderlo y dentro de `seguimiento_caduca_dias`; y el aviso
+    inmediato sale una sola vez por cada vez que le escriben (`avisado_ts`), sin
+    recordatorio cada pocas horas. Lo que siga esperando queda en el resumen del día."""
+    if db_config.value("seguimiento_sin_ficha_activo", False) is not True:
+        return []
+    horas = db_config.value("seguimiento_horas_para_responder", 24)
+    filas = db.fetch_all(
+        """
+        select r.dm_id, r.team_id, r.slack_user_id, r.ultimo_ts
+          from dm_rastro r
+         where r.prospect_id is null
+           -- El rastro enlaza la ficha en su pasada siguiente; hasta entonces puede
+           -- existir ya, y quien la tiene va por el camino de los leads (o por ninguno,
+           -- si está descartado).
+           and not exists (select 1 from prospects p where p.slack_user_id = r.slack_user_id)
+           and r.ultimo_de = 'otro'
+           and r.ultimo_ts::numeric < %(limite)s
+           and r.ultimo_ts::numeric > %(desde)s
+           and not r.respondido_con_emoji
+           and (not %(para_aviso)s or r.avisado_ts is null or r.avisado_ts <> r.ultimo_ts)
+         order by r.ultimo_ts::numeric
+        """,
+        {
+            "limite": ahora.timestamp() - horas * 3600,
+            "desde": seguimiento_canal.desde_ts(ahora, "seguimiento_sin_ficha_activo"),
+            "para_aviso": para_aviso,
+        },
+    )
+    return [
+        Caso(
+            tipo=SIN_FICHA,
+            dias=_dias_desde_ts(f["ultimo_ts"], ahora),
+            nombre=f["slack_user_id"],
+            dm_id=f["dm_id"],
+            team_id=f["team_id"],
+            slack_user_id=f["slack_user_id"],
+            ultimo_ts=f["ultimo_ts"],
+        )
+        for f in filas
+    ]
+
+
+def _casos_canal(ahora: datetime, owner_id: str, para_aviso: bool) -> list[Caso]:
+    """Los hilos y las menciones que, según la base, esperan respuesta suya (0038).
+
+    Son candidatos: ninguno se publica sin que `_preparar` compruebe en vivo que sigue
+    pendiente. Para el aviso inmediato se quedan fuera los que aún no toca recordar o ya
+    agotaron sus avisos; el resumen del día los trae todos."""
+    recordar = db_config.value("seguimiento_recordar_horas", RECORDAR_HORAS)
+    lista = []
+    for pendiente in seguimiento_canal.candidatos(owner_id, ahora):
+        if para_aviso and not seguimiento_canal.toca_avisar(pendiente, ahora, recordar):
+            continue
+        lista.append(
+            Caso(
+                tipo=pendiente.tipo,
+                dias=_dias_desde_ts(pendiente.ts, ahora),
+                nombre=pendiente.nombre or ALGUIEN,
+                empresa=pendiente.empresa,
+                slack_user_id=pendiente.slack_user_id,
+                prospect_id=pendiente.prospect_id,
+                horas=_horas_desde_ts(pendiente.ts, ahora),
+                canal=pendiente,
+            )
+        )
+    return lista
+
+
+def _casos_con_lector(ahora: datetime, reader, para_aviso: bool) -> tuple[list[Caso], str]:
+    """Los casos de 0038 y el id del dueño de la credencial, que hace falta después para
+    comprobarlos. Sin lector no hay ninguno.
+
+    Nada de aquí puede dejar sin aviso a los leads: si falla -- Slack no dice quién es
+    él, la migración aún no está aplicada --, se anota y el seguimiento de siempre sigue
+    sin ellos."""
+    if reader is None:
+        return [], ""
+    try:
+        if para_aviso:
+            seguimiento_canal.limpiar()
+        lista = _casos_sin_ficha(ahora, para_aviso)
+        owner_id = reader.owner_id()
+        return lista + _casos_canal(ahora, owner_id, para_aviso), owner_id
+    except Exception:
+        logger.exception("seguimiento: sin casos de canal ni de gente sin ficha en esta pasada")
+        return [], ""
+
+
+def _preparar(caso: Caso, reader, owner_id: str) -> Caso | None:
+    """Lo último antes de que un caso de 0038 pueda salir. None = no sale.
+
+    - Hilo o mención: se comprueba en vivo que no contestó ya (y si contestó, se apunta
+      para no volver a preguntar). Solo entonces se piden el nombre, si no tiene ficha, y
+      el enlace permanente.
+    - Sin ficha: el nombre, que Slack da y no se guarda. Sin nombre no sale: un aviso con
+      el código de Slack por nombre es ruido.
+
+    Los demás casos pasan tal cual."""
+    if caso.tipo not in CON_LECTOR:
+        return caso
+    try:
+        if caso.canal is None:
+            nombre = seguimiento_canal.nombre_de(reader, caso.slack_user_id)
+            return replace(caso, nombre=nombre) if nombre else None
+        pendiente = caso.canal
+        respondio = seguimiento_canal.contestado(reader, owner_id, pendiente)
+        if respondio:
+            seguimiento_canal.resolver(pendiente)
+        if respondio is not False:
+            return None
+        nombre = pendiente.nombre or seguimiento_canal.nombre_de(reader, pendiente.slack_user_id)
+        return replace(
+            caso,
+            nombre=nombre or ALGUIEN,
+            enlace=seguimiento_canal.enlace(reader, pendiente),
+        )
+    except Exception:
+        # Ante la duda, no avisar; y que uno falle no se lleva por delante a los demás.
+        logger.exception("seguimiento: no se pudo preparar un caso de %s", caso.tipo)
+        return None
+
+
+def _preparados(ordenados: list[Caso], tope: int, reader, owner_id: str) -> list[Caso]:
+    """Los primeros `tope` casos que de verdad pueden salir. Se prepara sobre la marcha,
+    así que a Slack solo se le pregunta por lo que cabe."""
+    lista: list[Caso] = []
+    for caso in ordenados:
+        if len(lista) >= tope:
+            break
+        listo = _preparar(caso, reader, owner_id)
+        if listo is not None:
+            lista.append(listo)
+    return lista
+
+
+def casos(now: datetime | None = None, limite: int | None = None, reader=None) -> list[Caso]:
     """Los casos pendientes de aviso, las más urgentes primero y acotadas.
 
-    Solo lee: ni publica ni marca nada. Lo usa el resumen diario y también el
-    MCP para responder "¿a quién le debo respuesta?"."""
+    Sin `reader` solo lee, ni publica ni marca nada, y trae los tres casos de siempre.
+    Con él -- el resumen diario -- entran además los de 0038, ya comprobados contra
+    Slack; lo único que eso escribe es el apunte de lo que resultó estar contestado."""
     ahora = now or datetime.now(UTC)
     horas = db_config.value("seguimiento_horas_para_responder", 24)
     dias = db_config.value("seguimiento_dias_sin_respuesta", 3)
@@ -315,9 +529,12 @@ def casos(now: datetime | None = None, limite: int | None = None) -> list[Caso]:
         SIN_RESPUESTA: _casos_dm(SIN_RESPUESTA, ahora.timestamp() - dias * 86400, ahora),
         SIN_CONVERSACION: _casos_sin_conversacion(dias, ahora),
     }
+    extra, owner_id = _casos_con_lector(ahora, reader, para_aviso=False)
+    for caso in extra:
+        encontrados.setdefault(caso.tipo, []).append(caso)
     # El resumen nunca trae lo no leído (es cosa del aviso inmediato): `.get`, no `[]`.
     ordenados = [caso for tipo in ORDEN for caso in encontrados.get(tipo, [])]
-    return ordenados[: max(0, int(tope))]
+    return _preparados(ordenados, max(0, int(tope)), reader, owner_id)
 
 
 def bloques(lista: list[Caso], cabecera: str = CABECERA) -> list[dict]:
@@ -367,6 +584,10 @@ def _marcar(lista: list[Caso]) -> None:
     """Lo que ya se avisó no vuelve a salir. Solo después de publicar."""
     for caso in lista:
         try:
+            if caso.canal is not None:
+                # El resumen no gasta avisos de un hilo ni de una mención: mientras
+                # sigan pendientes y sin caducar, vuelven a salir mañana.
+                continue
             if caso.dm_id:
                 db.execute(
                     "update dm_rastro set avisado_ts = %s where dm_id = %s",
@@ -379,7 +600,14 @@ def _marcar(lista: list[Caso]) -> None:
             logger.exception("seguimiento: no se pudo marcar el caso %s", caso.dm_id or caso.nombre)
 
 
-def _casos_para_avisar(ahora: datetime) -> list[Caso]:
+def _clave(caso: Caso) -> tuple[str | None, str | None]:
+    """Lo que hace único a un caso dentro de una pasada: su conversación, o su hilo."""
+    if caso.canal is not None:
+        return (caso.canal.channel_id, caso.canal.clave_ts)
+    return (caso.dm_id, None)
+
+
+def _casos_para_avisar(ahora: datetime, extra: list[Caso] | None = None) -> list[Caso]:
     """Las conversaciones que ya pasaron de su plazo y a las que toca avisar ahora.
 
     Se diferencia del resumen en una cosa: el resumen saca cada conversación una sola
@@ -441,12 +669,15 @@ def _casos_para_avisar(ahora: datetime) -> list[Caso]:
             for f in filas
         )
     casos.extend(_casos_no_leidos(ahora))
+    # Los de 0038 (`extra`) entran en la misma lista y con las mismas reglas: un solo
+    # orden y un solo cupo para todo lo que espera algo de él.
+    casos.extend(extra or [])
     casos.sort(key=lambda c: (ORDEN.index(c.tipo), -c.dias))
-    vistos: set[str | None] = set()
+    vistos: set[tuple[str | None, str | None]] = set()
     unicos: list[Caso] = []
     for caso in casos:
-        if caso.dm_id not in vistos:
-            vistos.add(caso.dm_id)
+        if _clave(caso) not in vistos:
+            vistos.add(_clave(caso))
             unicos.append(caso)
     return unicos
 
@@ -551,7 +782,8 @@ def _sugeridas(lista: list[Caso]) -> dict[str, sugerencia.Sugerencia]:
     apagado no hay ninguna y el aviso sale como siempre."""
     sugeridas: dict[str, sugerencia.Sugerencia] = {}
     for caso in lista:
-        if not caso.dm_id:
+        # Solo leads: de la conversación de alguien sin ficha no se lee nada, nunca.
+        if not caso.dm_id or caso.tipo == SIN_FICHA:
             continue
         propuesta = sugerencia.sugerir(caso.dm_id)
         if propuesta is not None:
@@ -582,7 +814,31 @@ def _marcar_avisados(lista: list[Caso], ahora: datetime) -> None:
             logger.exception("seguimiento: no se pudo marcar el aviso de %s", caso.dm_id)
 
 
-def _avisar(now: datetime | None) -> int:
+def _reservados(tanda: list[Caso], ahora: datetime) -> list[Caso]:
+    """La tanda sin los casos de canal que no se pudieron reservar. La reserva gasta uno
+    de los avisos de ese hilo o mención ANTES de publicar: si otro worker se adelantó, o
+    en este rato dejó de tocar, aquí se cae. Los DMs no se reservan uno a uno: su freno
+    es el marcador del cupo, como siempre."""
+    recordar = db_config.value("seguimiento_recordar_horas", RECORDAR_HORAS)
+    return [
+        caso
+        for caso in tanda
+        if caso.canal is None or seguimiento_canal.reservar(caso.canal, ahora, recordar)
+    ]
+
+
+def _liberar(tanda: list[Caso]) -> None:
+    for caso in tanda:
+        if caso.canal is None:
+            continue
+        try:
+            seguimiento_canal.liberar(caso.canal)
+        except Exception:
+            # Como mucho ese hilo pierde uno de sus avisos. Peor sería lanzar aquí.
+            logger.exception("seguimiento: no se pudo liberar la reserva de un caso de canal")
+
+
+def _avisar(now: datetime | None, reader=None) -> int:
     ahora = now or datetime.now(UTC)
     if not db_config.value("seguimiento_activo", True):
         return 0
@@ -603,7 +859,8 @@ def _avisar(now: datetime | None) -> int:
         # El resumen diario sigue siendo la red: lo que no avisó hoy sale ahí.
         return 0
 
-    lista = _casos_para_avisar(ahora)[:cupo]
+    extra, owner_id = _casos_con_lector(ahora, reader, para_aviso=True)
+    lista = _preparados(_casos_para_avisar(ahora, extra), cupo, reader, owner_id)
     if not lista:
         return 0
     # Solo para lo que de verdad se va a publicar: lo que el cupo dejó fuera no gasta
@@ -616,7 +873,9 @@ def _avisar(now: datetime | None) -> int:
     # sale en la pasada siguiente, sin marcar.
     publicados = 0
     for inicio in range(0, len(lista), MAX_CASOS_POR_AVISO):
-        tanda = lista[inicio : inicio + MAX_CASOS_POR_AVISO]
+        tanda = _reservados(lista[inicio : inicio + MAX_CASOS_POR_AVISO], ahora)
+        if not tanda:
+            continue
         _registrar(
             ACCION_AVISO,
             {
@@ -632,6 +891,7 @@ def _avisar(now: datetime | None) -> int:
         except Exception as exc:
             logger.exception("seguimiento: no se pudo publicar el aviso")
             _registrar(ACCION_FALLIDO, {"motivo": f"{type(exc).__name__}: {exc}"})
+            _liberar(tanda)
             break
         _registrar(ACCION_MENSAJE, {"tipo": "aviso", "canal": canal, "ts": ts})
         _marcar_avisados(tanda, ahora)
@@ -639,20 +899,21 @@ def _avisar(now: datetime | None) -> int:
     return publicados
 
 
-def publicar_avisos(now: datetime | None = None) -> int:
+def publicar_avisos(now: datetime | None = None, reader=None) -> int:
     """Avisa de las conversaciones que ya pasaron de su plazo, y vuelve a recordarlas
     cada `seguimiento_recordar_horas` mientras sigan esperando; y de lo no leído de las
     últimas 24 horas, una vez por mensaje. Con `dm_texto_activo`, cada conversación
-    lleva su respuesta sugerida. Devuelve cuántas salieron. Nunca lanza: un
-    recordatorio no puede tumbar el bucle."""
+    lleva su respuesta sugerida. Con `reader` (el lector del Founders Club, solo para
+    leer) entran además los hilos, las menciones y la gente sin ficha de 0038.
+    Devuelve cuántas salieron. Nunca lanza: un recordatorio no puede tumbar el bucle."""
     try:
-        return _avisar(now)
+        return _avisar(now, reader)
     except Exception:
         logger.exception("seguimiento: aviso fallido; se reintenta en la pasada siguiente")
         return 0
 
 
-def _publicar(now: datetime | None) -> int:
+def _publicar(now: datetime | None, reader=None) -> int:
     ahora = now or datetime.now(UTC)
     if not db_config.value("seguimiento_activo", True):
         return 0
@@ -671,7 +932,7 @@ def _publicar(now: datetime | None) -> int:
     if _ya_hoy(ahora):
         return 0
 
-    lista = casos(ahora)
+    lista = casos(ahora, reader=reader)
     if not lista:
         # Nada que contar: no se publica y el día queda libre, por si más tarde
         # aparece un caso.
@@ -689,11 +950,12 @@ def _publicar(now: datetime | None) -> int:
     return len(lista)
 
 
-def publicar_resumen(now: datetime | None = None) -> int:
-    """Publica el resumen de hoy si toca. Devuelve cuántas líneas salieron.
-    Nunca lanza: un recordatorio no puede tumbar el bucle."""
+def publicar_resumen(now: datetime | None = None, reader=None) -> int:
+    """Publica el resumen de hoy si toca. Devuelve cuántas líneas salieron. Con `reader`
+    trae también los casos de 0038. Nunca lanza: un recordatorio no puede tumbar el
+    bucle."""
     try:
-        return _publicar(now)
+        return _publicar(now, reader)
     except Exception:
         logger.exception("seguimiento: fallo inesperado; se reintenta en la vuelta siguiente")
         return 0

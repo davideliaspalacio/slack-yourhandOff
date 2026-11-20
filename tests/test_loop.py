@@ -95,7 +95,7 @@ def wiring(monkeypatch):
     monkeypatch.setattr(
         loop.seguimiento,
         "publicar_resumen",
-        lambda: calls.__setitem__("resumenes", calls["resumenes"] + 1) or 0,
+        lambda reader=None: calls.__setitem__("resumenes", calls["resumenes"] + 1) or 0,
     )
     monkeypatch.setattr(loop.ops_alerts, "alert", lambda kind, msg: calls["alerts"].append(kind))
     # El latido no escribe en la base desde estos tests: se anota lo que se habría escrito.
@@ -572,7 +572,7 @@ def test_a_dead_credential_in_the_dm_trace_warns_the_person_who_pastes_the_token
 
 
 def test_a_failing_summary_does_not_stop_the_loop(wiring, monkeypatch):
-    def boom():
+    def boom(reader=None):
         raise RuntimeError("ledger caído")
 
     monkeypatch.setattr(loop.seguimiento, "publicar_resumen", boom)
@@ -592,7 +592,9 @@ def test_the_dm_text_runs_right_after_the_trace_and_before_the_alerts(wiring, mo
     monkeypatch.setattr(
         loop.dm_texto, "pasada", lambda r: orden.append("texto") or loop.dm_texto.Resultado()
     )
-    monkeypatch.setattr(loop.seguimiento, "publicar_avisos", lambda: orden.append("avisos") or 0)
+    monkeypatch.setattr(
+        loop.seguimiento, "publicar_avisos", lambda reader=None: orden.append("avisos") or 0
+    )
     run(FakeClock(), max_cycles=1)
     assert orden == ["rastro", "texto", "avisos"]
 
@@ -615,7 +617,9 @@ def test_a_failing_dm_text_pass_does_not_stop_research_or_alert(wiring, monkeypa
 
     monkeypatch.setattr(loop.dm_texto, "pasada", boom)
     avisos = []
-    monkeypatch.setattr(loop.seguimiento, "publicar_avisos", lambda: avisos.append(1) or 0)
+    monkeypatch.setattr(
+        loop.seguimiento, "publicar_avisos", lambda reader=None: avisos.append(1) or 0
+    )
     jobs = []
     monkeypatch.setattr(loop, "run_next_job", lambda reader: jobs.append(1) or None)
     assert run(FakeClock(), max_cycles=3) == 3

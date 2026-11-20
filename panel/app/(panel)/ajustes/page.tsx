@@ -3,7 +3,8 @@ import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarChatResponderActivo,
   guardarExigirEvidencia, guardarHubspotActivo,
-  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
+  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSeguimientoActivo,
+  guardarSeguimientoInterruptor, guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
@@ -43,6 +44,35 @@ const EDITABLES_SEGUIMIENTO: Record<string, string> = {
   dm_texto_retencion_dias: "Days the text of a conversation is kept for reply suggestions",
   dm_sugerencias_por_dia: "Maximum reply suggestions per day",
 };
+
+// Recordatorios de hilos, menciones y gente sin ficha (0038_seguimiento_canal.sql):
+// los numéricos que la política panel_ajusta_seguimiento_canal deja tocar. Los tres
+// interruptores van aparte porque son booleanos.
+const EDITABLES_SEGUIMIENTO_CANAL: Record<string, string> = {
+  seguimiento_mencion_horas: "Hours a mention waits before AG is reminded to answer it",
+  seguimiento_hilo_horas: "Hours a thread reply waits before AG is reminded to answer it",
+  seguimiento_canal_max_avisos:
+    "Maximum reminders for the same thread or mention (after that, only the daily summary)",
+  seguimiento_caduca_dias:
+    "Days after which a thread, a mention or a non-lead conversation is no longer brought up",
+};
+
+// Los tres interruptores de 0038: la clave, el texto y si nace encendido. Los dos de
+// canal valen true salvo que la base diga false; el de gente sin ficha, al revés.
+const INTERRUPTORES_SEGUIMIENTO: [string, string, boolean][] = [
+  ["seguimiento_menciones_activo",
+    "Unanswered mentions. Someone mentioned AG and he has not written back since (in that " +
+    "thread, or in that channel) and has not reacted to it. Checked against Slack right " +
+    "before every reminder.", true],
+  ["seguimiento_hilos_activo",
+    "Unanswered thread replies. Someone replied in a thread AG started, or the person who " +
+    "started a thread answered him there, and he has not written in that thread since. " +
+    "Needs \"Read thread replies\" to be on.", true],
+  ["seguimiento_sin_ficha_activo",
+    "Direct messages from people who are not leads yet. Off by default: turned on, the " +
+    "cards channel will also show who is waiting for AG among people the agent has not " +
+    "researched. Still no text is read or stored, only who wrote last and when.", false],
+];
 
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la
 // política panel_ajusta_radar deja tocar. unipile_pausado va aparte porque
@@ -118,6 +148,8 @@ export default async function Ajustes() {
   const { data } = await supabase.from("config").select("key, value, updated_at")
     .in("key", [...Object.keys(EDITABLES), ...Object.keys(EDITABLES_RADAR),
       ...Object.keys(EDITABLES_SEGUIMIENTO), ...Object.keys(EDITABLES_EVENTOS),
+      ...Object.keys(EDITABLES_SEGUIMIENTO_CANAL),
+      ...INTERRUPTORES_SEGUIMIENTO.map(([clave]) => clave),
       ...Object.keys(EDITABLES_HILOS), "leer_hilos",
       ...Object.keys(EDITABLES_CHAT), "chat_responder_activo",
       ...Object.keys(EDITABLES_HUBSPOT), "hubspot_activo", "hubspot_desde",
@@ -399,6 +431,36 @@ export default async function Ajustes() {
             </td>
           </tr>
           {Object.entries(EDITABLES_SEGUIMIENTO).map(fila)}
+        </tbody>
+      </table>
+
+      <h2>Reminders for threads, mentions and people who are not leads yet</h2>
+      <p>
+        The same reminders, for what direct messages with leads do not cover. They use the
+        same daily limit and the same &ldquo;waiting on you&rdquo; and follow-up posts. Only
+        what happens after a switch was last turned on counts: nothing older is brought up.
+        Reacting with an emoji counts as answering.
+      </p>
+      <table>
+        <tbody>
+          {INTERRUPTORES_SEGUIMIENTO.map(([clave, texto, porDefecto]) => {
+            const valor = valores.get(clave);
+            const activo = porDefecto ? valor !== false : valor === true;
+            return (
+              <tr key={clave}>
+                <td>{texto}<div className="muted" style={{ fontSize: 12 }}>{clave}</div></td>
+                <td>
+                  <form action={guardarSeguimientoInterruptor} className="inline">
+                    <input type="hidden" name="key" value={clave} />
+                    <input type="hidden" name="value" value={activo ? "false" : "true"} />
+                    <span>{activo ? "On" : "Off"}</span>
+                    <button type="submit">{activo ? "Turn off" : "Turn on"}</button>
+                  </form>
+                </td>
+              </tr>
+            );
+          })}
+          {Object.entries(EDITABLES_SEGUIMIENTO_CANAL).map(fila)}
         </tbody>
       </table>
 

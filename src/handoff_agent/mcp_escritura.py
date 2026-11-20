@@ -87,6 +87,10 @@ UMBRALES = (
     "dm_sugerencias_por_dia",
     "hilos_dias",
     "hilos_por_vuelta",
+    "seguimiento_hilo_horas",
+    "seguimiento_mencion_horas",
+    "seguimiento_canal_max_avisos",
+    "seguimiento_caduca_dias",
 )
 
 # Canales vigilados: la clave de config de la migración 0016. El formato y el máximo
