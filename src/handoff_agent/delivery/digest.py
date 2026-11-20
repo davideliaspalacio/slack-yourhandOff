@@ -109,15 +109,26 @@ def _spend(start: datetime, end: datetime) -> Decimal:
     return Decimal(row["total"])
 
 
+def _band(row: dict) -> str | None:
+    return bands.band_for(row["content"], row["slack_user_id"])
+
+
 def _collect(day: date) -> DigestData:
     start, end = _window(day)
     rows = _rows_in_window(start, end)
-    low = [r for r in rows if bands.band_for(r["content"]) == "baja"]
+    # Quien solo tiene vacantes publicadas (`bands.va_al_reporte`, 0040) cae en banda
+    # baja para no interrumpir, pero no es una "señal baja" de este correo: sale en el
+    # reporte semanal de empresas contratando. AG no quería ese aviso cada día.
+    low = [
+        r
+        for r in rows
+        if _band(r) == "baja" and not bands.va_al_reporte(r["content"], r["slack_user_id"])
+    ]
     new_members = [r for r in rows if r["nuevo_miembro"]]
     # Corrección de banda: un miembro nuevo en banda alta o media ya tuvo su
     # tarjeta de Slack -- cuenta, pero no se repite con línea propia. Solo se
     # lista si su banda es baja o no tiene banda (aún sin puntuación clara).
-    new_member_lines = [r for r in new_members if bands.band_for(r["content"]) in ("baja", None)]
+    new_member_lines = [r for r in new_members if _band(r) in ("baja", None)]
     return DigestData(
         low=low,
         new_members_count=len(new_members),

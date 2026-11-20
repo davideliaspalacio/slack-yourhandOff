@@ -36,6 +36,18 @@ export type DatosPersona = {
   esperando: boolean;
 };
 
+// "Solo vacantes" (0040): la única prueba del encaje son vacantes publicadas, así que
+// la ficha no tiene tarjeta ni SMS y sale en el reporte semanal de empresas contratando.
+// Es la misma regla que `bands.va_al_reporte` en el worker, con sus dos excepciones: el
+// interruptor `vacantes_solo_reporte` apagado y las personas del radar (`li:`). Today la
+// necesita porque las tarjetas publicadas ANTES de la regla siguen en `deliveries`: sin
+// esto seguirían contando como "act now".
+export function soloVacantes(
+  evidencia: string | null, slackUserId: string, reglaActiva: boolean,
+): boolean {
+  return reglaActiva && evidencia === "vacantes" && !slackUserId.startsWith("li:");
+}
+
 const orden = (nivel: Nivel) => NIVELES.indexOf(nivel);
 const masUrgente = (niveles: Nivel[]): Nivel =>
   niveles.reduce((a, b) => (orden(b) < orden(a) ? b : a), "fyi" as Nivel);

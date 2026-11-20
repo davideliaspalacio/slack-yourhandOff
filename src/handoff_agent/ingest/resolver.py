@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass
 
 from .. import db
+from ..research import reintentos
 from . import queue
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,21 @@ def _not_before(user_id: str):
     return row["listo"] if row else None
 
 
+def _toca_investigar(person: dict | None) -> bool:
+    """Si el mensaje de esta persona debe encolar su research: no se la conoce, o su
+    último research quedó a medias y ya le toca otro intento.
+
+    A un `incompleto` se le reencolaba con cada mensaje. El research que sale de ahí no
+    lee nada distinto -- lo que falló fueron las búsquedas, no el mensaje --, así que
+    era pagar lo mismo otra vez. Ahora respeta el plazo y el máximo de
+    `research/reintentos.py`; el mensaje no se pierde, sigue su camino a las señales."""
+    if person is None:
+        return True
+    if person["state"] not in RESEARCH_AGAIN:
+        return False
+    return person["state"] != "incompleto" or reintentos.espera(str(person["id"])) is None
+
+
 def resolve_pending(limit: int = BATCH) -> ResolveResult:
     result = ResolveResult()
     # Two concurrent runs are safe because queue.enqueue de-duplicates open jobs
@@ -61,7 +77,7 @@ def resolve_pending(limit: int = BATCH) -> ResolveResult:
                 continue
 
             person = db.fetch_one(
-                "select state from prospects where slack_user_id = %s",
+                "select id, state from prospects where slack_user_id = %s",
                 (row["user_id"],),
             )
             if person is not None and person["state"] == "descartado":
@@ -70,7 +86,7 @@ def resolve_pending(limit: int = BATCH) -> ResolveResult:
             else:
                 # Si ya hay una tarea abierta, enqueue no crea otra: los mensajes
                 # que lleguen mientras espera los lee el research al ejecutarse.
-                if (person is None or person["state"] in RESEARCH_AGAIN) and queue.enqueue(
+                if _toca_investigar(person) and queue.enqueue(
                     row["user_id"], "mensaje", not_before=_not_before(row["user_id"])
                 ):
                     result.enqueued += 1

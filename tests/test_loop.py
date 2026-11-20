@@ -39,6 +39,7 @@ def wiring(monkeypatch):
         "rastro": [],
         "texto": [],
         "resumenes": 0,
+        "reportes": 0,
         "seguimientos": 0,
         "por_prioridad": True,
         "avisos": 0,
@@ -106,6 +107,12 @@ def wiring(monkeypatch):
         loop.resumen_prioridad,
         "publicar",
         lambda reader=None: calls.__setitem__("resumenes", calls["resumenes"] + 1) or 0,
+    )
+    # El reporte semanal de empresas contratando (0040) se mira en la misma pasada.
+    monkeypatch.setattr(
+        loop.reporte_contratando,
+        "publicar",
+        lambda: calls.__setitem__("reportes", calls["reportes"] + 1) or 0,
     )
     monkeypatch.setattr(loop.ops_alerts, "alert", lambda kind, msg: calls["alerts"].append(kind))
     # El latido no escribe en la base desde estos tests: se anota lo que se habría escrito.
@@ -591,6 +598,25 @@ def test_a_failing_summary_does_not_stop_the_loop(wiring, monkeypatch):
         raise RuntimeError("ledger caído")
 
     monkeypatch.setattr(loop.resumen_prioridad, "publicar", boom)
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert wiring["alerts"] == []
+
+
+def test_the_weekly_hiring_report_is_checked_with_the_daily_brief(wiring):
+    """0040: se mira en la misma pasada que el resumen del día (él decide si es su día
+    y su hora), con el resumen por prioridad encendido o apagado."""
+    run(FakeClock(), max_cycles=1)
+    assert (wiring["resumenes"], wiring["reportes"]) == (1, 1)
+    wiring["por_prioridad"] = False
+    run(FakeClock(), max_cycles=1)
+    assert wiring["reportes"] == 2
+
+
+def test_a_failing_weekly_report_does_not_stop_the_loop(wiring, monkeypatch):
+    def boom():
+        raise RuntimeError("ledger caído")
+
+    monkeypatch.setattr(loop.reporte_contratando, "publicar", boom)
     assert run(FakeClock(), max_cycles=2) == 2
     assert wiring["alerts"] == []
 

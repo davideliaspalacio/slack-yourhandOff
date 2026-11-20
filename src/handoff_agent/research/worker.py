@@ -19,6 +19,7 @@ from decimal import Decimal
 from .. import db, guards, ledger
 from ..dossier import DossierInvalid
 from ..tools import prospects
+from . import reintentos
 from .followup import run_followup, suggested_queries
 from .gather import gather
 from .synthesize import synthesize
@@ -164,20 +165,24 @@ def research_person(
     if person["state"] == "descartado":
         return ResearchOutcome(pid, user_id, "omitido", None, Decimal(0), "persona descartada")
 
-    # Incompleto significa que falta algo, y un dossier degradado salió de una
-    # búsqueda que no funcionó: la frescura no protege ninguno de los dos.
-    if not force and person["state"] != "incompleto":
+    if not force:
         latest = db.fetch_one(
             "select version, created_at, "
             "coalesce((content->>%s)::boolean, false) as degraded "
             "from dossiers where prospect_id = %s order by version desc limit 1",
             (DEGRADED_KEY, pid),
         )
-        if (
-            latest
-            and not latest["degraded"]
-            and datetime.now(UTC) - latest["created_at"] < FRESH_FOR
-        ):
+        # Incompleto significa que falta algo, y un dossier degradado salió de una
+        # búsqueda que no funcionó: la frescura no protege ninguno de los dos, así que
+        # se vuelven a investigar. Pero no cada vez que algo los nombra: con un plazo
+        # entre intentos y un máximo (`reintentos.py`). Sin ese freno, cada disparador
+        # pagaba otro research y dejaba otra versión del dossier -- y otra tarjeta.
+        if person["state"] == "incompleto" or (latest and latest["degraded"]):
+            motivo = reintentos.espera(pid)
+            if motivo:
+                # Sin versión: no hay dossier nuevo que entregar.
+                return ResearchOutcome(pid, user_id, "omitido", None, Decimal(0), motivo)
+        elif latest and datetime.now(UTC) - latest["created_at"] < FRESH_FOR:
             return ResearchOutcome(
                 pid, user_id, "omitido", latest["version"], Decimal(0), "dossier vigente"
             )

@@ -60,6 +60,35 @@ def enqueue(slack_user_id: str, reason: str, not_before: datetime | None = None)
     return inserted == 1
 
 
+def enqueue_miembro_nuevo(slack_user_id: str) -> bool:
+    """Encola el research de quien acaba de entrar al club, una sola vez en la vida.
+
+    `enqueue` solo mira las tareas abiertas: en cuanto la primera termina, nada impide
+    crear otra. Y el diff de padrones (`ingest/watcher.py`) ve a la misma persona como
+    "nueva" una vez por canal donde aparece, y otra vez si un padrón llega incompleto y
+    luego se corrige. Con ~33 canales vigilados eso fueron 12 tareas `miembro_nuevo`
+    para una sola persona en tres días, cada una con su dossier y su tarjeta.
+
+    Aquí la regla es la del nombre: nuevo se es una vez. No se encola a quien ya tuvo
+    una tarea `miembro_nuevo` (terminara como terminara) ni a quien ya tiene ficha (ya
+    se la investigó por otro camino; si escribe, la encola el resolver). Va en una sola
+    sentencia para que dos lecturas a la vez no creen dos.
+    """
+    inserted = db.execute(
+        """
+        insert into research_jobs (slack_user_id, reason)
+        select %(uid)s, 'miembro_nuevo'
+         where not exists (
+                   select 1 from research_jobs
+                    where slack_user_id = %(uid)s and reason = 'miembro_nuevo')
+           and not exists (select 1 from prospects where slack_user_id = %(uid)s)
+        on conflict (slack_user_id) where status in ('pendiente', 'en_curso') do nothing
+        """,
+        {"uid": slack_user_id},
+    )
+    return inserted == 1
+
+
 def claim_next() -> dict | None:
     return db.fetch_one(
         """

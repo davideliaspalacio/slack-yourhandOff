@@ -10,7 +10,8 @@ switch on. Every few minutes it also goes over the owner's one-to-one DMs
 (ingest/dms.py) to know which conversations are waiting -- the timing only --
 and posts one summary a day: the prioritised daily brief
 (delivery/resumen_prioridad.py), or the follow-up summary it absorbs
-(delivery/seguimiento.py) when the brief is switched off. Right after,
+(delivery/seguimiento.py) when the brief is switched off; and, once a week, the
+report of companies that are only hiring (delivery/reporte_contratando.py). Right after,
 and only if Anthony's switch is on, it reads the text of his DMs with leads
 (ingest/dm_texto.py) so replies can be suggested; with the switch off that same
 step wipes the text.
@@ -29,7 +30,14 @@ from collections.abc import Callable, Sequence
 from .. import canales, estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
 from ..crm import hubspot_sync
-from ..delivery import aviso_lector, enlace_app, novedades, resumen_prioridad, seguimiento
+from ..delivery import (
+    aviso_lector,
+    enlace_app,
+    novedades,
+    reporte_contratando,
+    resumen_prioridad,
+    seguimiento,
+)
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas, eventos, miembros
 from ..slack_client import SlackAuthFailed
@@ -317,6 +325,20 @@ def _resumen_del_dia(reader=None) -> None:
         logger.info("resumen del día: %d línea(s) por prioridad", lineas)
 
 
+def _reporte_contratando() -> None:
+    """El reporte semanal de empresas contratando (0040): las fichas cuya única prueba
+    son vacantes publicadas, que ya no salen como tarjeta. Se mira en la misma pasada
+    que el resumen del día; `publicar` solo hace algo el día y a la hora configurados,
+    una vez por semana, y no lanza. Esta guarda es la segunda línea."""
+    try:
+        lineas = reporte_contratando.publicar()
+    except Exception:
+        logger.exception("reporte semanal fallido; se reintenta en la pasada siguiente")
+        return
+    if lineas:
+        logger.info("reporte semanal: %d empresa(s) contratando", lineas)
+
+
 def _avisos_seguimiento(reader=None) -> None:
     """Los avisos inmediatos de las conversaciones que ya pasaron de su plazo (0029).
 
@@ -430,6 +452,7 @@ def run_loop(
                 # se comprueban contra Slack antes de avisar. Solo lee.
                 _avisos_seguimiento(reader)
                 _resumen_del_dia(reader)
+                _reporte_contratando()
 
             _radar()
             _decisor()

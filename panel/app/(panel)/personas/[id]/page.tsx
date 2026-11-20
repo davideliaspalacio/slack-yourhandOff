@@ -110,8 +110,11 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
       .eq("prospect_id", id).order("version", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("slack_messages").select("channel_id, ts, text, status, created_at")
       .eq("user_id", p.slack_user_id).order("created_at", { ascending: false }).limit(20),
+    // Sin los apuntes `repite_de` (0040): una versión nueva del dossier cubierta por
+    // una tarjeta que ya había salido no es otro aviso, y aquí se lista lo que salió.
     supabase.from("deliveries").select("kind, band, created_at")
-      .eq("prospect_id", id).order("created_at", { ascending: false }),
+      .eq("prospect_id", id).is("detail->>repite_de", null)
+      .order("created_at", { ascending: false }),
     supabase.from("agent_actions").select("action, created_at")
       .eq("prospect_id", id).order("created_at", { ascending: false }).limit(30),
     supabase.from("research_jobs").select("reason, status, attempts, last_error, created_at")

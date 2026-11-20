@@ -4,7 +4,7 @@ import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarChatResponderActivo,
   guardarExigirEvidencia, guardarHubspotActivo,
   guardarDmTextoActivo, guardarEnlaceAppActivo, guardarLeerHilos, guardarPausaUnipile, guardarPrioridadInterruptor,
-  guardarSaludoSugeridoActivo, guardarSeguimientoActivo, guardarSeguimientoInterruptor,
+  guardarReporteInterruptor, guardarSaludoSugeridoActivo, guardarSeguimientoActivo, guardarSeguimientoInterruptor,
   guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
@@ -101,6 +101,44 @@ const INTERRUPTORES_PRIORIDAD: [string, string][] = [
     "it off and that summary comes back instead. Either way it is one summary a day."],
 ];
 
+// Una tarjeta por persona y el reporte semanal de empresas contratando
+// (0040_repetidas_y_reporte_semanal.sql): los numéricos que la política
+// panel_ajusta_repetidas_y_reporte deja tocar. Los dos interruptores van aparte porque
+// son booleanos.
+const EDITABLES_REPETIDAS: Record<string, string> = {
+  tarjeta_dias_misma_persona:
+    "Days before the same person can get another card or SMS (sooner only if their fit " +
+    "went up or someone asked for new research; 0 switches this off)",
+  research_reintento_horas:
+    "Hours before the agent retries, on its own, a research that came out incomplete",
+  research_reintentos_max:
+    "Maximum automatic retries of an incomplete research (after that, only by hand)",
+};
+
+const EDITABLES_REPORTE: Record<string, string> = {
+  reporte_contratando_dia:
+    "Day of the week the hiring report is posted (1 = Monday … 7 = Sunday)",
+  reporte_contratando_hora:
+    "Hour of that day (0–23) from which it is posted, in the same time zone as the SMS hours",
+  reporte_contratando_dias: "Days back the report looks for companies with open roles",
+  reporte_contratando_max: "Maximum companies in one report (the rest is counted, not listed)",
+};
+
+// Los dos interruptores de 0040: la clave y el texto. Los dos valen true salvo que la
+// base diga false, igual que en el worker (delivery/bands.py y
+// delivery/reporte_contratando.py).
+const INTERRUPTORES_REPORTE: [string, string][] = [
+  ["vacantes_solo_reporte",
+    "Hiring-only companies skip the cards. When the only evidence is that a company " +
+    "posted open roles, and the person did not ask for anything, there is no HIGH or " +
+    "MEDIUM SIGNAL card and no SMS: they go to the weekly hiring report instead. Turn " +
+    "it off and they come as cards again, like before."],
+  ["reporte_contratando_activo",
+    "Weekly hiring report. One message a week in the cards channel listing the " +
+    "companies hiring right now: the member, their role, what they are hiring for and " +
+    "a LinkedIn link. Each company is listed once."],
+];
+
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la
 // política panel_ajusta_radar deja tocar. unipile_pausado va aparte porque
 // es un booleano.
@@ -191,6 +229,8 @@ export default async function Ajustes() {
       ...INTERRUPTORES_SEGUIMIENTO.map(([clave]) => clave),
       ...Object.keys(EDITABLES_PRIORIDAD),
       ...INTERRUPTORES_PRIORIDAD.map(([clave]) => clave),
+      ...Object.keys(EDITABLES_REPETIDAS), ...Object.keys(EDITABLES_REPORTE),
+      ...INTERRUPTORES_REPORTE.map(([clave]) => clave),
       ...Object.keys(EDITABLES_HILOS), "leer_hilos",
       ...Object.keys(EDITABLES_CHAT), "chat_responder_activo",
       ...Object.keys(EDITABLES_HUBSPOT), "hubspot_activo", "hubspot_desde",
@@ -458,6 +498,37 @@ export default async function Ajustes() {
               </form>
             </td>
           </tr>
+        </tbody>
+      </table>
+
+      <h2>One card per person, and the weekly hiring report</h2>
+      <p>
+        A person gets one research card. If the agent researches them again, a second
+        card only comes when there is a real reason: their fit went up, or someone on the
+        team asked for new research. And a company that is only hiring is not a signal to
+        act on today, so those come together once a week, as a list for nurturing (open
+        their LinkedIn, comment on a post).
+      </p>
+      <table>
+        <tbody>
+          {Object.entries(EDITABLES_REPETIDAS).map(fila)}
+          {INTERRUPTORES_REPORTE.map(([clave, texto]) => {
+            const activo = valores.get(clave) !== false;
+            return (
+              <tr key={clave}>
+                <td>{texto}<div className="muted" style={{ fontSize: 12 }}>{clave}</div></td>
+                <td>
+                  <form action={guardarReporteInterruptor} className="inline">
+                    <input type="hidden" name="key" value={clave} />
+                    <input type="hidden" name="value" value={activo ? "false" : "true"} />
+                    <span>{activo ? "On" : "Off"}</span>
+                    <button type="submit">{activo ? "Turn off" : "Turn on"}</button>
+                  </form>
+                </td>
+              </tr>
+            );
+          })}
+          {Object.entries(EDITABLES_REPORTE).map(fila)}
         </tbody>
       </table>
 

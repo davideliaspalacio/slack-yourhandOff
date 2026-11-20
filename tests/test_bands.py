@@ -132,10 +132,11 @@ def test_a_score_without_evidence_is_capped_at_baja(conn, score):
     assert bands.band_for(con_evidencia(score, "ninguna")) == "baja"
 
 
-@pytest.mark.parametrize("evidencia", ["vacantes", "necesidad_declarada", "equipo_relevante"])
+@pytest.mark.parametrize("evidencia", ["necesidad_declarada", "equipo_relevante"])
 @pytest.mark.parametrize(("score", "expected"), [(3, "alta"), (2, "media"), (1, "baja"), (0, None)])
 def test_real_evidence_scores_exactly_like_before(conn, evidencia, score, expected):
-    """Lo que tiene prueba no cambia: misma banda que una ficha sin el campo."""
+    """Lo que tiene prueba no cambia: misma banda que una ficha sin el campo. ("vacantes"
+    tiene su propia regla desde 0040: ver más abajo.)"""
     assert bands.band_for(con_evidencia(score, evidencia)) == expected
     assert bands.band_for(dossier(score)) == expected
 
@@ -181,3 +182,76 @@ def test_a_silenced_score_is_not_resurrected_by_the_cap(restore_config):
     db.execute("update config set value = '4'::jsonb where key = 'banda_media_min'")
     db.execute("update config set value = '4'::jsonb where key = 'banda_alta_min'")
     assert bands.band_for(con_evidencia(3, "ninguna")) is None
+
+
+# --- solo vacantes (0040): no interrumpe, va al reporte semanal ---------------
+
+
+@pytest.mark.parametrize(("score", "expected"), [(3, "baja"), (2, "baja"), (1, "baja"), (0, None)])
+def test_only_open_roles_never_interrupts_whatever_the_score(conn, score, expected):
+    """AG: "I can't do anything". Con vacantes publicadas como única prueba no hay
+    tarjeta ni SMS (banda baja), tenga la nota que tenga."""
+    assert bands.band_for(con_evidencia(score, "vacantes")) == expected
+
+
+@pytest.mark.parametrize("evidencia", ["necesidad_declarada", "equipo_relevante", "ninguna"])
+def test_only_the_vacantes_evidence_counts_as_only_open_roles(conn, evidencia):
+    assert bands.solo_vacantes(con_evidencia(3, "vacantes")) is True
+    assert bands.solo_vacantes(con_evidencia(3, evidencia)) is False
+    assert bands.va_al_reporte(con_evidencia(3, evidencia)) is False
+
+
+@pytest.mark.parametrize("raro", [{}, {"encaje_handoff": None}, {"encaje_handoff": "vacantes"}])
+def test_a_dossier_without_a_readable_fit_is_not_only_open_roles(conn, raro):
+    assert bands.solo_vacantes(raro) is False
+    assert bands.va_al_reporte(raro) is False
+
+
+def test_the_rule_asks_no_model_and_reads_one_field(conn, monkeypatch):
+    """Por reglas: la misma ficha da siempre lo mismo, y lo que diga la razón no cambia
+    nada."""
+    from handoff_agent import llm
+
+    def nunca(*args, **kwargs):
+        raise AssertionError("la regla no puede llamar al modelo")
+
+    monkeypatch.setattr(llm, "complete", nunca)
+    ficha = con_evidencia(3, "vacantes")
+    ficha["encaje_handoff"]["razon"] = "They said they urgently need support agents"
+    assert bands.va_al_reporte(ficha) is True
+
+
+def test_the_score_band_is_still_there_for_the_weekly_report(conn):
+    """El reporte se queda con las que habrían tenido tarjeta: necesita la banda de la
+    nota sin la regla."""
+    assert bands.banda_por_nota(con_evidencia(3, "vacantes")) == "alta"
+    assert bands.banda_por_nota(con_evidencia(2, "vacantes")) == "media"
+    assert bands.banda_por_nota(con_evidencia(3, "ninguna")) == "baja"
+
+
+def test_a_radar_decision_maker_keeps_the_card(conn):
+    """En el radar la vacante es el motivo del encargo, no un hallazgo: su tarjeta sale
+    como siempre y no entra en el reporte de miembros del club."""
+    ficha = con_evidencia(3, "vacantes")
+    assert bands.band_for(ficha, "li:ACoAAB123") == "alta"
+    assert bands.va_al_reporte(ficha, "li:ACoAAB123") is False
+    assert bands.band_for(ficha, "U123") == "baja"
+
+
+def test_with_the_switch_off_open_roles_score_like_before(restore_config):
+    db.execute("update config set value = 'false'::jsonb where key = 'vacantes_solo_reporte'")
+    assert bands.band_for(con_evidencia(3, "vacantes")) == "alta"
+    assert bands.band_for(con_evidencia(2, "vacantes")) == "media"
+    assert bands.va_al_reporte(con_evidencia(3, "vacantes")) is False
+
+
+def test_the_panel_applies_the_same_rule():
+    """`panel/lib/prioridad.ts` no puede importar Python y Today necesita la regla (las
+    tarjetas de antes de 0040 siguen en `deliveries`): aquí se vigila que no se separe."""
+    from pathlib import Path
+
+    ts_panel = (Path(__file__).parent.parent / "panel" / "lib" / "prioridad.ts").read_text()
+    assert f'evidencia === "{bands.EVIDENCIA_VACANTES}"' in ts_panel
+    assert f'!slackUserId.startsWith("{bands.PREFIJO_RADAR}")' in ts_panel
+    hoy = (Path(__file__).parent.parent / "panel" / "app" / "(panel)" / "page.tsx").read_text()
+    assert '"vacantes_solo_reporte"' in hoy and "soloVacantes(" in hoy

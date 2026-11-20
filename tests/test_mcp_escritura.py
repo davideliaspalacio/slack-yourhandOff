@@ -514,6 +514,17 @@ def test_adjustable_settings_match_what_the_panel_lets_you_touch(equipo):
     # Y el plazo de los avisos de canal (0041), por lo mismo que los de 0037 y 0039: se
     # cambia en Settings, sin reescribir `mcp_ajustar_umbral`.
     solo_panel |= {"eventos_edad_maxima_horas"}
+    # Y las de 0040 (una tarjeta por persona, los reintentos del research y el reporte
+    # semanal), por lo mismo: son plazos y topes de presentación, se cambian en Settings.
+    solo_panel |= {
+        "tarjeta_dias_misma_persona",
+        "research_reintento_horas",
+        "research_reintentos_max",
+        "reporte_contratando_dia",
+        "reporte_contratando_hora",
+        "reporte_contratando_dias",
+        "reporte_contratando_max",
+    }
     assert propios <= del_panel
     assert solo_panel <= del_panel
     assert set(mcp_escritura.UMBRALES) == del_panel - propios - solo_panel

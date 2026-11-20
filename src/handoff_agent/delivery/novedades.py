@@ -204,6 +204,41 @@ NOVEDADES: tuple[Novedad, ...] = (
             "Everything here can be adjusted or switched off in Settings.",
         ),
     ),
+    Novedad(
+        id="2026-11-20-sin-repetidas-y-reporte-semanal",
+        titulo="No more repeated cards, and a weekly hiring report",
+        lineas=(
+            (
+                "Fixed: the same person no longer shows up several times. One person "
+                "got 12 cards in 3 days; that was a bug, and it is gone."
+            ),
+            (
+                "From now on it is one card per person. Within 7 days a second one only "
+                "comes if their fit went up or someone on the team asked for new "
+                "research. The same goes for the SMS."
+            ),
+            (
+                "Companies that are only hiring no longer come as HIGH SIGNAL. When all "
+                "we know is that a company posted open roles, and the person did not ask "
+                "for anything, there is no card and no SMS."
+            ),
+            (
+                "Instead they come once a week in a hiring report (Mondays, 9 am New York "
+                "time): up to 15 companies hiring right now, each with the member, their "
+                "role, what they are hiring for and a LinkedIn link. It is a list for "
+                "nurturing: open their LinkedIn, comment on a post."
+            ),
+            (
+                "Someone who says in their own words that they need help still comes "
+                "right away, exactly as before."
+            ),
+            (
+                'Alerts now have a new "Open in app" link, made for your phone. Tell us '
+                "if it lands on the message or only on the channel."
+            ),
+            "The day, the hour and the limits can be changed in Settings.",
+        ),
+    ),
 )
 
 
