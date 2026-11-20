@@ -42,7 +42,7 @@ from zoneinfo import ZoneInfo
 
 from .. import db, db_config, ledger
 from ..config import load_settings
-from ..delivery import card, linkedin, saludo, slack_writer
+from ..delivery import card, linkedin, prioridad, saludo, slack_writer
 from ..ingest.profile_hints import company_from_title
 from ..slack_client import SlackUnavailable
 from . import procesar
@@ -259,7 +259,15 @@ def _aviso_mencion(fila: dict, reader) -> tuple[list[dict], str]:
 
     nombre, empresa = identidad(fila, reader)
     canal = canales.etiqueta(fila["channel_id"], fila.get("canal_nombre"))
-    partes = [CABECERAS[MENCION], f"{quien(fila, nombre, empresa)} · in {canal}"]
+    # Cuánto corre (0039): una mención de un lead caliente es "act now"; de cualquier
+    # otro, "today". Lo decide `prioridad.py`.
+    nivel = prioridad.visible(
+        prioridad.nivel(prioridad.MENCION, caliente=prioridad.es_caliente(fila.get("prospect_id")))
+    )
+    partes = [
+        prioridad.cabecera(CABECERAS[MENCION], nivel),
+        f"{quien(fila, nombre, empresa)} · in {canal}",
+    ]
     cita = _cita(fila)
     if cita:
         partes.append(cita)
@@ -268,7 +276,8 @@ def _aviso_mencion(fila: dict, reader) -> tuple[list[dict], str]:
     if enlace:
         pie = f"They tagged you · <{enlace}|Open in Slack> to reply"
         bloques.append({"type": "context", "elements": [{"type": "mrkdwn", "text": pie}]})
-    return bloques, RESUMENES[MENCION].format(quien=visible(fila, nombre), canal=canal)
+    texto = RESUMENES[MENCION].format(quien=visible(fila, nombre), canal=canal)
+    return bloques, prioridad.resumen(texto, nivel)
 
 
 def _bloque_saludo(texto: str) -> str:
@@ -290,8 +299,10 @@ def _aviso_presentacion(fila: dict, reader) -> tuple[list[dict], str]:
     dossier = dossier_de(fila.get("prospect_id"))
     canal = canales.etiqueta(fila["channel_id"], fila.get("canal_nombre"))
 
+    # Saludar vale hoy (0039): pasado mañana ya no es una bienvenida.
+    nivel = prioridad.visible(prioridad.nivel(prioridad.PRESENTACION))
     partes = [
-        CABECERAS[PRESENTACION],
+        prioridad.cabecera(CABECERAS[PRESENTACION], nivel),
         quien(fila, nombre, empresa),
         f"introduced themselves in {canal}",
     ]
@@ -333,7 +344,8 @@ def _aviso_presentacion(fila: dict, reader) -> tuple[list[dict], str]:
                 ],
             }
         )
-    return bloques, RESUMENES[PRESENTACION].format(quien=visible(fila, nombre), canal=canal)
+    texto = RESUMENES[PRESENTACION].format(quien=visible(fila, nombre), canal=canal)
+    return bloques, prioridad.resumen(texto, nivel)
 
 
 _AVISOS = {MENCION: _aviso_mencion, PRESENTACION: _aviso_presentacion}

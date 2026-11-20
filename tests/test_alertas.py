@@ -72,7 +72,9 @@ def test_each_detected_signal_is_posted_and_marked_published(conn, slack):
     (alerta,) = slack
     assert "THEY ASKED · support" in alerta["json"]
     assert "we're hiring a support rep" in alerta["json"]
-    assert alerta["text"].startswith("They asked: support")
+    # Con confianza alta la necesidad es inequívoca: "act now" (0039).
+    assert alerta["blocks"][0]["text"]["text"].startswith("🔴 *ACT NOW* · 🗣️ *THEY ASKED · support*")
+    assert alerta["text"].startswith("🔴 Act now · They asked: support")
     fila = estado(ts)
     assert fila["alerta_estado"] == "publicada"
     assert (fila["alerta_channel_id"], fila["alerta_ts"]) == ("CHANDOFF", "1700000000.000001")
@@ -459,7 +461,7 @@ def test_alerts_do_not_touch_deliveries_and_research_cards_still_go_out(conn, sl
     assert deliver.deliver_for(person["id"], FakeReader()) == "alta"
     row = db.fetch_one("select kind, channel_id, message_ts from deliveries")
     assert (row["kind"], row["channel_id"], row["message_ts"]) == ("slack", "CH", "2.2")
-    assert cards and cards[0].startswith("High signal")
+    assert cards and cards[0].startswith("🔴 Act now · High signal")
     # Y la señal sigue figurando como publicada, aparte de la tarjeta.
     assert (
         db.fetch_one("select count(*) as n from message_signals where alerta_estado = 'publicada'")[
@@ -542,7 +544,7 @@ def test_three_replies_in_one_thread_become_one_alert_with_three_names(conn, sla
         assert f"*{nombre}*" in texto and cita in texto
     # El orden es el del hilo: la primera que respondió va primero.
     assert texto.index("*U1*") < texto.index("*U2*") < texto.index("*U3*")
-    assert alerta["text"] == "They asked in a thread: sales · U1 +2"
+    assert alerta["text"] == "🔴 Act now · They asked in a thread: sales · U1 +2"
     # Las tres señales quedan con la misma alerta.
     filas = [estado(ts) for ts in tses]
     assert {(f["alerta_estado"], f["alerta_channel_id"], f["alerta_ts"]) for f in filas} == {

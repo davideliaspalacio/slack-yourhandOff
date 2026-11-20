@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 
 from .. import db, db_config, ledger
 from ..config import load_settings
-from . import slack_writer
+from . import prioridad, slack_writer
 from .card import _is_safe_link
 
 logger = logging.getLogger(__name__)
@@ -70,9 +70,17 @@ def avisar_credencial_caducada(now: datetime | None = None) -> bool:
         return False
 
     texto = _texto()
+    # Sin credencial el agente no lee nada: es lo primero que hay que atender (0039).
+    nivel = prioridad.visible(prioridad.nivel(prioridad.CREDENCIAL))
     try:
         slack_writer.post_card(
-            [{"type": "section", "text": {"type": "mrkdwn", "text": texto}}], texto
+            [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": prioridad.cabecera(texto, nivel)},
+                }
+            ],
+            prioridad.resumen(texto, nivel),
         )
     except Exception as exc:
         logger.exception("aviso de credencial: no se pudo publicar en Slack")

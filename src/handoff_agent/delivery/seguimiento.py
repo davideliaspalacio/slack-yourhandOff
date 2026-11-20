@@ -71,7 +71,7 @@ from zoneinfo import ZoneInfo
 
 from .. import canales, db, db_config, guards, ledger
 from ..config import load_settings
-from . import card, seguimiento_canal, slack_writer, sugerencia
+from . import card, prioridad, seguimiento_canal, slack_writer, sugerencia
 from .card import COMPANY_CHARS, NAME_CHARS, _escape_and_cap, _is_safe_link
 
 logger = logging.getLogger(__name__)
@@ -537,12 +537,33 @@ def casos(now: datetime | None = None, limite: int | None = None, reader=None) -
     return _preparados(ordenados, max(0, int(tope)), reader, owner_id)
 
 
-def bloques(lista: list[Caso], cabecera: str = CABECERA) -> list[dict]:
+# Los tipos cuyo nivel depende de quién espera (ver la tabla de `prioridad.nivel`): solo
+# para ellos se pregunta si la persona es un lead caliente.
+_SEGUN_QUIEN = (NO_LEIDO, RESPONDER, MENCION, HILO)
+
+
+def nivel_de(caso: Caso) -> str:
+    """Cuánto corre un caso (0039). Lo decide `prioridad.py`; aquí solo se le dice de
+    qué tipo es y, si importa, si quien espera es un lead caliente."""
+    caliente = caso.tipo in _SEGUN_QUIEN and prioridad.es_caliente(caso.prospect_id)
+    return prioridad.nivel(caso.tipo, caliente=caliente)
+
+
+def _nivel(lista: list[Caso]) -> str | None:
+    """El nivel de un mensaje que junta varios casos: el del que más corre. None si las
+    marcas están apagadas en Settings."""
+    if not prioridad.activa():
+        return None
+    return prioridad.mas_urgente(nivel_de(caso) for caso in lista)
+
+
+def bloques(lista: list[Caso], cabecera: str = CABECERA, nivel: str | None = None) -> list[dict]:
     """Los bloques de Slack del resumen: una sección por tipo de caso.
 
     `cabecera` distingue el resumen del día del aviso inmediato (0029); el cuerpo es el
-    mismo, porque las líneas dicen lo mismo en los dos casos."""
-    texto = [cabecera]
+    mismo, porque las líneas dicen lo mismo en los dos casos. `nivel` es la prioridad
+    del mensaje (0039) y va delante de la cabecera; sin él, la de siempre."""
+    texto = [prioridad.cabecera(cabecera, nivel)]
     for tipo in ORDEN:
         del_tipo = [c for c in lista if c.tipo == tipo]
         if not del_tipo:
@@ -741,8 +762,11 @@ def _bloque_sugerida(respuesta: str) -> str:
     return "```" + _escape_and_cap(limpia, SUGERENCIA_CHARS) + "```"
 
 
-def bloques_aviso(lista: list[Caso], sugeridas: dict[str, sugerencia.Sugerencia]) -> list[dict]:
-    """Los bloques del aviso inmediato.
+def bloques_aviso(
+    lista: list[Caso], sugeridas: dict[str, sugerencia.Sugerencia], nivel: str | None = None
+) -> list[dict]:
+    """Los bloques del aviso inmediato. `nivel` es su prioridad (0039), delante de la
+    cabecera.
 
     Sin ninguna sugerencia es exactamente el formato de siempre (`bloques`). Con ellas,
     cada conversación va en su propia sección -- su línea, el contexto y la etiqueta --
@@ -753,8 +777,9 @@ def bloques_aviso(lista: list[Caso], sugeridas: dict[str, sugerencia.Sugerencia]
     `sugerencia.py` ya lo validó, pasa por `card.quote` como cualquier cita ajena, para
     que ni un enlace ni una mención puedan salir vivos de ahí."""
     if not any(caso.dm_id in sugeridas for caso in lista if caso.dm_id):
-        return bloques(lista, CABECERA_AVISO)
-    resultado = [{"type": "section", "text": {"type": "mrkdwn", "text": CABECERA_AVISO}}]
+        return bloques(lista, CABECERA_AVISO, nivel)
+    cabecera = prioridad.cabecera(CABECERA_AVISO, nivel)
+    resultado = [{"type": "section", "text": {"type": "mrkdwn", "text": cabecera}}]
     for tipo in ORDEN:
         del_tipo = [c for c in lista if c.tipo == tipo]
         for i, caso in enumerate(del_tipo):
@@ -885,8 +910,10 @@ def _avisar(now: datetime | None, reader=None) -> int:
             },
         )
         try:
+            nivel = _nivel(tanda)
             canal, ts = slack_writer.post_card(
-                bloques_aviso(tanda, sugeridas), resumen_texto(tanda)
+                bloques_aviso(tanda, sugeridas, nivel),
+                prioridad.resumen(resumen_texto(tanda), nivel),
             )
         except Exception as exc:
             logger.exception("seguimiento: no se pudo publicar el aviso")
@@ -940,7 +967,10 @@ def _publicar(now: datetime | None, reader=None) -> int:
 
     _registrar(ACCION_RESUMEN, {"casos": len(lista), "tipos": [c.tipo for c in lista]})
     try:
-        canal, ts = slack_writer.post_card(bloques(lista), resumen_texto(lista))
+        nivel = _nivel(lista)
+        canal, ts = slack_writer.post_card(
+            bloques(lista, nivel=nivel), prioridad.resumen(resumen_texto(lista), nivel)
+        )
     except Exception as exc:
         logger.exception("seguimiento: no se pudo publicar el resumen")
         _registrar(ACCION_FALLIDO, {"motivo": f"{type(exc).__name__}: {exc}"})

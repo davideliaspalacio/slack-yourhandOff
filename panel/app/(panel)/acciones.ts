@@ -297,6 +297,24 @@ export async function guardarSeguimientoInterruptor(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// Los dos interruptores de 0039 (la marca de prioridad de cada aviso y el resumen del
+// día) son booleanos y comparten acción, igual que los de 0038: la clave viene del
+// formulario y se comprueba contra la lista antes de tocar nada. La política
+// panel_ajusta_prioridad es la que permite estas dos claves, y solo con true o false.
+// Las tres numéricas (hora, tope por nivel y días) pasan por guardarUmbral.
+const INTERRUPTORES_PRIORIDAD = ["prioridad_activa", "resumen_prioridad_activo"];
+
+export async function guardarPrioridadInterruptor(formData: FormData) {
+  const key = String(formData.get("key"));
+  if (!INTERRUPTORES_PRIORIDAD.includes(key)) return;
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", key);
+  revalidatePath("/ajustes");
+}
+
 // dm_texto_activo también es un booleano: el interruptor de leer el texto de los
 // DMs de Anthony con sus leads para sugerirle respuestas. La política
 // panel_ajusta_dm_texto (0031) es la que permite tocar esta clave, y solo con true

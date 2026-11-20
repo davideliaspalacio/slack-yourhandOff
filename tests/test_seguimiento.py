@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from handoff_agent import db, guards
-from handoff_agent.delivery import card, seguimiento, sugerencia
+from handoff_agent.delivery import card, prioridad, seguimiento, sugerencia
 from handoff_agent.delivery.sugerencia import Sugerencia
 
 SECRETO = "mándame el contrato firmado"
@@ -162,7 +162,7 @@ def test_the_summary_never_quotes_a_message(conn, slack):
     (resumen,) = slack
     assert SECRETO not in resumen["json"]
     assert "contrato" not in resumen["json"]
-    assert resumen["text"] == "Follow-ups: 1 conversation waiting"
+    assert resumen["text"] == "🟡 Today · Follow-ups: 1 conversation waiting"
 
 
 def test_the_rendered_summary_groups_the_three_cases(conn, slack):
@@ -174,8 +174,10 @@ def test_the_rendered_summary_groups_the_three_cases(conn, slack):
     )
     assert seguimiento.publicar_resumen() == 3
     texto = slack[0]["blocks"][0]["text"]["text"]
+    # El nivel del resumen es el de su caso más urgente (0039): alguien espera
+    # respuesta suya y no es un lead caliente, así que "today".
     assert texto.splitlines() == [
-        "⏰ *FOLLOW-UPS*",
+        "🟡 *TODAY* · ⏰ *FOLLOW-UPS*",
         "",
         "*They replied, you haven't*",
         (
@@ -638,7 +640,7 @@ def test_the_alert_carries_the_context_and_the_suggestion_in_a_code_block(conn, 
     no_leido(prospect_id=persona())
     assert seguimiento.publicar_avisos() == 1
     textos = [b["text"]["text"] for b in slack[0]["blocks"]]
-    assert textos[0] == seguimiento.CABECERA_AVISO
+    assert textos[0] == "🟡 *TODAY* · " + seguimiento.CABECERA_AVISO
     caso, bloque_codigo = textos[1], textos[2]
     assert caso.startswith("*Unread message*\n• *Sunny Patel*")
     # El contexto, renderizado como cualquier cita ajena.
@@ -692,7 +694,9 @@ def test_without_suggestions_the_alert_is_exactly_as_before(conn, slack, sugerid
     traza(prospect_id=persona())
     lista = seguimiento._casos_para_avisar(datetime.now(UTC))
     seguimiento.publicar_avisos()
-    assert slack[0]["blocks"] == seguimiento.bloques(lista, seguimiento.CABECERA_AVISO)
+    assert slack[0]["blocks"] == seguimiento.bloques(
+        lista, seguimiento.CABECERA_AVISO, prioridad.HOY
+    )
     assert "```" not in slack[0]["json"]
 
 
@@ -718,8 +722,8 @@ def test_long_alerts_are_split_five_cases_per_message(conn, slack, sugeridas):
         no_leido(f"D{i}", user=f"U{i}", prospect_id=persona(f"U{i}", f"Persona {i}"))
     assert seguimiento.publicar_avisos() == 7
     assert len(slack) == 2
-    assert slack[0]["text"] == "Follow-ups: 5 conversations waiting"
-    assert slack[1]["text"] == "Follow-ups: 2 conversations waiting"
+    assert slack[0]["text"] == "🟡 Today · Follow-ups: 5 conversations waiting"
+    assert slack[1]["text"] == "🟡 Today · Follow-ups: 2 conversations waiting"
     # Cada mensaje publicado queda anotado, para poder borrarlo si salió por error.
     publicados = acciones(seguimiento.ACCION_MENSAJE)
     assert sorted(m["payload"]["ts"] for m in publicados) == [

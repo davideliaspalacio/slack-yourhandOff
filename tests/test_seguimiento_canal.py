@@ -170,7 +170,7 @@ def test_a_reply_in_a_thread_he_started_is_a_reminder(reader, slack):
     respuesta = escribe(reader, "USUNNY", 30, hilo=raiz)
     assert seguimiento.publicar_avisos(reader=reader) == 1
     assert lineas(slack[0]) == [
-        "⏳ *WAITING ON YOU*",
+        "🟡 *TODAY* · ⏳ *WAITING ON YOU*",
         "",
         "*Thread replies you haven't answered*",
         (
@@ -409,7 +409,7 @@ def test_it_repeats_after_the_reminder_window_and_stops_at_the_cap(reader, slack
     # ...pero sigue en la foto del día mientras siga pendiente.
     assert seguimiento.publicar_resumen(reader=reader) == 1
     assert "*Thread replies you haven't answered*" in lineas(slack[3])
-    assert lineas(slack[3])[0] == "⏰ *FOLLOW-UPS*"
+    assert lineas(slack[3])[0] == "🟡 *TODAY* · ⏰ *FOLLOW-UPS*"
 
 
 def test_with_a_cap_of_zero_it_never_interrupts(reader, slack):
@@ -483,7 +483,7 @@ def test_an_unanswered_mention_is_a_reminder(reader, slack):
     marca = menciona(reader, "USUNNY", 5)
     assert seguimiento.publicar_avisos(reader=reader) == 1
     assert lineas(slack[0]) == [
-        "⏳ *WAITING ON YOU*",
+        "🟡 *TODAY* · ⏳ *WAITING ON YOU*",
         "",
         "*Mentions you haven't answered*",
         (
@@ -742,7 +742,7 @@ def test_switched_on_a_non_lead_who_replied_is_a_reminder(sin_ficha, slack):
     dm_sin_ficha()
     assert seguimiento.publicar_avisos(reader=sin_ficha) == 1
     assert lineas(slack[0]) == [
-        "⏳ *WAITING ON YOU*",
+        "🟡 *TODAY* · ⏳ *WAITING ON YOU*",
         "",
         "*Direct messages from people who aren't leads yet*",
         (
@@ -842,7 +842,7 @@ def test_everything_shares_one_message_with_a_subtitle_each(sin_ficha, slack):
         "*Thread replies you haven't answered*",
         "*Direct messages from people who aren't leads yet*",
     ]
-    assert aviso["text"] == "Follow-ups: 4 conversations waiting"
+    assert aviso["text"] == "🟡 Today · Follow-ups: 4 conversations waiting"
     (accion,) = db.fetch_all("select payload from agent_actions where action = 'seguimiento_aviso'")
     assert accion["payload"]["tipos"] == ["responder", "mencion", "hilo", "responder_sin_ficha"]
 
@@ -853,7 +853,7 @@ def test_the_daily_summary_carries_them_too(sin_ficha, slack):
     menciona(sin_ficha, "UBOB", 5)
     dm_sin_ficha()
     assert seguimiento.publicar_resumen(reader=sin_ficha) == 3
-    assert lineas(slack[0])[0] == "⏰ *FOLLOW-UPS*"
+    assert lineas(slack[0])[0] == "🟡 *TODAY* · ⏰ *FOLLOW-UPS*"
     assert [linea for linea in lineas(slack[0]) if linea.startswith("*")] == [
         "*Mentions you haven't answered*",
         "*Thread replies you haven't answered*",

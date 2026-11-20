@@ -199,7 +199,8 @@ def test_it_goes_out_once_the_research_is_done_with_what_the_dossier_knows(conn,
     assert "just joined C1" in aviso
     assert "Dossier: fit 2/3" in aviso
     assert f"<{PERFIL}|Open their profile>" in aviso
-    assert slack[0]["text"] == "New member: Dana Reyes — welcome them"
+    # Con encaje 2 el research ya dice que merece la pena: "today" (0039).
+    assert slack[0]["text"] == "🟡 Today · New member: Dana Reyes — welcome them"
     (fila,) = filas()
     assert fila["estado"] == "publicada" and fila["aviso_ts"] and fila["publicado_at"]
 
@@ -383,7 +384,8 @@ def test_it_has_its_own_header_and_shape(conn, reader, slack):
     miembros.publicar_pendientes(reader)
     bloques = json.loads(slack[0]["json"])
     assert [b["type"] for b in bloques] == ["section", "context", "section", "section"]
-    assert bloques[0]["text"]["text"].startswith("🆕 *NEW MEMBER · welcome them*")
+    # Sin research no se sabe si encaja: es para estar al tanto, "FYI" (0039).
+    assert bloques[0]["text"]["text"].startswith("⚪ *FYI* · 🆕 *NEW MEMBER · welcome them*")
     assert "Welcome them" in bloques[2]["text"]["text"]
     assert "Connect on LinkedIn" in bloques[3]["text"]["text"]
     for ajeno in ("SIGNAL", "NEW INTRODUCTION", "YOU WERE MENTIONED", "THEY ASKED"):

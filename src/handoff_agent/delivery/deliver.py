@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from .. import db, guards, ledger
-from . import bands, card, linkedin, slack_writer
+from . import bands, card, linkedin, prioridad, slack_writer
 
 logger = logging.getLogger(__name__)
 # "descartado" es definitivo: nunca más avisa. "contactado" ya cumplió su
@@ -132,6 +132,9 @@ def deliver_for(prospect_id: str, reader, reason: str | None = None) -> str | No
 
     message = _last_message(person["slack_user_id"])
     permalink = reader.permalink(message["channel_id"], message["ts"]) if message else None
+    # Cuánto corre (0039): la banda alta es "act now", la media "today". Lo decide
+    # `prioridad.py`; aquí solo se pinta, en la cabecera y en la notificación.
+    nivel = prioridad.visible(prioridad.nivel(prioridad.RESEARCH, banda=band))
     blocks = card.build(
         person,
         dossier["content"],
@@ -140,9 +143,12 @@ def deliver_for(prospect_id: str, reader, reason: str | None = None) -> str | No
         permalink,
         reason=reason,
         linkedin_url=_perfil_linkedin(person, dossier["content"]),
+        prioridad=nivel,
     )
     band_label = BAND_NOTIFICATION_LABELS.get(band, band.capitalize())
-    summary = f"{band_label} signal: {person['full_name'] or person['slack_user_id']}"
+    summary = prioridad.resumen(
+        f"{band_label} signal: {person['full_name'] or person['slack_user_id']}", nivel
+    )
 
     try:
         channel, ts = slack_writer.post_card(blocks, summary)

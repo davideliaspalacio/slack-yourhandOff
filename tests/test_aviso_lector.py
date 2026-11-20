@@ -28,11 +28,13 @@ def test_the_first_failure_posts_a_short_english_notice(conn, posted, monkeypatc
     monkeypatch.setenv("PANEL_URL", "https://panel.example.com")
     assert aviso_lector.avisar_credencial_caducada() is True
     (aviso,) = posted
-    assert aviso["text"] == (
+    mensaje = (
         "⚠️ I can no longer read Slack — the reader credential expired. "
         "Paste a fresh one in the panel → https://panel.example.com/ajustes"
     )
-    assert aviso["blocks"][0]["text"]["text"] == aviso["text"]
+    # Sin credencial el agente no lee nada: es lo primero que hay que atender (0039).
+    assert aviso["text"] == "🔴 Act now · " + mensaje
+    assert aviso["blocks"][0]["text"]["text"] == "🔴 *ACT NOW* · " + mensaje
     assert len(avisos()) == 1
 
 

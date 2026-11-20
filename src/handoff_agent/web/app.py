@@ -48,7 +48,7 @@ from starlette.routing import Route
 
 from .. import chat_envio, db, ledger
 from ..config import Settings, load_settings
-from ..delivery import slack_writer
+from ..delivery import prioridad, slack_writer
 from ..delivery.card import _escape_mrkdwn
 from ..ingest import queue
 from ..mcp_remoto import mcp as mcp_remoto
@@ -212,6 +212,17 @@ def _apply_action(action_id: str, person: dict) -> str:
     return NOTES[action_id]
 
 
+def _quitar_prioridad(blocks: list) -> None:
+    """Quita la marca de prioridad de la cabecera (0039): una tarjeta que ya dice
+    "Contacted" o "Discarded" no puede seguir diciendo "ACT NOW". Solo toca el primer
+    bloque y solo si empieza por una marca de las de `prioridad.py`; con cualquier otra
+    forma -- es entrada de Slack, nunca se confía en ella -- no hace nada."""
+    primero = blocks[0] if blocks else None
+    texto = primero.get("text") if isinstance(primero, dict) else None
+    if isinstance(texto, dict) and isinstance(texto.get("text"), str):
+        blocks[0] = {**primero, "text": {**texto, "text": prioridad.sin_marca(texto["text"])}}
+
+
 def _repaint(channel: str, message: dict | None, note_text: str) -> None:
     """Reconstruye la tarjeta a partir de los bloques que Slack ya tenía,
     quita los botones y añade la nota. Si Slack no mandó `message` (no
@@ -220,6 +231,7 @@ def _repaint(channel: str, message: dict | None, note_text: str) -> None:
     if message is None:
         return
     blocks = [b for b in (message.get("blocks") or []) if b.get("type") != "actions"]
+    _quitar_prioridad(blocks)
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": note_text}]})
     try:
         slack_writer.update_card(channel, message.get("ts"), blocks, note_text)

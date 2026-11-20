@@ -19,7 +19,8 @@ sin cambios. Solo se dibujan cuando hay un prospect al que aplicarlos: su
 
 Aritmética del peor caso (tope de Slack: 3000 por bloque `section`, 2000 por
 bloque `context`):
-  cabecera:  "🗣️ *THEY ASKED · " + etiqueta fija (<= 16) + "*"                  ~  40
+  cabecera:  marca de prioridad (texto fijo de prioridad.py, <= 18) +
+             "🗣️ *THEY ASKED · " + etiqueta fija (<= 16) + "*"                  ~  58
   nombre:    "\n*" + NAME_CHARS + "*" + " — " + COMPANY_CHARS                    ~ 330
   cita:      "> `" + QUOTE_CHARS (300) caracteres escapados (5x al escapar '&') + "`"
              (código en línea para que ninguna URL se autoenlace, ver card._quote) ~ 1505
@@ -41,6 +42,7 @@ persona repite los bloques de nombre y cita; con `MAX_PERSONAS_HILO` personas so
 from __future__ import annotations
 
 from ..config import load_settings
+from . import prioridad as niveles
 from .card import (
     COMPANY_CHARS,
     NAME_CHARS,
@@ -115,11 +117,14 @@ def build(
     person: dict | None,
     dossier: dict | None,
     permalink: str | None,
+    prioridad: str | None = None,
 ) -> list[dict]:
     """`senal`: dict de signals/procesar (tipo, cita, slack_user_id...). `person`:
     fila de `prospects` o None si quien escribe aún no es un prospect. `dossier`:
-    el `content` del último dossier, o None si todavía no hay."""
-    header = f"🗣️ *THEY ASKED · {tipo_label(senal.get('tipo'))}*\n" + _who(senal, person, dossier)
+    el `content` del último dossier, o None si todavía no hay. `prioridad`: el nivel
+    que decidió `prioridad.py`, que va delante de la cabecera; sin él, la de siempre."""
+    titulo = niveles.cabecera(f"🗣️ *THEY ASKED · {tipo_label(senal.get('tipo'))}*", prioridad)
+    header = titulo + "\n" + _who(senal, person, dossier)
     blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": header}}]
 
     cita = senal.get("cita")
@@ -227,7 +232,7 @@ def _botones_persona(person: dict | None, permalink: str | None) -> list[dict]:
     return elements
 
 
-def build_hilo(post: str | None, entradas: list[dict]) -> list[dict]:
+def build_hilo(post: str | None, entradas: list[dict], prioridad: str | None = None) -> list[dict]:
     """`post`: texto del mensaje principal del hilo, o None si no está guardado.
     `entradas`: una por persona, en orden, como dicts con `senal` (la de
     signals/alertas: tipo, cita, slack_user_id...), `person` (fila de `prospects`
@@ -237,7 +242,8 @@ def build_hilo(post: str | None, entradas: list[dict]) -> list[dict]:
     tipo = tipo_label(((entradas[0] if entradas else {}).get("senal") or {}).get("tipo"))
     n = len(entradas)
     gente = "1 person" if n == 1 else f"{n} people"
-    header = f"🗣️ *THEY ASKED · {tipo}*\n{gente} in the same thread said they need it."
+    titulo = niveles.cabecera(f"🗣️ *THEY ASKED · {tipo}*", prioridad)
+    header = f"{titulo}\n{gente} in the same thread said they need it."
     blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": header}}]
 
     if isinstance(post, str) and post.strip():

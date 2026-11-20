@@ -32,6 +32,7 @@ from urllib.parse import urlparse
 
 from ..config import load_settings
 from . import linkedin
+from . import prioridad as niveles
 
 QUOTE_CHARS = 300
 HECHO_CHARS = 240
@@ -100,6 +101,8 @@ PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success"
 #
 # Aritmética del peor caso para la cabecera (tope de Slack: 3000 caracteres
 # por bloque `section`), con las etiquetas ya en inglés:
+#   marca de prioridad + " · " (prioridad.cabecera: texto fijo, y solo si
+#   quien entrega pasa un nivel)                                         18
 #   emoji + " *" + band_label + " SIGNAL*"   band_label es "HIGH"/"MEDIUM"/
 #                                             "LOW", longitud fija y acotada  17
 #   " · fit " + NUM_CHARS + "/3"                     7 + 20 + 2       =   29
@@ -113,8 +116,8 @@ PROVEEDOR_PRIORITY_AREAS = ("support", "operations", "sales", "customer_success"
 #   salto + "<" + perfil de LinkedIn (linkedin.MAX_URL) + "|LinkedIn profile>"
 #   (solo si se conoce el perfil)                1 + 1 + 300 + 18    =  320
 #                                                                --------------
-#                                                                total   1121
-# 1121 < 3000 con margen de sobra.
+#                                                                total   1139
+# 1139 < 3000 con margen de sobra.
 #
 # Aritmética del peor caso para la sección "*Why it matters*" (tope de Slack:
 # 3000 caracteres por bloque `section`):
@@ -412,13 +415,18 @@ def build(
     permalink: str | None,
     reason: str | None = None,
     linkedin_url: str | None = None,
+    prioridad: str | None = None,
 ) -> list[dict]:
+    """`prioridad` es el nivel que decidió `prioridad.py` (lo pasa `deliver.py`): va
+    delante de la cabecera, sin tocar lo que distingue a esta tarjeta. Sin él, la
+    cabecera es la de siempre."""
     fit = dossier.get("encaje_handoff") or {}
     score = _safe_number(fit.get("puntuacion"), NUM_CHARS)
     score_bit = f" · fit {score}/3" if score else ""
     band_label = BAND_LABELS.get(band, band.upper())
     header = (
-        f"{EMOJI.get(band, '')} *{band_label} SIGNAL*{score_bit}\n"
+        niveles.cabecera(f"{EMOJI.get(band, '')} *{band_label} SIGNAL*{score_bit}", prioridad)
+        + "\n"
         + _headline(person, dossier, band)
         + "\n"
         + _open_roles_line(dossier)

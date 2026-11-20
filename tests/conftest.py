@@ -33,6 +33,7 @@ TABLES_TO_CLEAN = [
     "seguimiento_canal",
     "eventos_canal",
     "miembros_nuevos",
+    "resumenes_prioridad",
     "deliveries",
     "panel_users",
     "agent_actions",

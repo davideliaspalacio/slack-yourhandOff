@@ -3,8 +3,9 @@ import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarChatResponderActivo,
   guardarExigirEvidencia, guardarHubspotActivo,
-  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSaludoSugeridoActivo,
-  guardarSeguimientoActivo, guardarSeguimientoInterruptor, guardarUmbral,
+  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarPrioridadInterruptor,
+  guardarSaludoSugeridoActivo, guardarSeguimientoActivo, guardarSeguimientoInterruptor,
+  guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
@@ -72,6 +73,32 @@ const INTERRUPTORES_SEGUIMIENTO: [string, string, boolean][] = [
     "Direct messages from people who are not leads yet. Off by default: turned on, the " +
     "cards channel will also show who is waiting for AG among people the agent has not " +
     "researched. Still no text is read or stored, only who wrote last and when.", false],
+];
+
+// La prioridad de los avisos y el resumen del día (0039_prioridad.sql): los numéricos
+// que la política panel_ajusta_prioridad deja tocar. Los dos interruptores van aparte
+// porque son booleanos.
+const EDITABLES_PRIORIDAD: Record<string, string> = {
+  resumen_prioridad_hora:
+    "Hour of the day (0–23) from which the daily brief is posted, in the same time zone as the SMS hours",
+  resumen_prioridad_max_por_nivel:
+    "Maximum lines per priority level in the daily brief (the rest is counted, not listed)",
+  resumen_prioridad_dias:
+    "Days a card or a \"they asked\" nobody has marked stays in the daily brief",
+};
+
+// Los dos interruptores de 0039: la clave y el texto. Los dos valen true salvo que la
+// base diga false, igual que en el worker (delivery/prioridad.py y
+// delivery/resumen_prioridad.py).
+const INTERRUPTORES_PRIORIDAD: [string, string][] = [
+  ["prioridad_activa",
+    "Priority label on every alert. Each alert in the cards channel, and its phone " +
+    "notification, starts with how urgent it is: ACT NOW, TODAY or FYI. Turn it off and " +
+    "alerts look the way they did before."],
+  ["resumen_prioridad_activo",
+    "Daily brief. One message a day with everything still open, most urgent first. It " +
+    "includes the follow-ups, so it replaces the separate daily follow-up summary: turn " +
+    "it off and that summary comes back instead. Either way it is one summary a day."],
 ];
 
 // Radar de cuentas objetivo (0012_radar_cuentas.sql): los numéricos que la
@@ -156,6 +183,8 @@ export default async function Ajustes() {
       ...Object.keys(EDITABLES_SEGUIMIENTO), ...Object.keys(EDITABLES_EVENTOS),
       ...Object.keys(EDITABLES_SEGUIMIENTO_CANAL),
       ...INTERRUPTORES_SEGUIMIENTO.map(([clave]) => clave),
+      ...Object.keys(EDITABLES_PRIORIDAD),
+      ...INTERRUPTORES_PRIORIDAD.map(([clave]) => clave),
       ...Object.keys(EDITABLES_HILOS), "leer_hilos",
       ...Object.keys(EDITABLES_CHAT), "chat_responder_activo",
       ...Object.keys(EDITABLES_HUBSPOT), "hubspot_activo", "hubspot_desde",
@@ -375,6 +404,37 @@ export default async function Ajustes() {
               </form>
             </td>
           </tr>
+        </tbody>
+      </table>
+
+      <h2>Priorities and the daily brief</h2>
+      <p>
+        Every alert is given one of three levels so it is clear what to handle first:{" "}
+        <b>ACT NOW</b> (a likely customer is waiting: a high signal, a clear request, a hot
+        lead waiting for a reply), <b>TODAY</b> (worth a few minutes before the day ends: a
+        medium signal, a mention, an introduction) and <b>FYI</b> (good to know, nothing
+        waiting on you). The levels follow fixed rules, not a model. Nothing here changes
+        how many alerts are sent.
+      </p>
+      <table>
+        <tbody>
+          {INTERRUPTORES_PRIORIDAD.map(([clave, texto]) => {
+            const activo = valores.get(clave) !== false;
+            return (
+              <tr key={clave}>
+                <td>{texto}<div className="muted" style={{ fontSize: 12 }}>{clave}</div></td>
+                <td>
+                  <form action={guardarPrioridadInterruptor} className="inline">
+                    <input type="hidden" name="key" value={clave} />
+                    <input type="hidden" name="value" value={activo ? "false" : "true"} />
+                    <span>{activo ? "On" : "Off"}</span>
+                    <button type="submit">{activo ? "Turn off" : "Turn on"}</button>
+                  </form>
+                </td>
+              </tr>
+            );
+          })}
+          {Object.entries(EDITABLES_PRIORIDAD).map(fila)}
         </tbody>
       </table>
 

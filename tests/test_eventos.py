@@ -371,8 +371,9 @@ def test_a_mention_and_an_introduction_do_not_look_alike(conn, lector, slack, re
     assert "NEW INTRODUCTION" in intro["json"] and "YOU WERE MENTIONED" not in intro["json"]
     assert tipos(mencion) == ["section", "context"]
     assert tipos(intro) == ["section", "section", "section", "section", "actions"]
-    assert mencion["text"].startswith("Mention: Mike Black tagged you")
-    assert intro["text"] == "New introduction: Mike Black — say hi"
+    # Y cada uno dice cuánto corre (0039), igual en los dos y sin tapar el tipo.
+    assert mencion["text"].startswith("🟡 Today · Mention: Mike Black tagged you")
+    assert intro["text"] == "🟡 Today · New introduction: Mike Black — say hi"
 
 
 def test_a_mention_stays_short_and_free(conn, lector, slack, modelo):
@@ -524,7 +525,7 @@ def test_someone_without_a_file_is_named_from_their_slack_profile(
     assert "*Dana Reyes* — Northwind" in aviso and "UNUEVA" not in aviso
     assert "keywords=Dana+Reyes+Northwind" in aviso
     assert "Name: Dana Reyes" in modelo.llamadas[0]["prompt"]
-    assert slack[0]["text"] == "New introduction: Dana Reyes — say hi"
+    assert slack[0]["text"] == "🟡 Today · New introduction: Dana Reyes — say hi"
 
 
 def test_a_hostile_profile_name_cannot_ping_the_channel(conn, slack, restore_config):

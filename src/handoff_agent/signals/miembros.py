@@ -45,7 +45,7 @@ from zoneinfo import ZoneInfo
 
 from .. import canales, db, db_config, ledger
 from ..config import load_settings
-from ..delivery import card, linkedin, slack_writer
+from ..delivery import bands, card, linkedin, prioridad, slack_writer
 from ..ingest.profile_hints import company_from_title
 from . import eventos
 
@@ -225,8 +225,19 @@ def _linea_dossier(fila: dict, dossier: dict) -> str:
     return " · ".join(bits)
 
 
+def _nivel(dossier: dict) -> str | None:
+    """Cuánto corre la bienvenida (0039): "today" si el research ya dice que encaja,
+    "FYI" si no encaja o aún no se sabe. Lo decide `prioridad.py`."""
+    banda = bands.band_for(dossier) if dossier else None
+    return prioridad.visible(prioridad.nivel(prioridad.MIEMBRO_NUEVO, banda=banda))
+
+
 def _aviso(
-    fila: dict, nombre: str | None, empresa: str | None, dossier: dict
+    fila: dict,
+    nombre: str | None,
+    empresa: str | None,
+    dossier: dict,
+    nivel: str | None = None,
 ) -> tuple[list[dict], str]:
     persona = dossier.get("persona") if isinstance(dossier.get("persona"), dict) else {}
     cargo = card._escape_and_cap(persona.get("cargo"), card.ROLE_CHARS)
@@ -236,7 +247,7 @@ def _aviso(
     canal = canales.etiqueta(fila["channel_id"], fila.get("canal_nombre"))
 
     cabecera = [
-        CABECERA,
+        prioridad.cabecera(CABECERA, nivel),
         f"*{nombre_visible}*" + (f" — {detalle}" if detalle else ""),
         f"just joined {canal}",
     ]
@@ -253,7 +264,7 @@ def _aviso(
     conectar = linkedin.linea(dossier, nombre, empresa, fila.get("research_links"))
     if conectar:
         bloques.append(eventos.seccion(conectar))
-    return bloques, f"New member: {nombre_visible} — welcome them"
+    return bloques, prioridad.resumen(f"New member: {nombre_visible} — welcome them", nivel)
 
 
 def _publicar(ahora: datetime, reader) -> int:
@@ -279,7 +290,7 @@ def _publicar(ahora: datetime, reader) -> int:
             # El montaje también va dentro del `try`: si algo falla al construir el
             # aviso, la reserva se libera igual que si fallara Slack.
             dossier = eventos.dossier_de(fila.get("prospect_id"))
-            bloques, resumen = _aviso(fila, nombre, empresa, dossier)
+            bloques, resumen = _aviso(fila, nombre, empresa, dossier, _nivel(dossier))
             _, ts = slack_writer.post_card(bloques, resumen)
         except Exception as exc:
             logger.exception("miembro nuevo %s: no se pudo publicar", fila["slack_user_id"])

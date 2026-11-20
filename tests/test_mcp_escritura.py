@@ -504,6 +504,13 @@ def test_adjustable_settings_match_what_the_panel_lets_you_touch(equipo):
     # otra rama a la vez; la que se aplicara última borraría las claves de la otra. Se
     # ajustan en Settings hasta que una migración posterior a las dos los añada.
     solo_panel |= {"miembros_nuevos_por_dia", "miembro_nuevo_espera_min"}
+    # Y las tres del resumen del día (0039), por lo mismo: la hora, el tope por nivel y
+    # los días se cambian en Settings, sin reescribir `mcp_ajustar_umbral`.
+    solo_panel |= {
+        "resumen_prioridad_hora",
+        "resumen_prioridad_max_por_nivel",
+        "resumen_prioridad_dias",
+    }
     assert propios <= del_panel
     assert solo_panel <= del_panel
     assert set(mcp_escritura.UMBRALES) == del_panel - propios - solo_panel

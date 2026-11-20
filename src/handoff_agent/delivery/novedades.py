@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 from .. import db, guards
 from ..config import load_settings
-from . import slack_writer
+from . import prioridad, slack_writer
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,42 @@ NOVEDADES: tuple[Novedad, ...] = (
             "It is off until we switch it on, and it never imports old leads by itself.",
         ),
     ),
+    Novedad(
+        id="2026-11-20-prioridad",
+        titulo="Alerts now tell you what to handle first",
+        lineas=(
+            (
+                "Every alert starts with how urgent it is: 🔴 ACT NOW (a likely customer is "
+                "waiting), 🟡 TODAY (worth a few minutes before the day ends) or ⚪ FYI (good "
+                "to know, nothing waiting on you). The phone notification shows it too."
+            ),
+            (
+                "One daily brief each morning (8 am New York time; you can change the hour): "
+                "everything still open, most urgent first, with a link on every line. It "
+                "replaces the separate follow-ups summary, so it is still one summary a day."
+            ),
+            (
+                "People leave the brief as soon as you mark them Contacted or Discard, and "
+                "a conversation leaves it once you answer."
+            ),
+            (
+                "Each kind of alert has its own look (research card, they asked, mention, "
+                "introduction, new member, waiting on you), so you can tell them apart "
+                "before opening them."
+            ),
+            (
+                "Introductions now come with a reminder to say hi, a suggested greeting "
+                "ready to copy, and a LinkedIn link to connect."
+            ),
+            "New alert when someone joins the club, so you can welcome them.",
+            (
+                "New reminders for thread replies and mentions you have not answered yet. "
+                "Reacting with an emoji counts as answering."
+            ),
+            "The Today page in the panel is sorted the same way: most important first.",
+            "Everything here can be adjusted or switched off in Settings.",
+        ),
+    ),
 )
 
 
@@ -179,10 +215,12 @@ def _anunciadas() -> set[str]:
     return ids
 
 
-def bloques(lista: list[Novedad]) -> list[dict]:
+def bloques(lista: list[Novedad], nivel: str | None = None) -> list[dict]:
     """Un bloque por entrada: el límite de Slack es por bloque, y así una entrada larga
-    no se come a las demás."""
-    salida = [{"type": "section", "text": {"type": "mrkdwn", "text": CABECERA}}]
+    no se come a las demás. `nivel` es la prioridad que decidió `prioridad.py` (0039) y
+    va delante de la cabecera."""
+    cabecera = prioridad.cabecera(CABECERA, nivel)
+    salida = [{"type": "section", "text": {"type": "mrkdwn", "text": cabecera}}]
     for n in lista:
         texto = f"*{n.titulo}*\n" + "\n".join(f"• {linea}" for linea in n.lineas)
         salida.append({"type": "section", "text": {"type": "mrkdwn", "text": texto}})
@@ -212,8 +250,12 @@ def _publicar() -> int:
         "insert into agent_actions (action, payload) values (%s, %s) returning id",
         (ACCION, json.dumps({"ids": [n.id for n in pendientes]})),
     )
+    # Un anuncio es para estar al tanto: nunca compite con un lead (0039).
+    nivel = prioridad.visible(prioridad.nivel(prioridad.NOVEDADES))
     try:
-        slack_writer.post_card(bloques(pendientes), resumen_texto(pendientes))
+        slack_writer.post_card(
+            bloques(pendientes, nivel), prioridad.resumen(resumen_texto(pendientes), nivel)
+        )
     except Exception:
         logger.exception("novedades: no se pudo publicar; se reintenta en la vuelta siguiente")
         db.execute("delete from agent_actions where id = %s", (marcador["id"],))

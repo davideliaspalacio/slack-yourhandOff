@@ -8,7 +8,9 @@ cadence of its own it takes the people already contacted to Handoff's own
 HubSpot (crm/hubspot_sync.py), which does nothing until someone turns that
 switch on. Every few minutes it also goes over the owner's one-to-one DMs
 (ingest/dms.py) to know which conversations are waiting -- the timing only --
-and posts one follow-up summary a day (delivery/seguimiento.py). Right after,
+and posts one summary a day: the prioritised daily brief
+(delivery/resumen_prioridad.py), or the follow-up summary it absorbs
+(delivery/seguimiento.py) when the brief is switched off. Right after,
 and only if Anthony's switch is on, it reads the text of his DMs with leads
 (ingest/dm_texto.py) so replies can be suggested; with the switch off that same
 step wipes the text.
@@ -27,7 +29,7 @@ from collections.abc import Callable, Sequence
 from .. import canales, estado_lector, guards, ops_alerts
 from ..accounts import decisor, radar
 from ..crm import hubspot_sync
-from ..delivery import aviso_lector, novedades, seguimiento
+from ..delivery import aviso_lector, novedades, resumen_prioridad, seguimiento
 from ..research.worker import SYSTEM_STOPS
 from ..signals import alertas, eventos, miembros
 from ..slack_client import SlackAuthFailed
@@ -289,6 +291,32 @@ def _seguimiento(reader=None) -> None:
         logger.info("seguimiento: resumen con %d línea(s)", lineas)
 
 
+def _resumen_del_dia(reader=None) -> None:
+    """El único resumen diario que recibe AG (0039). Con `resumen_prioridad_activo`
+    encendido es el resumen por prioridad, que ya lleva dentro los casos del
+    seguimiento; apagado, el "FOLLOW-UPS" de siempre. Nunca los dos: se pidió
+    organizarse mejor, no un mensaje más al día.
+
+    Se decide en cada pasada, así que el interruptor de Settings hace efecto sin
+    redesplegar. Si ni siquiera se puede leer el interruptor, esta pasada no publica
+    ninguno y se reintenta en la siguiente."""
+    try:
+        por_prioridad = resumen_prioridad.activo()
+    except Exception:
+        logger.exception("resumen del día: no se pudo leer el interruptor; se reintenta")
+        return
+    if not por_prioridad:
+        _seguimiento(reader)
+        return
+    try:
+        lineas = resumen_prioridad.publicar(reader=reader)
+    except Exception:
+        logger.exception("resumen del día fallido; se reintenta en la pasada siguiente")
+        return
+    if lineas:
+        logger.info("resumen del día: %d línea(s) por prioridad", lineas)
+
+
 def _avisos_seguimiento(reader=None) -> None:
     """Los avisos inmediatos de las conversaciones que ya pasaron de su plazo (0029).
 
@@ -397,7 +425,7 @@ def run_loop(
                 # Con el lector: los hilos, las menciones y la gente sin ficha (0038)
                 # se comprueban contra Slack antes de avisar. Solo lee.
                 _avisos_seguimiento(reader)
-                _seguimiento(reader)
+                _resumen_del_dia(reader)
 
             _radar()
             _decisor()

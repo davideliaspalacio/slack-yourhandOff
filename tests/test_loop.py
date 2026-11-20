@@ -39,6 +39,8 @@ def wiring(monkeypatch):
         "rastro": [],
         "texto": [],
         "resumenes": 0,
+        "seguimientos": 0,
+        "por_prioridad": True,
         "avisos": 0,
         "ok": [],
         "fallos": [],
@@ -95,6 +97,14 @@ def wiring(monkeypatch):
     monkeypatch.setattr(
         loop.seguimiento,
         "publicar_resumen",
+        lambda reader=None: calls.__setitem__("seguimientos", calls["seguimientos"] + 1) or 0,
+    )
+    # El resumen del día (0039) es el único resumen diario: con su interruptor encendido
+    # -- como nace -- sustituye al de seguimiento. Ni Slack ni la base desde estos tests.
+    monkeypatch.setattr(loop.resumen_prioridad, "activo", lambda: calls["por_prioridad"])
+    monkeypatch.setattr(
+        loop.resumen_prioridad,
+        "publicar",
         lambda reader=None: calls.__setitem__("resumenes", calls["resumenes"] + 1) or 0,
     )
     monkeypatch.setattr(loop.ops_alerts, "alert", lambda kind, msg: calls["alerts"].append(kind))
@@ -575,8 +585,44 @@ def test_a_failing_summary_does_not_stop_the_loop(wiring, monkeypatch):
     def boom(reader=None):
         raise RuntimeError("ledger caído")
 
+    monkeypatch.setattr(loop.resumen_prioridad, "publicar", boom)
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert wiring["alerts"] == []
+
+
+def test_the_daily_brief_replaces_the_follow_up_summary_never_both(wiring):
+    """0039: AG pidió organizarse mejor, no un mensaje más. Con el resumen por prioridad
+    encendido, el de seguimiento no se publica: sus casos ya van dentro."""
+    run(FakeClock(), max_cycles=1)
+    assert (wiring["resumenes"], wiring["seguimientos"]) == (1, 0)
+
+
+def test_with_the_brief_switched_off_the_follow_up_summary_is_back(wiring):
+    wiring["por_prioridad"] = False
+    run(FakeClock(), max_cycles=1)
+    assert (wiring["resumenes"], wiring["seguimientos"]) == (0, 1)
+
+
+def test_the_follow_up_summary_failing_does_not_stop_the_loop_either(wiring, monkeypatch):
+    def boom(reader=None):
+        raise RuntimeError("ledger caído")
+
+    wiring["por_prioridad"] = False
     monkeypatch.setattr(loop.seguimiento, "publicar_resumen", boom)
     assert run(FakeClock(), max_cycles=2) == 2
+    assert wiring["alerts"] == []
+
+
+def test_if_the_brief_switch_cannot_be_read_no_summary_goes_out(wiring, monkeypatch):
+    """Sin saber cuál toca no se publica ninguno: mejor esperar una pasada que mandar
+    los dos."""
+
+    def boom():
+        raise RuntimeError("config caída")
+
+    monkeypatch.setattr(loop.resumen_prioridad, "activo", boom)
+    assert run(FakeClock(), max_cycles=2) == 2
+    assert (wiring["resumenes"], wiring["seguimientos"]) == (0, 0)
     assert wiring["alerts"] == []
 
 

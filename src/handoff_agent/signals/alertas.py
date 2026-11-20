@@ -55,7 +55,7 @@ from zoneinfo import ZoneInfo
 
 from .. import db, db_config, guards, ledger
 from ..config import load_settings
-from ..delivery import alerta_card, slack_writer
+from ..delivery import alerta_card, prioridad, slack_writer
 from . import procesar
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ def _pendientes() -> list[dict]:
     return db.fetch_all(
         """
         select ms.id::text as id, ms.channel_id, ms.ts, ms.thread_ts, ms.tipo, ms.cita,
-               ms.alerta_intentos, sm.user_id as slack_user_id
+               ms.confianza, ms.alerta_intentos, sm.user_id as slack_user_id
         from message_signals ms
         join slack_messages sm on sm.channel_id = ms.channel_id and sm.ts = ms.ts
         where ms.detectada and ms.alerta_estado is null and sm.user_id is not null
@@ -219,6 +219,17 @@ def _registrar(action: str, payload: dict, prospect_id: str | None = None) -> No
         logger.exception("alertas: no se pudo registrar %s en el ledger", action)
 
 
+def _nivel(senales: list[dict]) -> str | None:
+    """Cuánto corre la alerta (0039): lo decide `prioridad.py` por la confianza con la
+    que se detectó la necesidad. Una alerta de hilo junta varias: manda la que más."""
+    return prioridad.visible(
+        prioridad.mas_urgente(
+            prioridad.nivel(prioridad.PIDIERON, confianza=senal.get("confianza"))
+            for senal in senales
+        )
+    )
+
+
 def _publicar_una(senal: dict, persona: dict | None, reader) -> bool:
     """Publica una alerta ya reservada. True si salió a Slack."""
     prospect_id = str(persona["id"]) if persona else None
@@ -230,8 +241,13 @@ def _publicar_una(senal: dict, persona: dict | None, reader) -> bool:
                 (persona["id"],),
             )
             dossier = fila["content"] if fila else None
-        bloques = alerta_card.build(senal, persona, dossier, _permalink(reader, senal))
-        canal, ts = slack_writer.post_card(bloques, alerta_card.summary(senal, persona))
+        nivel = _nivel([senal])
+        bloques = alerta_card.build(
+            senal, persona, dossier, _permalink(reader, senal), prioridad=nivel
+        )
+        canal, ts = slack_writer.post_card(
+            bloques, prioridad.resumen(alerta_card.summary(senal, persona), nivel)
+        )
     except Exception as exc:
         logger.exception("alertas: no se pudo publicar la alerta de %s", senal["ts"])
         try:
@@ -369,8 +385,13 @@ def _publicar_hilo(grupo: list[dict], reader, ventana: datetime) -> bool | None:
             {"senal": senal, "person": persona, "permalink": _permalink(reader, senal)}
             for senal, persona in elegidas
         ]
-        bloques = alerta_card.build_hilo(principal["text"] if principal else None, entradas)
-        canal, ts = slack_writer.post_card(bloques, alerta_card.summary_hilo(entradas))
+        nivel = _nivel([senal for senal, _ in elegidas])
+        bloques = alerta_card.build_hilo(
+            principal["text"] if principal else None, entradas, prioridad=nivel
+        )
+        canal, ts = slack_writer.post_card(
+            bloques, prioridad.resumen(alerta_card.summary_hilo(entradas), nivel)
+        )
     except Exception as exc:
         logger.exception("alertas: no se pudo publicar la alerta del hilo %s", thread_ts)
         for senal, _ in elegidas:

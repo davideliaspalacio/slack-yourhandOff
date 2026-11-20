@@ -539,6 +539,38 @@ en **Today** a quien espera respuesta; los umbrales y el interruptor se editan e
 Settings. La herramienta MCP de lectura `seguimientos_pendientes` responde "¿a
 quién le debo respuesta?".
 
+## Prioridad de los avisos y resumen del día
+
+Todo cae en un mismo canal, así que cada aviso dice cuánto corre (migración
+`0039`). Tres niveles — **ACT NOW**, **TODAY**, **FYI** — decididos por reglas
+fijas, sin modelo, en un solo sitio: `delivery/prioridad.py` (la tabla entera
+está en el docstring de `nivel`). El nivel depende del tipo de aviso y de datos
+que ya existían: la banda del dossier, la confianza de la señal y si quien
+espera es un lead caliente (encaje alto o medio, o ya `contactado`/`cliente`).
+La marca va delante de la cabecera (`🔴 *ACT NOW* · 🔥 *HIGH SIGNAL* · fit 3/3`)
+y delante del texto de la notificación del móvil; lo que distingue a cada tipo
+sigue intacto detrás. Al pulsar "Contacted" o "Discard" la tarjeta pierde la
+marca. El SMS no cambia: solo existe para la señal alta. `prioridad_activa`
+apaga las marcas. Esto es orden y presentación: ningún tope ni disparador cambia.
+
+**El resumen del día** (`delivery/resumen_prioridad.py`): un mensaje al día a
+partir de `resumen_prioridad_hora` (8) en `zona_horaria`, con lo que sigue
+pendiente agrupado por nivel, como mucho `resumen_prioridad_max_por_nivel` (5)
+líneas por nivel y un enlace en cada una. Entran las personas con tarjeta o con
+un "they asked" de los últimos `resumen_prioridad_dias` (7) que nadie ha marcado
+`contactado` ni `descartado`, los casos del seguimiento (ya comprobados en vivo
+contra Slack), las presentaciones de las últimas 48 horas sin saludar (también
+comprobadas en vivo) y la credencial del lector si está caducada. **Absorbe el
+resumen diario de seguimiento ("FOLLOW-UPS")**: con `resumen_prioridad_activo`
+encendido aquel no se publica y sus casos salen aquí, marcados como avisados
+con la misma función; apagado, vuelve el de siempre. Nunca los dos el mismo
+día. Se reserva antes de publicar (`resumenes_prioridad`, una fila por día); si
+a la hora no hay nada pendiente no se publica y el día queda cerrado; si Slack
+falla se reintenta hasta tres veces.
+
+El panel ordena **Today** con las mismas reglas (`panel/lib/prioridad.ts`), y
+los dos interruptores y los tres números se editan en Settings.
+
 ## Invariantes del proyecto
 
 Romper cualquiera de estas es un bug, no una preferencia:
