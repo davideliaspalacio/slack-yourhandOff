@@ -6,6 +6,7 @@ import {
   enlaceDm, estadoLabel, fecha, fechaDesdeTs, hace, jobStatusLabel, reasonLabel, tipoSenalLabel,
   ultimoDeLabel, usd,
 } from "@/lib/format";
+import { busquedaLinkedin, perfilLinkedin } from "@/lib/linkedin";
 import { cambiarEstado, volverAInvestigar } from "../../acciones";
 import { SinAcceso } from "../../SinAcceso";
 import { AyudarResearchForm } from "./AyudarResearchForm";
@@ -153,12 +154,29 @@ export default async function Persona(props: PageProps<"/personas/[id]">) {
   const gasto = [...(llm.data ?? []), ...(otros.data ?? [])]
     .reduce((s, r) => s + Number(r.cost_usd), 0);
   const abierta = (cola.data ?? []).some((j) => j.status === "pendiente" || j.status === "en_curso");
+  // El LinkedIn de la persona (lib/linkedin.ts): su perfil si el research o el equipo lo
+  // tienen; si no, una búsqueda con su nombre y su empresa, dicha como búsqueda.
+  const perfil = perfilLinkedin(d.persona?.fuente, p.research_links);
+  const busqueda = perfil ? null : busquedaLinkedin(
+    p.full_name ?? d.persona?.nombre,
+    p.company_name_override ?? d.empresa?.nombre ?? p.company_name,
+  );
 
   return (
     <>
       <p><Link href="/personas">← People</Link></p>
       <h1>{p.full_name ?? p.slack_user_id}
         {d.persona?.cargo && <span className="muted"> — {d.persona.cargo}</span>}</h1>
+      {perfil && (
+        <p>LinkedIn: <a href={perfil} target="_blank" rel="noreferrer">{perfil}</a></p>
+      )}
+      {busqueda && (
+        <p className="muted">
+          No LinkedIn profile on file —{" "}
+          <a href={busqueda} target="_blank" rel="noreferrer">search for them on LinkedIn</a>{" "}
+          (a search, not a confirmed profile).
+        </p>
+      )}
 
       {(pedidos.data ?? []).length > 0 && (
         <div className="card asked">

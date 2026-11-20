@@ -3,7 +3,8 @@ import { canalLabel, fecha, minutosDesde } from "@/lib/format";
 import {
   guardarCanalesTodos, guardarCanalPresentaciones, guardarChatResponderActivo,
   guardarExigirEvidencia, guardarHubspotActivo,
-  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSeguimientoActivo, guardarUmbral,
+  guardarDmTextoActivo, guardarLeerHilos, guardarPausaUnipile, guardarSaludoSugeridoActivo,
+  guardarSeguimientoActivo, guardarUmbral,
 } from "../acciones";
 import { CanalesForm } from "./CanalesForm";
 import { ConectarClaude, type SesionOauth, type TokenMcp } from "./ConectarClaude";
@@ -52,6 +53,12 @@ const EDITABLES_SEGUIMIENTO: Record<string, string> = {
 const EDITABLES_EVENTOS: Record<string, string> = {
   menciones_por_dia: "Maximum \"you were mentioned\" alerts per day",
   presentaciones_por_dia: "Maximum \"new introduction\" alerts per day",
+  // El aviso de miembro nuevo (0037_saludos_y_miembros.sql): los numéricos que deja
+  // tocar la política panel_ajusta_saludos. saludo_sugerido_activo va aparte porque es
+  // un booleano.
+  miembros_nuevos_por_dia: "Maximum \"new member\" alerts per day (0 switches them off)",
+  miembro_nuevo_espera_min:
+    "Minutes a \"new member\" alert waits for the research before going out without it",
 };
 
 // Respuestas de los hilos (0032_hilos.sql): los numéricos que la política
@@ -121,7 +128,7 @@ export default async function Ajustes() {
       ...Object.keys(EDITABLES_HILOS), "leer_hilos",
       ...Object.keys(EDITABLES_CHAT), "chat_responder_activo",
       ...Object.keys(EDITABLES_HUBSPOT), "hubspot_activo", "hubspot_desde",
-      "canal_presentaciones", "seguimiento_activo", "dm_texto_activo",
+      "canal_presentaciones", "saludo_sugerido_activo", "seguimiento_activo", "dm_texto_activo",
       "unipile_pausado", "unipile_zona", "slack_channel_ids",
       "lector_estado", "exigir_evidencia", "slack_canales_todos"]);
   const valores = new Map((data ?? []).map((r) => [r.key, r.value]));
@@ -171,6 +178,9 @@ export default async function Ajustes() {
   // primera pasada y escribe `now()` ahí. Nada anterior entra solo.
   const hubspotDesde = String(valores.get("hubspot_desde") ?? "");
   const canalIntros = String(valores.get("canal_presentaciones") ?? "");
+  // Encendido salvo que la base diga false, igual que en el worker
+  // (delivery/saludo.py): nace encendido en 0037.
+  const saludoSugerido = valores.get("saludo_sugerido_activo") !== false;
   const descubiertos = (nombresData ?? []).filter((c) => c.es_miembro === true);
   const masActivos = [...descubiertos]
     .sort((a, b) => Number(b.mensajes_vistos ?? 0) - Number(a.mensajes_vistos ?? 0))
@@ -339,9 +349,11 @@ export default async function Ajustes() {
 
       <h2>Channel alerts</h2>
       <p>
-        Two alerts that cost nothing to work out, so they arrive in the same poll:
-        when someone mentions you in a watched channel, and when someone posts in the
-        introductions channel. Both are posted in the cards channel.
+        Three alerts posted in the cards channel, each with its own look: when someone
+        mentions you in a watched channel, when someone posts in the introductions
+        channel (a reminder to say hi, with a LinkedIn link), and when someone new
+        joins a watched channel (a reminder to welcome them). The agent never writes
+        in the Founders Club: the greeting is text for you to copy.
       </p>
       <section style={{ marginBottom: 16 }}>
         <form action={guardarCanalPresentaciones} className="inline">
@@ -359,7 +371,23 @@ export default async function Ajustes() {
         </p>
       </section>
       <table>
-        <tbody>{Object.entries(EDITABLES_EVENTOS).map(fila)}</tbody>
+        <tbody>
+          <tr>
+            <td>Suggested greeting. When someone introduces themselves, the alert comes
+              with a short greeting written from what they said, ready to copy. It costs
+              one small model call per introduction. Turn it off and the alert still
+              arrives, without the suggestion.
+              <div className="muted" style={{ fontSize: 12 }}>saludo_sugerido_activo</div></td>
+            <td>
+              <form action={guardarSaludoSugeridoActivo} className="inline">
+                <input type="hidden" name="value" value={saludoSugerido ? "false" : "true"} />
+                <span>{saludoSugerido ? "On" : "Off"}</span>
+                <button type="submit">{saludoSugerido ? "Turn off" : "Turn on"}</button>
+              </form>
+            </td>
+          </tr>
+          {Object.entries(EDITABLES_EVENTOS).map(fila)}
+        </tbody>
       </table>
 
       <h2>Direct message follow-ups</h2>

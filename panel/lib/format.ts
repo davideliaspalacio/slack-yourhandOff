@@ -26,6 +26,8 @@ const REASON_LABELS: Record<string, string> = {
   mensaje: "Message",
   miembro_nuevo: "New member",
   manual: "Manual",
+  // 0013: el decisor de una vacante del radar. Faltaba aquí y salía el valor crudo.
+  radar: "Target account radar",
 };
 export const reasonLabel = (reason: string) => REASON_LABELS[reason] ?? reason;
 

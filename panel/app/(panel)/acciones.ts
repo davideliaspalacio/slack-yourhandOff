@@ -545,3 +545,18 @@ export async function guardarCanalPresentaciones(formData: FormData) {
     .eq("key", "canal_presentaciones");
   revalidatePath("/ajustes");
 }
+
+// saludo_sugerido_activo también es un booleano: el interruptor del saludo que el
+// agente sugiere cuando alguien se presenta. La política panel_ajusta_saludos (0037) es
+// la que permite tocar esta clave, y solo con true o false. Apagado, el aviso de
+// presentación sale igual, sin la sugerencia y sin llamar al modelo
+// (delivery/saludo.py). miembros_nuevos_por_dia y miembro_nuevo_espera_min pasan por
+// guardarUmbral.
+export async function guardarSaludoSugeridoActivo(formData: FormData) {
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", "saludo_sugerido_activo");
+  revalidatePath("/ajustes");
+}
