@@ -123,6 +123,10 @@ def test_the_reader_only_exposes_reads():
         "dm_estado",
         # Las respuestas de un hilo (0032): conversations.replies, solo lista.
         "respuestas",
+        # Un mensaje principal suelto (0038): conversations.history acotado a su
+        # `ts`, para comprobar si ya contestó antes de recordárselo. Ningún método
+        # nuevo de Slack: la lista blanca no cambia.
+        "mensaje",
     }
 
 
@@ -344,6 +348,30 @@ def test_the_last_message_is_a_single_message_and_nothing_else():
     # limit=1: ni paginación ni historial entero de una conversación privada.
     assert fake.calls[0][1] == {"channel": "D1", "limit": 1}
     assert len(fake.calls) == 1
+
+
+def test_a_single_message_is_one_bounded_read_of_the_channel_history():
+    """0038: se pide ese mensaje y solo ese, con el método de lectura de siempre."""
+    encontrado = {"ts": "9.1", "user": "U1", "reply_users": ["UOWNER"]}
+    fake = FakeWebClient(history_pages=[{"ok": True, "messages": [encontrado]}])
+    reader = sc.FoundersClubReader(client=fake)
+    assert reader.mensaje("C1", "9.1") == encontrado
+    assert fake.calls == [
+        (
+            "conversations_history",
+            {"channel": "C1", "oldest": "9.1", "latest": "9.1", "inclusive": True, "limit": 1},
+        )
+    ]
+    assert {name for name, _ in fake.calls} <= READ_METHODS
+
+
+def test_a_single_message_that_is_gone_or_is_another_one_is_none():
+    fake = FakeWebClient(
+        history_pages=[{"ok": True, "messages": []}, {"ok": True, "messages": [{"ts": "8"}]}]
+    )
+    reader = sc.FoundersClubReader(client=fake)
+    assert reader.mensaje("C1", "9.1") is None
+    assert reader.mensaje("C1", "9.1") is None
 
 
 def test_an_empty_dm_has_no_last_message():

@@ -276,12 +276,12 @@ def _novedades() -> None:
         logger.info("novedades: %d anunciada(s) en el canal", anunciadas)
 
 
-def _seguimiento() -> None:
+def _seguimiento(reader=None) -> None:
     """El resumen diario de las conversaciones que se enfrían. `publicar_resumen`
     ya gestiona por dentro los frenos y no lanza; esta guarda es la segunda
     línea, por si algo se le escapa."""
     try:
-        lineas = seguimiento.publicar_resumen()
+        lineas = seguimiento.publicar_resumen(reader=reader)
     except Exception:
         logger.exception("seguimiento fallido; se reintenta en la pasada siguiente")
         return
@@ -289,7 +289,7 @@ def _seguimiento() -> None:
         logger.info("seguimiento: resumen con %d línea(s)", lineas)
 
 
-def _avisos_seguimiento() -> None:
+def _avisos_seguimiento(reader=None) -> None:
     """Los avisos inmediatos de las conversaciones que ya pasaron de su plazo (0029).
 
     Van en la misma pasada que el rastro de los DMs, justo después: el rastro acaba de
@@ -297,7 +297,7 @@ def _avisos_seguimiento() -> None:
     `publicar_avisos` ya gestiona por dentro el cupo diario y los frenos y no lanza;
     esta guarda es la segunda línea."""
     try:
-        avisos = seguimiento.publicar_avisos()
+        avisos = seguimiento.publicar_avisos(reader=reader)
     except Exception:
         logger.exception("avisos de seguimiento fallidos; se reintenta en la pasada siguiente")
         return
@@ -394,8 +394,10 @@ def run_loop(
                 next_rastro = clock() + dms.MINUTOS_ENTRE_PASADAS * 60
                 _rastro_dms(reader)
                 _texto_dms(reader)
-                _avisos_seguimiento()
-                _seguimiento()
+                # Con el lector: los hilos, las menciones y la gente sin ficha (0038)
+                # se comprueban contra Slack antes de avisar. Solo lee.
+                _avisos_seguimiento(reader)
+                _seguimiento(reader)
 
             _radar()
             _decisor()

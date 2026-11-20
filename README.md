@@ -506,6 +506,34 @@ abrir la conversación — nunca qué se dijo. Un caso avisado no vuelve hasta q
 la conversación cambia (`dm_rastro.avisado_ts`). Respeta `seguimiento_activo`,
 el kill switch y el tope mensual, y nunca propaga un error al bucle.
 
+**Hilos, menciones y gente sin ficha** (migración `0038`,
+`delivery/seguimiento_canal.py`). Los mismos avisos — mismas cabeceras, mismo
+cupo diario, cada caso con su subtítulo — cubren además lo que se escapaba:
+
+- *Thread replies you haven't answered*: alguien respondió en un hilo que abrió
+  él, o quien abrió un hilo le contestó a él ahí, y no ha vuelto a escribir en
+  ese hilo pasadas `seguimiento_hilo_horas` (24). Necesita `leer_hilos`.
+- *Mentions you haven't answered*: lo mencionaron hace más de
+  `seguimiento_mencion_horas` (4) y desde entonces ni escribió en ese hilo (o en
+  ese canal, si la mención no está en un hilo) ni reaccionó a ella.
+- *Direct messages from people who aren't leads yet*: el "They replied" para
+  gente sin ficha. Nace apagado (`seguimiento_sin_ficha_activo`), porque
+  enseña en el canal del equipo con quién habla él fuera de sus leads. Sigue
+  sin guardarse texto, y el nombre se le pregunta a Slack al avisar, sin
+  guardarlo.
+
+Un recordatorio de algo que ya contestó es peor que no recordar, y la base va
+por detrás de Slack (los hilos llegan por barridos, las reacciones no se
+guardan). Por eso lo que sale de la base son candidatos, y cada uno se comprueba
+en vivo contra Slack justo antes de publicarse, solo con métodos de lectura: si
+ya contestó se apunta y no vuelve; si Slack no contesta o hay duda, no se avisa.
+Con `leer_hilos` apagado no hay casos de hilo ni se llama a
+`conversations.replies`. Solo cuenta lo que llegó después de la última vez que
+se tocó cada interruptor (`config.updated_at`): encenderlo no vacía en el canal
+lo que llevaba días esperando. Un mismo hilo o mención interrumpe como mucho
+`seguimiento_canal_max_avisos` (3) veces y todo caduca a los
+`seguimiento_caduca_dias` (7). Todo es por reglas: ni un modelo ni una cita.
+
 El panel lo muestra en la ficha de la persona (sección **Conversation**) y marca
 en **Today** a quien espera respuesta; los umbrales y el interruptor se editan en
 Settings. La herramienta MCP de lectura `seguimientos_pendientes` responde "¿a

@@ -232,6 +232,22 @@ class FoundersClubReader:
         mensajes = page.get("messages") or []
         return mensajes[0] if mensajes else None
 
+    def mensaje(self, channel: str, ts: str) -> dict | None:
+        """Un mensaje principal de un canal, y solo ese, tal como está AHORA en Slack:
+        con sus reacciones y con quién ha contestado en su hilo (`reply_users`).
+
+        Lo usa el recordatorio de menciones (delivery/seguimiento_canal.py) para comprobar,
+        justo antes de avisar, que él no contestó ya. Es `conversations.history` acotado a
+        ese `ts` por los dos lados: de lectura como el resto de la clase, y no abre ningún
+        hilo. None si el mensaje ya no está (lo borraron)."""
+        page = self._call(
+            "conversations_history", channel=channel, oldest=ts, latest=ts, inclusive=True, limit=1
+        )
+        for encontrado in page.get("messages") or []:
+            if encontrado.get("ts") == ts:
+                return encontrado
+        return None
+
     def history(self, channel: str, oldest: str) -> list[dict]:
         messages: list[dict] = []
         cursor = None

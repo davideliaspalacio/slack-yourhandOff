@@ -34,6 +34,8 @@ class FakeReader:
         self.threads: dict[tuple[str, str], list[dict]] = {}
         self.replies_calls: list[tuple[str, str, str | None]] = []
         self.unavailable_threads: set[str] = set()
+        # A quién se le pidió un mensaje suelto (0038): el canal y el `ts`.
+        self.mensaje_calls: list[tuple[str, str]] = []
 
     # --- la misma superficie que FoundersClubReader ---
     def identity(self) -> tuple[str, str]:
@@ -52,6 +54,13 @@ class FakeReader:
         # Como el Slack real: primero lo más nuevo. Devolverlos en orden de
         # inserción escondía que el watcher los guardaba de nuevo a viejo.
         return sorted(fresh, key=lambda m: float(m["ts"]), reverse=True)
+
+    def mensaje(self, channel: str, ts: str) -> dict | None:
+        """Como el real: un solo mensaje principal, o None si ya no está."""
+        self.mensaje_calls.append((channel, ts))
+        if channel in self.unavailable_channels:
+            raise SlackUnavailable(f"conversations_history: {channel}: internal_error")
+        return next((m for m in self.messages.get(channel, []) if m["ts"] == ts), None)
 
     def channel_name(self, channel: str) -> str:
         self.name_calls.append(channel)

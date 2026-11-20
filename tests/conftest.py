@@ -30,6 +30,7 @@ TABLES_TO_CLEAN = [
     "member_snapshots",
     "canales",
     "hilos",
+    "seguimiento_canal",
     "eventos_canal",
     "miembros_nuevos",
     "deliveries",

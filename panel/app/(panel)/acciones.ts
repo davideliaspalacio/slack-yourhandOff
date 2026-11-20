@@ -276,6 +276,27 @@ export async function guardarSeguimientoActivo(formData: FormData) {
   revalidatePath("/ajustes");
 }
 
+// Los tres interruptores de 0038 (hilos, menciones y gente sin ficha) son booleanos y
+// comparten acción: la clave viene del formulario, así que se comprueba contra la lista
+// antes de tocar nada. La política panel_ajusta_seguimiento_canal es la que permite
+// estas tres claves, y solo con true o false. `updated_at` importa aquí más que en los
+// demás: el worker solo recuerda lo que llegó DESPUÉS de la última vez que se tocó el
+// interruptor, para que encenderlo no vacíe en el canal lo que llevaba días esperando.
+const INTERRUPTORES_SEGUIMIENTO = [
+  "seguimiento_hilos_activo", "seguimiento_menciones_activo", "seguimiento_sin_ficha_activo",
+];
+
+export async function guardarSeguimientoInterruptor(formData: FormData) {
+  const key = String(formData.get("key"));
+  if (!INTERRUPTORES_SEGUIMIENTO.includes(key)) return;
+  const activo = String(formData.get("value")) === "true";
+  const supabase = await createClient();
+  await supabase.from("config")
+    .update({ value: activo, updated_at: new Date().toISOString() })
+    .eq("key", key);
+  revalidatePath("/ajustes");
+}
+
 // dm_texto_activo también es un booleano: el interruptor de leer el texto de los
 // DMs de Anthony con sus leads para sugerirle respuestas. La política
 // panel_ajusta_dm_texto (0031) es la que permite tocar esta clave, y solo con true
