@@ -499,6 +499,11 @@ def test_adjustable_settings_match_what_the_panel_lets_you_touch(equipo):
     # se rechace lo prueban CLAVES_PROHIBIDAS (Python y SQL) y
     # test_every_config_key_outside_the_allowed_list_is_refused_by_sql.
     solo_panel = {"chat_mensajes_por_dia", "hubspot_por_dia"}
+    # Y los dos del aviso de miembro nuevo (0037), por otro motivo: no son peligrosos,
+    # pero añadirlos obliga a reescribir `mcp_ajustar_umbral` entera y la 0038 nació en
+    # otra rama a la vez; la que se aplicara última borraría las claves de la otra. Se
+    # ajustan en Settings hasta que una migración posterior a las dos los añada.
+    solo_panel |= {"miembros_nuevos_por_dia", "miembro_nuevo_espera_min"}
     assert propios <= del_panel
     assert solo_panel <= del_panel
     assert set(mcp_escritura.UMBRALES) == del_panel - propios - solo_panel

@@ -31,6 +31,7 @@ TABLES_TO_CLEAN = [
     "canales",
     "hilos",
     "eventos_canal",
+    "miembros_nuevos",
     "deliveries",
     "panel_users",
     "agent_actions",

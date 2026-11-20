@@ -1,4 +1,4 @@
-"""Dos avisos de canal que no cuestan una llamada al modelo (migración 0030).
+"""Dos avisos de canal que se detectan sin preguntarle al modelo (migración 0030).
 
 - **Mención**: alguien escribió el id de la cuenta lectora en un mensaje. Es una
   búsqueda de cadena sobre lo que el watcher ya guardó.
@@ -6,8 +6,20 @@
   ahí es, por definición, gente presentándose.
 
 Por eso están aquí y no en `signals/procesar.py`: ahí cada fila es el resultado de
-preguntarle al modelo, con su coste y su confianza. Estos dos no hay nada que
-interpretar, así que son gratis y salen en la misma vuelta.
+preguntarle al modelo, con su coste y su confianza. En estos dos no hay nada que
+interpretar para saber que pasaron, así que detectarlos es gratis y salen en la misma
+vuelta.
+
+Cada tipo tiene su propio aviso, con su cabecera y su forma (0037), para que se
+distingan de un vistazo en el canal y en la notificación del móvil:
+
+- La **mención** es corta: quién, dónde, la cita y el enlace para contestar.
+- La **presentación** es una llamada a la acción: saludar. Lleva la cita, un saludo
+  sugerido listo para copiar (`delivery/saludo.py`; es lo único de aquí que llama al
+  modelo, tiene su interruptor y el aviso sale igual sin él), el recordatorio de
+  conectar en LinkedIn (`delivery/linkedin.py`) y el botón que abre la presentación.
+
+Nada de esto escribe en el Founders Club: el saludo es texto para que Anthony lo copie.
 
 Lo que sí comparten con las alertas de `signals/alertas.py`:
 
@@ -30,7 +42,8 @@ from zoneinfo import ZoneInfo
 
 from .. import db, db_config, ledger
 from ..config import load_settings
-from ..delivery import card, slack_writer
+from ..delivery import card, linkedin, saludo, slack_writer
+from ..ingest.profile_hints import company_from_title
 from ..slack_client import SlackUnavailable
 from . import procesar
 
@@ -44,7 +57,13 @@ ACCION_FALLIDO = "evento_fallido"
 
 CABECERAS = {
     MENCION: "💬 *YOU WERE MENTIONED*",
-    PRESENTACION: "👋 *NEW INTRODUCTION*",
+    PRESENTACION: "👋 *NEW INTRODUCTION · say hi*",
+}
+# Lo que se lee en la notificación del móvil, antes de abrir Slack: también ahí cada
+# tipo tiene que reconocerse solo.
+RESUMENES = {
+    MENCION: "Mention: {quien} tagged you in {canal}",
+    PRESENTACION: "New introduction: {quien} — say hi",
 }
 
 
@@ -148,8 +167,9 @@ def _pendientes(tipo: str, limite: int) -> list[dict]:
     return db.fetch_all(
         """
         select e.id::text as id, e.channel_id, e.ts, e.tipo, e.slack_user_id,
+               e.prospect_id::text as prospect_id, e.saludo,
                sm.text, c.nombre as canal_nombre,
-               p.full_name, p.company_name, p.company_name_override
+               p.full_name, p.company_name, p.company_name_override, p.research_links
           from eventos_canal e
           join slack_messages sm on sm.channel_id = e.channel_id and sm.ts = e.ts
           left join canales c on c.channel_id = e.channel_id
@@ -162,32 +182,161 @@ def _pendientes(tipo: str, limite: int) -> list[dict]:
     )
 
 
-def _quien(fila: dict) -> str:
-    nombre = (fila.get("full_name") or "").strip() or fila.get("slack_user_id") or "Someone"
-    empresa = (fila.get("company_name_override") or fila.get("company_name") or "").strip()
-    return f"*{nombre}* — {empresa}" if empresa else f"*{nombre}*"
+def identidad(fila: dict, reader) -> tuple[str | None, str | None]:
+    """El nombre y la empresa de quien escribió, o None lo que no se sepa.
+
+    Primero lo que ya hay en su ficha. Quien se presenta suele ser gente nueva, sin
+    ficha todavía (la crea el research, minutos después): para ellos se lee su perfil de
+    Slack, que es una lectura (`users.info`) y la misma de la que el research saca el
+    nombre. Sin eso el aviso solo podía enseñar un código de usuario, y no había nombre
+    con el que saludar ni con el que buscar en LinkedIn. Si Slack no contesta, el aviso
+    sale igual con lo que haya.
+    """
+    nombre = (fila.get("full_name") or "").strip() or None
+    empresa = (fila.get("company_name_override") or fila.get("company_name") or "").strip() or None
+    if nombre or not fila.get("slack_user_id"):
+        return nombre, empresa
+    try:
+        perfil = reader.user_profile(fila["slack_user_id"])
+    except Exception:  # noqa: BLE001 - el nombre es un extra del aviso
+        # Sin perfil (Slack caído, usuario borrado, un lector que no sabe leerlo): no es
+        # motivo para perder el aviso.
+        logger.warning("sin perfil de Slack para %s; el aviso sale sin él", fila["slack_user_id"])
+        return nombre, empresa
+    nombre = (perfil.real_name or "").strip() or None
+    return nombre, empresa or company_from_title(perfil.title)
 
 
-def _texto_aviso(fila: dict, reader) -> str:
-    from .. import canales
+def visible(fila: dict, nombre: str | None) -> str:
+    """El nombre tal como puede entrar en un aviso: sale de un perfil ajeno, así que se
+    escapa y se recorta como en las tarjetas. Sin nombre, el código de usuario."""
+    return card._escape_and_cap(nombre or fila.get("slack_user_id") or "Someone", card.NAME_CHARS)
 
-    partes = [CABECERAS[fila["tipo"]], "", _quien(fila)]
-    canal = canales.etiqueta(fila["channel_id"], fila.get("canal_nombre"))
-    partes.append(f"in {canal}")
-    cita = (fila.get("text") or "").strip()
-    if cita:
-        # El mismo renderizado que las tarjetas: dentro de un código en línea, para que
-        # Slack no autoenlace una URL que alguien haya metido en su mensaje.
-        partes.append(card.quote(cita))
-    enlace = None
+
+def quien(fila: dict, nombre: str | None, empresa: str | None) -> str:
+    """`*Nombre* — Empresa`, escapado."""
+    empresa_visible = card._escape_and_cap(empresa, card.COMPANY_CHARS)
+    nombre_visible = visible(fila, nombre)
+    return f"*{nombre_visible}* — {empresa_visible}" if empresa_visible else f"*{nombre_visible}*"
+
+
+def dossier_de(prospect_id: str | None) -> dict:
+    """El último dossier de la persona, o {} si no tiene ficha o aún no se investigó."""
+    if not prospect_id:
+        return {}
+    fila = db.fetch_one(
+        "select content from dossiers where prospect_id = %s order by version desc limit 1",
+        (prospect_id,),
+    )
+    contenido = fila["content"] if fila else None
+    return contenido if isinstance(contenido, dict) else {}
+
+
+def seccion(texto: str) -> dict:
+    return {"type": "section", "text": {"type": "mrkdwn", "text": texto}}
+
+
+def _enlace(fila: dict, reader) -> str | None:
     try:
         enlace = reader.permalink(fila["channel_id"], fila["ts"])
     except SlackUnavailable:
         # El aviso vale sin enlace: lo importante es que AG sepa que pasó.
         logger.warning("evento %s: sin enlace permanente", fila["id"])
+        return None
+    return enlace if card._is_safe_link(enlace) else None
+
+
+def _cita(fila: dict) -> str | None:
+    cita = (fila.get("text") or "").strip()
+    # El mismo renderizado que las tarjetas: dentro de un código en línea, para que
+    # Slack no autoenlace una URL que alguien haya metido en su mensaje.
+    return card.quote(cita) if cita else None
+
+
+def _aviso_mencion(fila: dict, reader) -> tuple[list[dict], str]:
+    """La mención: corta, porque lo único que hay que hacer es ir a contestar."""
+    from .. import canales
+
+    nombre, empresa = identidad(fila, reader)
+    canal = canales.etiqueta(fila["channel_id"], fila.get("canal_nombre"))
+    partes = [CABECERAS[MENCION], f"{quien(fila, nombre, empresa)} · in {canal}"]
+    cita = _cita(fila)
+    if cita:
+        partes.append(cita)
+    bloques = [seccion("\n".join(partes))]
+    enlace = _enlace(fila, reader)
     if enlace:
-        partes.append(f"<{enlace}|Open in Slack>")
-    return "\n".join(partes)
+        pie = f"They tagged you · <{enlace}|Open in Slack> to reply"
+        bloques.append({"type": "context", "elements": [{"type": "mrkdwn", "text": pie}]})
+    return bloques, RESUMENES[MENCION].format(quien=visible(fila, nombre), canal=canal)
+
+
+def _bloque_saludo(texto: str) -> str:
+    """El saludo como bloque de código: se copia de un gesto y Slack no autoenlaza ni
+    interpreta nada dentro. Ya pasó la validación de `saludo.py`; aun así se escapa
+    (Slack decodifica las entidades también ahí) y un acento grave pasa a apóstrofo para
+    que no pueda cerrar el bloque antes de tiempo, igual que en `card.quote`. El tope es
+    el del saludo ya escapado: 400 caracteres por 5 en el peor caso, lejos de los 3000
+    de un bloque."""
+    return "```" + card._escape_and_cap(texto.replace("`", "'"), saludo.MAX_SALUDO * 5) + "```"
+
+
+def _aviso_presentacion(fila: dict, reader) -> tuple[list[dict], str]:
+    """La presentación: qué dijo, qué hacer (saludar), con qué palabras y dónde seguir
+    (LinkedIn). Cada cosa en su bloque, para que el saludo se copie solo."""
+    from .. import canales
+
+    nombre, empresa = identidad(fila, reader)
+    dossier = dossier_de(fila.get("prospect_id"))
+    canal = canales.etiqueta(fila["channel_id"], fila.get("canal_nombre"))
+
+    partes = [
+        CABECERAS[PRESENTACION],
+        quien(fila, nombre, empresa),
+        f"introduced themselves in {canal}",
+    ]
+    cita = _cita(fila)
+    if cita:
+        partes.append(cita)
+    bloques = [seccion("\n".join(partes))]
+
+    sugerido = saludo.sugerir(fila, nombre, empresa, dossier)
+    if sugerido:
+        bloques.append(
+            seccion(
+                "👉 *Say hi* — reply in their intro thread. "
+                "_Suggested greeting (copy, tweak, send):_"
+            )
+        )
+        bloques.append(seccion(_bloque_saludo(sugerido)))
+    else:
+        bloques.append(seccion("👉 *Say hi* — reply in their intro thread to welcome them."))
+
+    conectar = linkedin.linea(dossier, nombre, empresa, fila.get("research_links"))
+    if conectar:
+        bloques.append(seccion(conectar))
+
+    enlace = _enlace(fila, reader)
+    if enlace:
+        # Un botón de enlace: el receptor (`web/app.py`) los ignora, solo abren la URL.
+        bloques.append(
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "action_id": "ver_original",
+                        "text": {"type": "plain_text", "text": "Open intro in Slack"},
+                        "url": enlace,
+                        "style": "primary",
+                    }
+                ],
+            }
+        )
+    return bloques, RESUMENES[PRESENTACION].format(quien=visible(fila, nombre), canal=canal)
+
+
+_AVISOS = {MENCION: _aviso_mencion, PRESENTACION: _aviso_presentacion}
 
 
 def _reservar(evento_id: str) -> bool:
@@ -215,11 +364,11 @@ def _publicar_tipo(tipo: str, reader, ahora: datetime) -> int:
     for fila in _pendientes(tipo, cupo):
         if not _reservar(fila["id"]):
             continue
-        texto = _texto_aviso(fila, reader)
         try:
-            _, ts = slack_writer.post_card(
-                [{"type": "section", "text": {"type": "mrkdwn", "text": texto}}], texto
-            )
+            # El montaje también va dentro del `try`: si algo falla al construir el
+            # aviso, la reserva se libera igual que si fallara Slack.
+            bloques, resumen = _AVISOS[tipo](fila, reader)
+            _, ts = slack_writer.post_card(bloques, resumen)
         except Exception as exc:
             logger.exception("evento %s: no se pudo publicar", fila["id"])
             _liberar(fila["id"], f"{type(exc).__name__}: {exc}")
