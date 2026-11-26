@@ -239,6 +239,25 @@ NOVEDADES: tuple[Novedad, ...] = (
             "The day, the hour and the limits can be changed in Settings.",
         ),
     ),
+    Novedad(
+        id="2026-11-25-cualquier-rol",
+        titulo="Hiring alerts for every role",
+        lineas=(
+            (
+                "The agent used to alert only for a fixed list of roles (support, "
+                "operations, assistants, back-office, sales, recruiting, accounting, dev). "
+                "That is why it skipped a post hiring for two marketing roles."
+            ),
+            (
+                "That limit is gone. Any founder who says they are hiring, or plan to hire "
+                "soon, for any role, full-time or part-time, now triggers an alert."
+            ),
+            (
+                "Still skipped: people looking for a job, offering their services, or "
+                "looking for an agency or a tool instead of a person."
+            ),
+        ),
+    ),
 )
 
 
